@@ -3923,7 +3923,7 @@ const char *debug_d3dusage(DWORD usage)
     WINED3DUSAGE_TO_STR(WINED3DUSAGE_STATICDECL);
     WINED3DUSAGE_TO_STR(WINED3DUSAGE_OVERLAY);
 #undef WINED3DUSAGE_TO_STR
-    if (usage) FIXME("Unrecognized usage flag(s) %#x\n", usage);
+    if (usage & ~WINED3DUSAGE_QUERY_MASK) FIXME("Unrecognized usage flag(s) %#x\n", usage);
 
     return buf[0] ? wine_dbg_sprintf("%s", &buf[3]) : "0";
 }
@@ -3942,7 +3942,7 @@ const char *debug_d3dusagequery(DWORD usagequery)
     WINED3DUSAGEQUERY_TO_STR(WINED3DUSAGE_QUERY_VERTEXTEXTURE);
     WINED3DUSAGEQUERY_TO_STR(WINED3DUSAGE_QUERY_WRAPANDMIP);
 #undef WINED3DUSAGEQUERY_TO_STR
-    if (usagequery) FIXME("Unrecognized usage query flag(s) %#x\n", usagequery);
+    if (usagequery & WINED3DUSAGE_QUERY_MASK) FIXME("Unrecognized usage query flag(s) %#x\n", usagequery);
 
     return buf[0] ? wine_dbg_sprintf("%s", &buf[3]) : "0";
 }
