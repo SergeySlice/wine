@@ -504,6 +504,11 @@ static HRESULT d3d_vertex_shader_init(struct d3d_vertex_shader *shader, struct d
         return hr;
     }
     desc.max_version = d3d_sm_from_feature_level(device->feature_level);
+  //Slice
+      desc.byte_code = byte_code;
+      desc.input_signature.element_count = 0;
+      desc.output_signature.element_count = 0;
+
 
     hr = wined3d_shader_create_vs(device->wined3d_device, &desc, shader,
             &d3d_vertex_shader_wined3d_parent_ops, &shader->wined3d_shader);

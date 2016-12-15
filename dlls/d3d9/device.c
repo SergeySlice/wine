@@ -1104,7 +1104,7 @@ static HRESULT d3d9_device_create_surface(struct d3d9_device *device, UINT width
 {
     struct wined3d_resource_desc desc;
     struct d3d9_surface *surface_impl;
-    struct wined3d_texture *texture;
+    struct wined3d_texture *texture = NULL;
     HRESULT hr;
 
     TRACE("device %p, width %u, height %u, format %#x, flags %#x, surface %p.\n"
