@@ -53,6 +53,7 @@ static void resource_check_usage(DWORD usage)
     static const DWORD handled = WINED3DUSAGE_RENDERTARGET
             | WINED3DUSAGE_DEPTHSTENCIL
             | WINED3DUSAGE_WRITEONLY
+            | WINED3DUSAGE_SOFTWAREPROCESSING
             | WINED3DUSAGE_DYNAMIC
             | WINED3DUSAGE_AUTOGENMIPMAP
             | WINED3DUSAGE_STATICDECL
@@ -65,6 +66,9 @@ static void resource_check_usage(DWORD usage)
      * the hints and access flags we set for typical access patterns on
      * dynamic resources should in theory have the same effect on the OpenGL
      * driver. */
+  //#define WINED3DUSAGE_SOFTWAREPROCESSING                         0x00000010
+  //#define WINED3DUSAGE_DONOTCLIP                                  0x00000020
+  //#define WINED3DUSAGE_POINTS                                     0x00000040
 
     if (usage & ~handled)
         FIXME("Unhandled usage flags %#x.\n", usage & ~handled);
