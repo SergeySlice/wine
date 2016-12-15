@@ -313,6 +313,10 @@ void surface_init(struct d3d8_surface *surface, struct wined3d_texture *wined3d_
 {
     IDirect3DBaseTexture8 *texture;
 
+    if (!surface) {
+        return;
+    }
+
     surface->IDirect3DSurface8_iface.lpVtbl = &d3d8_surface_vtbl;
     d3d8_resource_init(&surface->resource);
     surface->resource.refcount = 0;
@@ -335,6 +339,10 @@ static void STDMETHODCALLTYPE view_wined3d_object_destroyed(void *parent)
 {
     struct d3d8_surface *surface = parent;
 
+    if (!surface) {
+        return;
+    }
+
     /* If the surface reference count drops to zero, we release our reference
      * to the view, but don't clear the pointer yet, in case e.g. a
      * GetRenderTarget() call brings the surface back before the view is
@@ -356,6 +364,10 @@ static const struct wined3d_parent_ops d3d8_view_wined3d_parent_ops =
 struct wined3d_rendertarget_view *d3d8_surface_get_rendertarget_view(struct d3d8_surface *surface)
 {
     HRESULT hr;
+
+    if (!surface) {
+        return;
+    }
 
     if (surface->wined3d_rtv)
         return surface->wined3d_rtv;
