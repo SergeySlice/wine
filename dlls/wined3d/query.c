@@ -103,6 +103,7 @@ static enum wined3d_event_query_result wined3d_event_query_test(const struct win
                 break;
 
             case GL_TIMEOUT_EXPIRED:
+            case GL_TIMEOUT_EXPIRED_APPLE:    
                 ret = WINED3D_EVENT_QUERY_WAITING;
                 break;
 
@@ -176,6 +177,10 @@ enum wined3d_event_query_result wined3d_event_query_finish(const struct wined3d_
             case GL_ALREADY_SIGNALED:
             case GL_CONDITION_SATISFIED:
                 ret = WINED3D_EVENT_QUERY_OK;
+                break;
+                //Slice
+            case GL_TIMEOUT_EXPIRED_APPLE:
+                ret = WINED3D_EVENT_QUERY_NOT_STARTED;
                 break;
 
                 /* We don't expect a timeout for a ~584 year wait */
