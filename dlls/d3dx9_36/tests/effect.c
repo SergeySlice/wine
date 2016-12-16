@@ -3356,11 +3356,11 @@ static const DWORD test_effect_preshader_effect_blob[] =
     0x00000404, 0x00000000, 0x00000000, 0x00000428, 0x00000444, 0x00000000, 0x00000000, 0x0000046c,
     0x00000488, 0x00000000, 0x00000000, 0x000004ac, 0x000004c8, 0x00000000, 0x00000000, 0x000004f0,
     0x0000050c, 0x00000000, 0x00000000, 0x00000534, 0x00000550, 0x00000000, 0x00000000, 0x00000578,
-    0x000005e4, 0x00000000, 0x00000000, 0x00000624, 0x00000690, 0x00000000, 0x00000000, 0x000006f0,
+    0x000005e4, 0x00000000, 0x00000000, 0x00000624, 0x00000690, 0x00000001, 0x00000000, 0x000006f0,
     0x00000774, 0x00000000, 0x00000000, 0x000007dc, 0x000007f8, 0x00000000, 0x00000000, 0x00000808,
-    0x00000824, 0x00000000, 0x00000000, 0x00000838, 0x0000084c, 0x00000000, 0x00000000, 0x0000085c,
+    0x00000824, 0x00000001, 0x00000000, 0x00000838, 0x0000084c, 0x00000000, 0x00000000, 0x0000085c,
     0x00000870, 0x00000000, 0x00000000, 0x00000880, 0x000008ec, 0x00000000, 0x00000000, 0x00000930,
-    0x00000944, 0x00000000, 0x00000000, 0x00000954, 0x00000968, 0x00000000, 0x00000000, 0x00000ee8,
+    0x00000944, 0x00000001, 0x00000000, 0x00000954, 0x00000968, 0x00000000, 0x00000000, 0x00000ee8,
     0x00000000, 0x00000002, 0x00000ec0, 0x00000000, 0x00000024, 0x00000092, 0x00000000, 0x0000097c,
     0x00000978, 0x00000093, 0x00000000, 0x00000994, 0x00000990, 0x00000091, 0x00000000, 0x000009ac,
     0x000009a8, 0x00000091, 0x00000001, 0x000009cc, 0x000009c8, 0x00000091, 0x00000002, 0x000009ec,
@@ -3813,45 +3813,46 @@ static const DWORD test_effect_preshader_effect_blob[] =
 #define TEST_EFFECT_PRESHADER_VSHADER_POS 2458
 #define TEST_EFFECT_PRESHADER_VSHADER_LEN 13
 
+static const D3DXVECTOR4 test_effect_preshader_fconstsv[] =
+{
+    {0.0f,   0.0f,  0.0f,  0.0f},
+    {0.0f,   0.0f,  0.0f,  0.0f},
+    {0.0f,   0.0f,  0.0f,  0.0f},
+    {1.0f,   2.0f,  3.0f,  0.0f},
+    {4.0f,   0.0f,  0.0f,  0.0f},
+    {5.0f,   6.0f,  7.0f,  8.0f},
+    {1.0f,   2.0f,  3.0f,  0.0f},
+    {4.0f,   0.0f,  0.0f,  0.0f},
+    {5.0f,   6.0f,  7.0f,  8.0f},
+    {9.0f,  10.0f, 11.0f,  0.0f},
+    {12.0f,  0.0f,  0.0f,  0.0f},
+    {13.0f, 14.0f, 15.0f, 16.0f},
+    {11.0f, 12.0f, 13.0f,  0.0f},
+    {21.0f, 22.0f, 23.0f,  0.0f},
+    {31.0f, 32.0f, 33.0f,  0.0f},
+    {41.0f, 42.0f, 43.0f,  0.0f},
+    {11.0f, 21.0f, 31.0f,  0.0f},
+    {12.0f, 22.0f, 32.0f,  0.0f},
+    {13.0f, 23.0f, 33.0f,  0.0f},
+    {14.0f, 24.0f, 34.0f,  0.0f},
+    {11.0f, 12.0f, 13.0f, 14.0f},
+    {21.0f, 22.0f, 23.0f, 24.0f},
+    {31.0f, 32.0f, 33.0f, 34.0f},
+    {11.0f, 21.0f, 31.0f, 41.0f},
+    {12.0f, 22.0f, 32.0f, 42.0f},
+    {13.0f, 23.0f, 33.0f, 43.0f},
+    {9.0f,  10.0f, 11.0f,  0.0f},
+    {12.0f,  0.0f,  0.0f,  0.0f},
+    {13.0f, 14.0f, 15.0f, 16.0f},
+    {92.0f,  0.0f,  0.0f,  0.0f},
+    {93.0f,  0.0f,  0.0f,  0.0f},
+    {0.0f,   0.0f,  0.0f,  0.0f},
+    {91.0f,  0.0f,  0.0f,  0.0f},
+    {4.0f,   5.0f,  6.0f,  7.0f},
+};
+
 static void test_effect_preshader(IDirect3DDevice9 *device)
 {
-    static const D3DXVECTOR4 test_effect_preshader_fconstsv[] =
-    {
-        {0.0f,   0.0f,  0.0f,  0.0f},
-        {0.0f,   0.0f,  0.0f,  0.0f},
-        {0.0f,   0.0f,  0.0f,  0.0f},
-        {1.0f,   2.0f,  3.0f,  0.0f},
-        {4.0f,   0.0f,  0.0f,  0.0f},
-        {5.0f,   6.0f,  7.0f,  8.0f},
-        {1.0f,   2.0f,  3.0f,  0.0f},
-        {4.0f,   0.0f,  0.0f,  0.0f},
-        {5.0f,   6.0f,  7.0f,  8.0f},
-        {9.0f,  10.0f, 11.0f,  0.0f},
-        {12.0f,  0.0f,  0.0f,  0.0f},
-        {13.0f, 14.0f, 15.0f, 16.0f},
-        {11.0f, 12.0f, 13.0f,  0.0f},
-        {21.0f, 22.0f, 23.0f,  0.0f},
-        {31.0f, 32.0f, 33.0f,  0.0f},
-        {41.0f, 42.0f, 43.0f,  0.0f},
-        {11.0f, 21.0f, 31.0f,  0.0f},
-        {12.0f, 22.0f, 32.0f,  0.0f},
-        {13.0f, 23.0f, 33.0f,  0.0f},
-        {14.0f, 24.0f, 34.0f,  0.0f},
-        {11.0f, 12.0f, 13.0f, 14.0f},
-        {21.0f, 22.0f, 23.0f, 24.0f},
-        {31.0f, 32.0f, 33.0f, 34.0f},
-        {11.0f, 21.0f, 31.0f, 41.0f},
-        {12.0f, 22.0f, 32.0f, 42.0f},
-        {13.0f, 23.0f, 33.0f, 43.0f},
-        {9.0f,  10.0f, 11.0f,  0.0f},
-        {12.0f,  0.0f,  0.0f,  0.0f},
-        {13.0f, 14.0f, 15.0f, 16.0f},
-        {92.0f,  0.0f,  0.0f,  0.0f},
-        {93.0f,  0.0f,  0.0f,  0.0f},
-        {0.0f,   0.0f,  0.0f,  0.0f},
-        {91.0f,  0.0f,  0.0f,  0.0f},
-        {4.0f,   5.0f,  6.0f,  7.0f},
-    };
     static const D3DXVECTOR4 test_effect_preshader_fconstsp[] =
     {
         {11.0f, 21.0f,  0.0f, 0.0f},
@@ -4225,12 +4226,18 @@ static void test_isparameterused_children(ID3DXEffect *effect, D3DXHANDLE tech, 
     }
 }
 
-static void test_isparameterused_param_with_children(ID3DXEffect *effect, D3DXHANDLE tech, const char *name,
-        BOOL expected_result)
+static void test_isparameterused_param_with_children(ID3DXEffect *effect, ID3DXEffect *effect2, D3DXHANDLE tech,
+        const char *name, BOOL expected_result)
 {
     D3DXHANDLE param;
 
-    param = effect->lpVtbl->GetParameterByName(effect, NULL, name);
+    ok(!effect->lpVtbl->IsParameterUsed(effect, (D3DXHANDLE)name, tech) == !expected_result,
+            "Unexpected IsParameterUsed() result for %s.\n", name);
+
+    if (effect2)
+        param = effect2->lpVtbl->GetParameterByName(effect2, NULL, name);
+    else
+        param = effect->lpVtbl->GetParameterByName(effect, NULL, name);
     ok(!!param, "GetParameterByName failed for %s.\n", name);
 
     ok(!effect->lpVtbl->IsParameterUsed(effect, param, tech) == !expected_result,
@@ -4265,25 +4272,312 @@ static void test_effect_isparameterused(IDirect3DDevice9 *device)
         {"ts2", TRUE},
         {"ts3", TRUE},
     };
-    ID3DXEffect *effect;
+    ID3DXEffect *effect, *effect2;
     HRESULT hr;
     D3DXHANDLE tech;
     unsigned int i;
+    ID3DXEffectPool *pool;
+
+    hr = D3DXCreateEffectPool(&pool);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
 
     hr = D3DXCreateEffect(device, test_effect_preshader_effect_blob, sizeof(test_effect_preshader_effect_blob),
-            NULL, NULL, 0, NULL, &effect, NULL);
+            NULL, NULL, 0, pool, &effect, NULL);
     ok(hr == D3D_OK, "Got result %#x.\n", hr);
 
     tech = effect->lpVtbl->GetTechniqueByName(effect, "tech0");
     ok(!!tech, "GetTechniqueByName failed.\n");
 
     for (i = 0; i < ARRAY_SIZE(check_parameters); ++i)
-        test_isparameterused_param_with_children(effect, tech, check_parameters[i].name,
+        test_isparameterused_param_with_children(effect, NULL, tech, check_parameters[i].name,
                 check_parameters[i].expected_result);
+
+    hr = D3DXCreateEffect(device, test_effect_preshader_effect_blob, sizeof(test_effect_preshader_effect_blob),
+            NULL, NULL, 0, pool, &effect2, NULL);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    for (i = 0; i < ARRAY_SIZE(check_parameters); ++i)
+        test_isparameterused_param_with_children(effect, effect2, tech, check_parameters[i].name,
+                check_parameters[i].expected_result);
+
+    effect2->lpVtbl->Release(effect2);
+
+    hr = D3DXCreateEffect(device, test_effect_states_effect_blob, sizeof(test_effect_states_effect_blob),
+            NULL, NULL, 0, pool, &effect2, NULL);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    test_isparameterused_param_with_children(effect, effect2, tech, "sampler1", TRUE);
+    effect2->lpVtbl->Release(effect2);
 
     effect->lpVtbl->Release(effect);
 }
 
+static void test_effect_commitchanges(IDirect3DDevice9 *device)
+{
+    ID3DXEffect *effect;
+    HRESULT hr;
+    D3DXHANDLE param, param_child;
+    unsigned int i, passes_count, value;
+    int ivect[4];
+    static const D3DXVECTOR4 fvect_empty = {-9999.0f, -9999.0f, -9999.0f, -9999.0f};
+    D3DXVECTOR4 fvect;
+
+    hr = D3DXCreateEffect(device, test_effect_preshader_effect_blob, sizeof(test_effect_preshader_effect_blob),
+            NULL, NULL, 0, NULL, &effect, NULL);
+
+    param = effect->lpVtbl->GetParameterByName(effect, NULL, "g_iVect");
+    ok(!!param, "GetParameterByName failed.\n");
+    ivect[0] = 4;
+    ivect[1] = 3;
+    ivect[2] = 2;
+    ivect[3] = 0;
+    hr = effect->lpVtbl->SetValue(effect, param, ivect, sizeof(ivect));
+
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    hr = effect->lpVtbl->Begin(effect, &passes_count, 0);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    for (i = 0; i < 256; ++i)
+    {
+        hr = IDirect3DDevice9_SetVertexShaderConstantF(device, i, &fvect_empty.x, 1);
+        ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    }
+
+    hr = effect->lpVtbl->BeginPass(effect, 0);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    hr = IDirect3DDevice9_GetVertexShaderConstantF(device, 33, &fvect.x, 1);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    trace("%f %f %f %f.\n", fvect.x, fvect.y, fvect.z, fvect.w);
+
+    hr = IDirect3DDevice9_GetSamplerState(device, D3DVERTEXTEXTURESAMPLER0, D3DSAMP_MINFILTER, &value);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    ok(value == 3, "Unexpected sampler 0 minfilter %u.\n", value);
+
+    param = effect->lpVtbl->GetParameterByName(effect, NULL, "g_iVect");
+    ok(!!param, "GetParameterByName failed.\n");
+    ivect[0] = ivect[1] = ivect[2] = 1;
+    ivect[3] = 0;
+    hr = effect->lpVtbl->SetValue(effect, param, ivect, sizeof(ivect));
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    param = effect->lpVtbl->GetParameterByName(effect, NULL, "g_Selector");
+    ok(!!param, "GetParameterByName failed.\n");
+    fvect.x = fvect.y = fvect.z = fvect.w = 0.0f;
+    hr = effect->lpVtbl->SetVectorArray(effect, param, &fvect, 1);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    param = effect->lpVtbl->GetParameterByName(effect, NULL, "arr2");
+    ok(!!param, "GetParameterByName failed.\n");
+    fvect.x = 0.0f;
+    param_child = effect->lpVtbl->GetParameterElement(effect, param, 1);
+    ok(!!param_child, "GetParameterElement failed.\n");
+    hr = effect->lpVtbl->SetFloat(effect, param_child, fvect.x);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    param = effect->lpVtbl->GetParameterByName(effect, NULL, "ts1");
+    ok(!!param, "GetParameterByName failed.\n");
+    param = effect->lpVtbl->GetParameterElement(effect, param, 0);
+    ok(!!param, "GetParameterByName failed.\n");
+
+    param_child = effect->lpVtbl->GetParameterByName(effect, param, "fv");
+    ok(!!param_child, "GetParameterByName failed.\n");
+    fvect.x = 28.0f;
+    hr = effect->lpVtbl->SetFloat(effect, param_child, fvect.x);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    for (i = 0; i < 256; ++i)
+    {
+        hr = IDirect3DDevice9_SetVertexShaderConstantF(device, i, &fvect_empty.x, 1);
+        ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    }
+
+    hr = effect->lpVtbl->CommitChanges(effect);
+
+    for (i = 0; i < 34; ++i)
+    {
+        ok(hr == D3D_OK, "Got result %#x.\n", hr);
+        hr = IDirect3DDevice9_GetVertexShaderConstantF(device, i, &fvect.x, 1);
+        ok(hr == D3D_OK, "Got result %#x.\n", hr);
+        trace("%f %f %f %f.\n", fvect.x, fvect.y, fvect.z, fvect.w);
+    }
+
+    hr = IDirect3DDevice9_GetSamplerState(device, D3DVERTEXTEXTURESAMPLER0, D3DSAMP_MINFILTER, &value);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    ok(value == 1, "Unexpected sampler 0 minfilter %u.\n", value);
+
+    hr = effect->lpVtbl->EndPass(effect);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    hr = effect->lpVtbl->End(effect);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    effect->lpVtbl->Release(effect);
+}
+
+void test_effect_shared_parameters(IDirect3DDevice9 *device)
+{
+    ID3DXEffect *effect1, *effect2;
+    ID3DXEffectPool *pool;
+    HRESULT hr;
+    D3DXHANDLE param, param_child, param2, param_child2;
+    unsigned int i, passes_count, value;
+    int ivect[4];
+    static const D3DXVECTOR4 fvect_empty = {-9999.0f, -9999.0f, -9999.0f, -9999.0f};
+    D3DXVECTOR4 fvect;
+    float fval[2];
+    struct IDirect3DVertexShader9 *vshader1, *vshader2;
+
+    hr = D3DXCreateEffectPool(&pool);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    hr = D3DXCreateEffect(device, test_effect_preshader_effect_blob, sizeof(test_effect_preshader_effect_blob),
+            NULL, NULL, 0, pool, &effect2, NULL);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    effect2->lpVtbl->Release(effect2);
+    hr = D3DXCreateEffect(device, test_effect_preshader_effect_blob, sizeof(test_effect_preshader_effect_blob),
+            NULL, NULL, 0, pool, &effect2, NULL);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    hr = D3DXCreateEffect(device, test_effect_preshader_effect_blob, sizeof(test_effect_preshader_effect_blob),
+            NULL, NULL, 0, pool, &effect1, NULL);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    param = effect1->lpVtbl->GetParameterByName(effect1, NULL, "vs_arr2");
+    ok(!!param, "GetParameterByName failed.\n");
+    param_child = effect1->lpVtbl->GetParameterElement(effect1, param, 0);
+    ok(!!param_child, "GetParameterElement failed.\n");
+    hr = effect1->lpVtbl->GetVertexShader(effect1, param_child, &vshader1);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    param2 = effect2->lpVtbl->GetParameterByName(effect2, NULL, "vs_arr2");
+    ok(!!param2, "GetParameterByName failed.\n");
+    param_child2 = effect2->lpVtbl->GetParameterElement(effect2, param2, 0);
+    ok(!!param_child2, "GetParameterElement failed.\n");
+    hr = effect2->lpVtbl->GetVertexShader(effect2, param_child2, &vshader2);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    ok(vshader1 == vshader2, "Shared shader objects differ.\n");
+
+    IDirect3DVertexShader9_Release(vshader1);
+    IDirect3DVertexShader9_Release(vshader2);
+
+    param = effect1->lpVtbl->GetParameterByName(effect1, NULL, "arr1");
+    ok(!!param, "GetParameterByName failed.\n");
+    param2 = effect2->lpVtbl->GetParameterByName(effect2, NULL, "arr1");
+    ok(!!param, "GetParameterByName failed.\n");
+    fval[0] = 1.0f;
+    hr = effect1->lpVtbl->SetFloatArray(effect1, param, fval, 1);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    fval[0] = 0.0f;
+    hr = effect2->lpVtbl->GetFloatArray(effect2, param, fval, 1);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    ok(fval[0] == 1.0f, "Unexpected value %f.\n", fval[0]);
+    fval[0] = 0.0f;
+    hr = effect2->lpVtbl->GetFloatArray(effect2, param2, fval, 1);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    ok(fval[0] == 91.0f, "Unexpected value %f.\n", fval[0]);
+
+    hr = effect2->lpVtbl->GetFloatArray(effect2, param, fval, 1);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    ok(fval[0] == 1.0f, "Unexpected value %f.\n", fval[0]);
+
+    param_child = effect1->lpVtbl->GetParameterElement(effect1, param, 0);
+    ok(!!param_child, "GetParameterElement failed.\n");
+    param_child2 = effect1->lpVtbl->GetParameterElement(effect2, param, 0);
+    ok(!!param_child2, "GetParameterElement failed.\n");
+    ok(param_child == param_child2, "Parameter handles do not match.\n");
+
+    trace("param %p, param_child %p, param_child2 %p.\n", param, param_child, param_child2);
+    fval[0] = 2.0f;
+    hr = effect1->lpVtbl->SetFloat(effect1, param_child, fval[0]);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    fval[0] = 0.0f;
+    hr = effect2->lpVtbl->GetFloat(effect2, param_child, &fval[0]);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    ok(fval[0] == 2.0f, "Unexpected value %f.\n", fval[0]);
+
+    param = effect1->lpVtbl->GetParameterByName(effect1, NULL, "arr2");
+    ok(!!param, "GetParameterByName failed.\n");
+    param2 = effect2->lpVtbl->GetParameterByName(effect2, NULL, "arr2");
+    ok(!!param, "GetParameterByName failed.\n");
+    ok(param != param2, "Parameter handles should differ.\n");
+    param_child = effect1->lpVtbl->GetParameterElement(effect1, param, 0);
+    ok(!!param_child, "GetParameterElement failed.\n");
+    param_child2 = effect1->lpVtbl->GetParameterElement(effect2, param2, 0);
+    ok(!!param_child2, "GetParameterElement failed.\n");
+    ok(param_child != param_child2, "Parameter handles should differ.\n");
+
+    fval[0] = 33.0f;
+    hr = effect1->lpVtbl->SetFloatArray(effect1, param, fval, 1);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    fval[0] = 0.0f;
+    hr = effect1->lpVtbl->GetFloatArray(effect1, param, fval, 2);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    ok(fval[0] == 33.0f, "Unexpected value %f.\n", fval[0]);
+    fval[0] = 0.0f;
+    hr = effect2->lpVtbl->GetFloatArray(effect2, param2, fval, 2);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    ok(fval[0] == 33.0f, "Unexpected value %f.\n", fval[0]);
+
+    hr = effect1->lpVtbl->Begin(effect1, &passes_count, 0);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    hr = effect1->lpVtbl->BeginPass(effect1, 0);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    hr = IDirect3DDevice9_GetVertexShaderConstantF(device, 29, &fvect.x, 1);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    ok(fvect.x == 33.0f, "Unexpected value %f.\n", fvect.x);
+    fval[0] = 28.0f;
+    fval[1] = -1.0f;
+    hr = effect1->lpVtbl->SetFloatArray(effect2, param2, fval, 2);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    hr = effect1->lpVtbl->CommitChanges(effect1);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    hr = IDirect3DDevice9_GetVertexShaderConstantF(device, 29, &fvect.x, 1);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    ok(fvect.x == 28.0f, "Unexpected value %f.\n", fvect.x);
+    hr = IDirect3DDevice9_GetVertexShaderConstantF(device, 30, &fvect.x, 1);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    ok(fvect.x == -1.0f, "Unexpected value %f.\n", fvect.x);
+
+    fval[0] = -2.0f;
+    hr = effect2->lpVtbl->SetFloat(effect2, param_child2, fval[0]);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    hr = effect1->lpVtbl->CommitChanges(effect1);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    hr = IDirect3DDevice9_GetVertexShaderConstantF(device, 29, &fvect.x, 1);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    ok(fvect.x == -2.0f, "Unexpected value %f.\n", fvect.x);
+    hr = IDirect3DDevice9_GetVertexShaderConstantF(device, 30, &fvect.x, 1);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    ok(fvect.x == -1.0f, "Unexpected value %f.\n", fvect.x);
+
+    param2 = effect2->lpVtbl->GetParameterByName(effect2, NULL, "g_Pos1");
+    ok(!!param2, "GetParameterByName failed.\n");
+    fvect.x = fvect.y = fvect.z = fvect.w = 1111.0f;
+    hr = effect2->lpVtbl->SetVector(effect1, param2, &fvect);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    hr = effect1->lpVtbl->CommitChanges(effect1);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    hr = IDirect3DDevice9_GetVertexShaderConstantF(device, 33, &fvect.x, 1);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    ok(fvect.x == 4.0f && fvect.y == 5.0f && fvect.z == 6.0f && fvect.w == 7.0f,
+            "Nonshared constant changed for shared shader.\n");
+
+    hr = effect1->lpVtbl->EndPass(effect1);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    hr = effect1->lpVtbl->End(effect1);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    effect1->lpVtbl->Release(effect1);
+    effect2->lpVtbl->Release(effect2);
+
+    pool->lpVtbl->Release(pool);
+}
 START_TEST(effect)
 {
     HWND wnd;
@@ -4327,6 +4621,8 @@ START_TEST(effect)
     test_effect_preshader(device);
     test_effect_preshader_ops(device);
     test_effect_isparameterused(device);
+    test_effect_commitchanges(device);
+    test_effect_shared_parameters(device);
 
     count = IDirect3DDevice9_Release(device);
     ok(count == 0, "The device was not properly freed: refcount %u\n", count);
