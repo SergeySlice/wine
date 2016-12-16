@@ -270,9 +270,6 @@ server_t *get_server(substr_t name, INTERNET_PORT port, BOOL is_https, BOOL do_c
 {
     server_t *iter, *server = NULL;
 
-    if(port == INTERNET_INVALID_PORT_NUMBER)
-        port = INTERNET_DEFAULT_HTTP_PORT;
-
     EnterCriticalSection(&connection_pool_cs);
 
     LIST_FOR_EACH_ENTRY(iter, &connection_pool, server_t, entry) {
@@ -3359,7 +3356,7 @@ static DWORD HTTP_HttpOpenRequestW(http_session_t *session,
 {
     appinfo_t *hIC = session->appInfo;
     http_request_t *request;
-    DWORD len;
+    DWORD port, len;
 
     TRACE("-->\n");
 
@@ -3388,7 +3385,12 @@ static DWORD HTTP_HttpOpenRequestW(http_session_t *session,
     request->session = session;
     list_add_head( &session->hdr.children, &request->hdr.entry );
 
-    request->server = get_server(substrz(session->hostName), session->hostPort, (dwFlags & INTERNET_FLAG_SECURE) != 0, TRUE);
+    port = session->hostPort;
+    if (port == INTERNET_INVALID_PORT_NUMBER)
+        port = (session->hdr.dwFlags & INTERNET_FLAG_SECURE) ?
+                INTERNET_DEFAULT_HTTPS_PORT : INTERNET_DEFAULT_HTTP_PORT;
+
+    request->server = get_server(substrz(session->hostName), port, (dwFlags & INTERNET_FLAG_SECURE) != 0, TRUE);
     if(!request->server) {
         WININET_Release(&request->hdr);
         return ERROR_OUTOFMEMORY;
