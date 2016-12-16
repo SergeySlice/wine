@@ -430,7 +430,7 @@ ULONG CDECL wined3d_incref(struct wined3d *wined3d)
 {
     ULONG refcount = InterlockedIncrement(&wined3d->ref);
 
-    TRACE("%p increasing refcount to %u.\n", wined3d, refcount);
+//    TRACE("%p increasing refcount to %u.\n", wined3d, refcount);
 
     return refcount;
 }
@@ -439,7 +439,7 @@ ULONG CDECL wined3d_decref(struct wined3d *wined3d)
 {
     ULONG refcount = InterlockedDecrement(&wined3d->ref);
 
-    TRACE("%p decreasing refcount to %u.\n", wined3d, refcount);
+//    TRACE("%p decreasing refcount to %u.\n", wined3d, refcount);
 
     if (!refcount)
     {
@@ -948,11 +948,24 @@ static BOOL match_broken_arb_fog(const struct wined3d_gl_info *gl_info, const ch
 
 static void quirk_apple_glsl_constants(struct wined3d_gl_info *gl_info)
 {
+    static UINT once;
     /* MacOS needs uniforms for relative addressing offsets. This can accumulate to quite a few uniforms.
      * Beyond that the general uniform isn't optimal, so reserve a number of uniforms. 12 vec4's should
      * allow 48 different offsets or other helper immediate values. */
-    TRACE("Reserving 12 GLSL constants for compiler private use.\n");
-    gl_info->reserved_glsl_constants = max(gl_info->reserved_glsl_constants, 12);
+    //other match_apple quirks
+    if ( wined3d_settings.user_quirks & 1) {
+        gl_info->quirks |= WINED3D_CX_QUIRK_BLIT;
+    }
+    if ( wined3d_settings.user_quirks & 2) {
+        gl_info->quirks |= WINED3D_QUIRK_NO_DXTN;
+    }
+    if ( wined3d_settings.user_quirks & 4) {
+        //       FIXME("Reserving 12 GLSL constants for compiler private use.\n");
+    	gl_info->reserved_glsl_constants = max(gl_info->reserved_glsl_constants, 12);
+	}
+    if (!once++) {
+        TRACE("There are %d GLSL constants reserved\n", gl_info->reserved_glsl_constants);
+    }
 }
 
 static void quirk_amd_dx9(struct wined3d_gl_info *gl_info)
@@ -1012,8 +1025,10 @@ static void quirk_texcoord_w(struct wined3d_gl_info *gl_info)
      * all radeon cards on Macs and whitelist the good ones. That way we're prepared for the future. If
      * this workaround is activated on cards that do not need it, it won't break things, just affect
      * performance negatively. */
-    TRACE("Enabling vertex texture coord fixes in vertex shaders.\n");
-    gl_info->quirks |= WINED3D_QUIRK_SET_TEXCOORD_W;
+    if ( wined3d_settings.user_quirks & 8) {
+    	TRACE("Enabling vertex texture coord fixes in vertex shaders.\n");
+    	gl_info->quirks |= WINED3D_QUIRK_SET_TEXCOORD_W;
+	}
 }
 
 static void quirk_clip_varying(struct wined3d_gl_info *gl_info)
@@ -1303,6 +1318,7 @@ static const struct gpu_description gpu_description_table[] =
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_9800GT,     "NVIDIA GeForce 9800 GT",           DRIVER_NVIDIA_GEFORCE8,  512 },
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_210,        "NVIDIA GeForce 210",               DRIVER_NVIDIA_GEFORCE8,  512 },
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GT220,      "NVIDIA GeForce GT 220",            DRIVER_NVIDIA_GEFORCE8,  512 },
+    {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GT221,      "NVIDIA GeForce GT 220",            DRIVER_NVIDIA_GEFORCE8,  1024},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GT240,      "NVIDIA GeForce GT 240",            DRIVER_NVIDIA_GEFORCE8,  512 },
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTS250,     "NVIDIA GeForce GTS 250",           DRIVER_NVIDIA_GEFORCE8,  1024},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX260,     "NVIDIA GeForce GTX 260",           DRIVER_NVIDIA_GEFORCE8,  1024},
@@ -1335,6 +1351,7 @@ static const struct gpu_description gpu_description_table[] =
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX580,     "NVIDIA GeForce GTX 580",           DRIVER_NVIDIA_GEFORCE8,  1536},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GT610,      "NVIDIA GeForce GT 610",            DRIVER_NVIDIA_GEFORCE8,  1024},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GT630,      "NVIDIA GeForce GT 630",            DRIVER_NVIDIA_GEFORCE8,  1024},
+    {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GT640,      "NVIDIA GeForce GT 640",            DRIVER_NVIDIA_GEFORCE8,  1024},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GT630M,     "NVIDIA GeForce GT 630M",           DRIVER_NVIDIA_GEFORCE8,  1024},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GT640M,     "NVIDIA GeForce GT 640M",           DRIVER_NVIDIA_GEFORCE8,  1024},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GT650M,     "NVIDIA GeForce GT 650M",           DRIVER_NVIDIA_GEFORCE8,  2048},
@@ -1350,6 +1367,7 @@ static const struct gpu_description gpu_description_table[] =
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX690,     "NVIDIA GeForce GTX 690",           DRIVER_NVIDIA_GEFORCE8,  2048},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GT730,      "NVIDIA GeForce GT 730",            DRIVER_NVIDIA_GEFORCE8,  2048},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GT730M,     "NVIDIA GeForce GT 730M",           DRIVER_NVIDIA_GEFORCE8,  1024},
+    {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GT740,      "NVIDIA GeForce GT 740",            DRIVER_NVIDIA_GEFORCE8,  1024},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GT740M,     "NVIDIA GeForce GT 740M",           DRIVER_NVIDIA_GEFORCE8,  2048},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GT750M,     "NVIDIA GeForce GT 750M",           DRIVER_NVIDIA_GEFORCE8,  1024},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX750,     "NVIDIA GeForce GTX 750",           DRIVER_NVIDIA_GEFORCE8,  1024},
@@ -1360,6 +1378,7 @@ static const struct gpu_description gpu_description_table[] =
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX770M,    "NVIDIA GeForce GTX 770M",          DRIVER_NVIDIA_GEFORCE8,  3072},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX770,     "NVIDIA GeForce GTX 770",           DRIVER_NVIDIA_GEFORCE8,  2048},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX780,     "NVIDIA GeForce GTX 780",           DRIVER_NVIDIA_GEFORCE8,  3072},
+    {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX780M,    "NVIDIA GeForce GTX 780M",          DRIVER_NVIDIA_GEFORCE8,  4096},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTX780TI,   "NVIDIA GeForce GTX 780 Ti",        DRIVER_NVIDIA_GEFORCE8,  3072},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTXTITAN,   "NVIDIA GeForce GTX TITAN",         DRIVER_NVIDIA_GEFORCE8,  6144},
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_GTXTITANB,  "NVIDIA GeForce GTX TITAN Black",   DRIVER_NVIDIA_GEFORCE8,  6144},
@@ -1551,7 +1570,7 @@ static const struct gpu_description *query_gpu_description(const struct wined3d_
             device = value;
         if (GL_EXTCALL(wglQueryCurrentRendererIntegerWINE(WGL_RENDERER_VIDEO_MEMORY_WINE, &value)))
             *vram_bytes = (UINT64)value * 1024 * 1024;
-        TRACE("Card reports vendor PCI ID 0x%04x, device PCI ID 0x%04x, 0x%s bytes of video memory.\n",
+        FIXME("Card reports vendor PCI ID 0x%04x, device PCI ID 0x%04x, 0x%s bytes of video memory.\n",
                 vendor, device, wine_dbgstr_longlong(*vram_bytes));
     }
 
@@ -1564,13 +1583,13 @@ static const struct gpu_description *query_gpu_description(const struct wined3d_
     if (wined3d_settings.pci_device_id != PCI_DEVICE_NONE)
     {
         device = wined3d_settings.pci_device_id;
-        TRACE("Overriding device PCI ID with 0x%04x.\n", device);
+        FIXME("Overriding device PCI ID with 0x%04x.\n", device);
     }
 
     if (wined3d_settings.emulated_textureram)
     {
         *vram_bytes = wined3d_settings.emulated_textureram;
-        TRACE("Overriding amount of video memory with 0x%s bytes.\n",
+        FIXME("Overriding amount of video memory with 0x%s bytes.\n",
                 wine_dbgstr_longlong(*vram_bytes));
     }
 
@@ -1884,6 +1903,7 @@ cards_nvidia_binary[] =
     {"GeForce 830M",                CARD_NVIDIA_GEFORCE_830M},      /* GeForce 800 - mobile */
     {"GeForce 820M",                CARD_NVIDIA_GEFORCE_820M},      /* GeForce 800 - mobile */
     {"GTX 780 Ti",                  CARD_NVIDIA_GEFORCE_GTX780TI},  /* Geforce 700 - highend */
+    {"GTX 780M",                    CARD_NVIDIA_GEFORCE_GTX780M},   /* Geforce 700 - highend mobile */
     {"GTX TITAN Black",             CARD_NVIDIA_GEFORCE_GTXTITANB}, /* Geforce 700 - highend */
     {"GTX TITAN Z",                 CARD_NVIDIA_GEFORCE_GTXTITANZ}, /* Geforce 700 - highend */
     {"GTX TITAN",                   CARD_NVIDIA_GEFORCE_GTXTITAN},  /* Geforce 700 - highend */
@@ -1897,6 +1917,7 @@ cards_nvidia_binary[] =
     {"GTX 750",                     CARD_NVIDIA_GEFORCE_GTX750},    /* Geforce 700 - midend */
     {"GT 750M",                     CARD_NVIDIA_GEFORCE_GT750M},    /* Geforce 700 - midend mobile */
     {"GT 740M",                     CARD_NVIDIA_GEFORCE_GT740M},    /* Geforce 700 - midend mobile */
+    {"GT 740",                      CARD_NVIDIA_GEFORCE_GT740},     /* Geforce 700 - midend */
     {"GT 730M",                     CARD_NVIDIA_GEFORCE_GT730M},    /* Geforce 700 - midend mobile */
     {"GT 730",                      CARD_NVIDIA_GEFORCE_GT730},     /* Geforce 700 - lowend */
     {"GTX 690",                     CARD_NVIDIA_GEFORCE_GTX690},    /* Geforce 600 - highend */
@@ -1912,6 +1933,7 @@ cards_nvidia_binary[] =
     {"GT 650M",                     CARD_NVIDIA_GEFORCE_GT650M},    /* Geforce 600 - midend mobile */
     {"GT 640M",                     CARD_NVIDIA_GEFORCE_GT640M},    /* Geforce 600 - midend mobile */
     {"GT 630M",                     CARD_NVIDIA_GEFORCE_GT630M},    /* Geforce 600 - midend mobile */
+    {"GT 640",                      CARD_NVIDIA_GEFORCE_GT640},     /* Geforce 600 - midend */
     {"GT 630",                      CARD_NVIDIA_GEFORCE_GT630},     /* Geforce 600 - lowend */
     {"GT 610",                      CARD_NVIDIA_GEFORCE_GT610},     /* Geforce 600 - lowend */
     {"GTX 580",                     CARD_NVIDIA_GEFORCE_GTX580},    /* Geforce 500 - highend */
@@ -1949,11 +1971,12 @@ cards_nvidia_binary[] =
     {"GTX 260",                     CARD_NVIDIA_GEFORCE_GTX260},    /* Geforce 200 - midend */
     {"GTS 250",                     CARD_NVIDIA_GEFORCE_GTS250},    /* Geforce 200 - midend */
     {"GT 240",                      CARD_NVIDIA_GEFORCE_GT240},     /* Geforce 200 - midend */
-    {"GT 220",                      CARD_NVIDIA_GEFORCE_GT220},     /* Geforce 200 - lowend */
+    {"GT 220",                      CARD_NVIDIA_GEFORCE_GT221},     /* Geforce 200 - lowend */
     {"GeForce 310",                 CARD_NVIDIA_GEFORCE_210},       /* Geforce 200 - lowend */
     {"GeForce 305",                 CARD_NVIDIA_GEFORCE_210},       /* Geforce 200 - lowend */
     {"GeForce 210",                 CARD_NVIDIA_GEFORCE_210},       /* Geforce 200 - lowend */
     {"G 210",                       CARD_NVIDIA_GEFORCE_210},       /* Geforce 200 - lowend */
+    {"GTS 250",                     CARD_NVIDIA_GEFORCE_9800GT},    /* Geforce 9 - highend / Geforce 200 - midend */
     {"GTS 150",                     CARD_NVIDIA_GEFORCE_9800GT},    /* Geforce 9 - highend / Geforce 200 - midend */
     {"9800",                        CARD_NVIDIA_GEFORCE_9800GT},    /* Geforce 9 - highend / Geforce 200 - midend */
     {"9700M GT",                    CARD_NVIDIA_GEFORCE_9700MGT},   /* Geforce 9 - midend */
@@ -3625,6 +3648,17 @@ static void wined3d_adapter_init_limits(struct wined3d_gl_info *gl_info)
         gl_info->limits.samples = gl_max;
     }
 }
+/*
+ Radeon Turks reported support of
+ GL_APPLE_aux_depth_stencil - not supported
+ GL_APPLE_client_storage - found
+ GL_APPLE_element_array - not supported?
+ GL_APPLE_fence - found 
+ GL_APPLE_float_pixels - found
+ 
+ which is not reported by current wine
+ */
+
 
 /* Context activation is done by the caller. */
 static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter *adapter, DWORD wined3d_creation_flags)
@@ -3738,6 +3772,8 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter *adapter, DWORD 
     struct shader_caps shader_caps;
     const char *WGL_Extensions = NULL;
     enum wined3d_gl_vendor gl_vendor;
+    enum wined3d_pci_vendor card_vendor;
+    enum wined3d_pci_device device;
     DWORD gl_version, gl_ext_emul_mask;
     UINT64 vram_bytes = 0;
     HDC hdc;
@@ -4047,6 +4083,11 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter *adapter, DWORD 
     adapter->fragment_pipe = select_fragment_implementation(gl_info, adapter->shader_backend);
     adapter->blitter = select_blit_implementation(gl_info, adapter->shader_backend);
 
+    /* FIXME: The GLSL vertex pipe supports 4 vertex blending matrices. */
+    //Sherry 1.9
+/*    if (adapter->vertex_pipe == &glsl_vertex_pipe)
+        gl_info->limits.blends = MAX_VERTEX_BLENDS;
+*/
     adapter->shader_backend->shader_get_caps(gl_info, &shader_caps);
     adapter->d3d_info.vs_clipping = shader_caps.wined3d_caps & WINED3D_SHADER_CAP_VS_CLIPPING;
     adapter->d3d_info.limits.vs_version = shader_caps.vs_version;
@@ -4160,7 +4201,11 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter *adapter, DWORD 
             gl_info->supported[ARB_TEXTURE_BORDER_CLAMP] ? GL_CLAMP_TO_BORDER_ARB : GL_REPEAT;
     gl_info->wrap_lookup[WINED3D_TADDRESS_MIRROR_ONCE - WINED3D_TADDRESS_WRAP] =
             gl_info->supported[ARB_TEXTURE_MIRROR_CLAMP_TO_EDGE] ? GL_MIRROR_CLAMP_TO_EDGE : GL_REPEAT;
-
+/* it was in Sherry 1.9
+    adapter->d3d_info.valid_rt_mask = 0;
+    for (i = 0; i < gl_info->limits.buffers; ++i)
+        adapter->d3d_info.valid_rt_mask |= (1u << i);
+*/
     if (!gl_info->supported[WINED3D_GL_LEGACY_CONTEXT])
     {
         GLuint vao;
@@ -4171,25 +4216,25 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter *adapter, DWORD 
     }
 
     gl_vendor = wined3d_guess_gl_vendor(gl_info, gl_vendor_str, gl_renderer_str);
-    TRACE("Guessed GL vendor %#x.\n", gl_vendor);
+ //   FIXME("Guessed GL vendor %s.\n", gl_vendor_str);
 
     if (!(gpu_description = query_gpu_description(gl_info, &vram_bytes)))
     {
         static const struct gpu_description default_gpu_description =
                 {HW_VENDOR_NVIDIA, CARD_NVIDIA_RIVA_128, "Direct3D HAL", DRIVER_UNKNOWN, WINE_DEFAULT_VIDMEM};
-        enum wined3d_pci_vendor vendor;
-        enum wined3d_pci_device device;
+        //enum wined3d_pci_vendor vendor;
+        //enum wined3d_pci_device device; -- already defined in top
 
-        vendor = wined3d_guess_card_vendor(gl_vendor_str, gl_renderer_str);
-        TRACE("Guessed vendor PCI ID 0x%04x.\n", vendor);
+        card_vendor = wined3d_guess_card_vendor(gl_vendor_str, gl_renderer_str);
+        TRACE("Guessed vendor PCI ID 0x%04x.\n", card_vendor);
 
         device = wined3d_guess_card(&shader_caps, &fragment_caps, gl_info->glsl_version,
-                gl_renderer_str, &gl_vendor, &vendor);
+                gl_renderer_str, &gl_vendor, &card_vendor);
         TRACE("Guessed device PCI ID 0x%04x.\n", device);
 
-        if (!(gpu_description = get_gpu_description(vendor, device)))
+        if (!(gpu_description = get_gpu_description(card_vendor, device)))
         {
-            ERR("Card %04x:%04x not found in driver DB.\n", vendor, device);
+            ERR("Card %04x:%04x not found in driver DB.\n", card_vendor, device);
             gpu_description = &default_gpu_description;
         }
     }
@@ -4737,10 +4782,14 @@ HRESULT CDECL wined3d_get_adapter_raster_status(const struct wined3d *wined3d, U
      * Thus this method returns OK and fakes raster_status by
      * QueryPerformanceCounter. */
 
-    if (!QueryPerformanceCounter(&counter) || !QueryPerformanceFrequency(&freq_per_sec))
+    if (!QueryPerformanceCounter(&counter) || !QueryPerformanceFrequency(&freq_per_sec)) {
+        FIXME("no counter\n");
         return WINED3DERR_INVALIDCALL;
-    if (FAILED(wined3d_get_adapter_display_mode(wined3d, adapter_idx, &mode, NULL)))
+    }
+    if (FAILED(wined3d_get_adapter_display_mode(wined3d, adapter_idx, &mode, NULL))) {
+        WARN("Fail wined3d_get_adapter_display_mode\n");
         return WINED3DERR_INVALIDCALL;
+    }
     if (mode.refresh_rate == DEFAULT_REFRESH_RATE)
         mode.refresh_rate = 60;
 
@@ -4973,7 +5022,7 @@ static BOOL CheckRenderTargetCapability(const struct wined3d_adapter *adapter,
                 || adapter_format->green_size != check_format->green_size
                 || adapter_format->blue_size != check_format->blue_size)
         {
-            TRACE("[FAILED]\n");
+            WARN("[FAILED]\n");
             return FALSE;
         }
 
@@ -5235,9 +5284,11 @@ UINT CDECL wined3d_calculate_format_pitch(const struct wined3d *wined3d, UINT ad
 HRESULT CDECL wined3d_check_device_format_conversion(const struct wined3d *wined3d, UINT adapter_idx,
         enum wined3d_device_type device_type, enum wined3d_format_id src_format, enum wined3d_format_id dst_format)
 {
-    FIXME("wined3d %p, adapter_idx %u, device_type %s, src_format %s, dst_format %s stub!\n",
+    if (src_format != dst_format) {
+    	FIXME("wined3d %p, adapter_idx %u, device_type %s, src_format %s, dst_format %s stub!\n",
             wined3d, adapter_idx, debug_d3ddevicetype(device_type), debug_d3dformat(src_format),
             debug_d3dformat(dst_format));
+    }
 
     return WINED3D_OK;
 }
@@ -5297,7 +5348,7 @@ HRESULT CDECL wined3d_check_device_type(const struct wined3d *wined3d, UINT adap
          * WINED3DFMT_UNKNOWN. */
         if (backbuffer_format == WINED3DFMT_UNKNOWN)
             backbuffer_format = display_format;
-
+/* always OK
         if (FAILED(wined3d_check_device_format_conversion(wined3d, adapter_idx,
                 device_type, backbuffer_format, display_format)))
         {
@@ -5305,6 +5356,7 @@ HRESULT CDECL wined3d_check_device_type(const struct wined3d *wined3d, UINT adap
                     debug_d3dformat(backbuffer_format), debug_d3dformat(display_format));
             return WINED3DERR_NOTAVAILABLE;
         }
+ */
     }
     else
     {
@@ -6250,12 +6302,13 @@ static void wined3d_adapter_init_fb_cfgs(struct wined3d_adapter *adapter, HDC dc
                 }
             }
 
-            TRACE("iPixelFormat=%d, iPixelType=%#x, doubleBuffer=%d, RGBA=%d/%d/%d/%d, "
+            if (i == 0) {
+            	TRACE("iPixelFormat=%d, iPixelType=%#x, doubleBuffer=%d, RGBA=%d/%d/%d/%d, "
                     "depth=%d, stencil=%d, samples=%d, windowDrawable=%d\n",
                     cfg->iPixelFormat, cfg->iPixelType, cfg->doubleBuffer,
                     cfg->redSize, cfg->greenSize, cfg->blueSize, cfg->alphaSize,
                     cfg->depthSize, cfg->stencilSize, cfg->numSamples, cfg->windowDrawable);
-
+            }
             ++adapter->cfg_count;
         }
     }

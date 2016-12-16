@@ -103,7 +103,6 @@ static enum wined3d_event_query_result wined3d_event_query_test(const struct win
                 break;
 
             case GL_TIMEOUT_EXPIRED:
-            case GL_TIMEOUT_EXPIRED_APPLE:    
                 ret = WINED3D_EVENT_QUERY_WAITING;
                 break;
 

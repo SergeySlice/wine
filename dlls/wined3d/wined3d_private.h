@@ -72,6 +72,16 @@
 #define WINED3D_QUIRK_LIMITED_TEX_FILTERING     0x00000100
 #define WINED3D_QUIRK_BROKEN_ARB_FOG            0x00000200
 
+#define WINED3D_CX_QUIRK_APPLE_DOUBLE_BUFFER    0x00010000
+#define WINED3D_CX_QUIRK_COMPRESSED_CUBE_MIP    0x00020000  /* Intel GPU */
+#define WINED3D_CX_QUIRK_GLSL_CLIP_BROKEN       0x00040000
+#define WINED3D_CX_QUIRK_TEXCOORD_FOG           0x00080000  /* old ATI */
+#define WINED3D_CX_QUIRK_BROKEN_ARA             0x00100000  /* Nvidia 8xxx */
+#define WINED3D_CX_QUIRK_BLIT                   0x00200000
+#define WINED3D_CX_QUIRK_RENDER_TO_FBO          0x00800000
+#define WINED3D_QUIRK_NO_DXTN                   0x01000000
+
+
 /* Texture format fixups */
 
 enum fixup_channel_source
@@ -310,6 +320,10 @@ struct wined3d_settings
     unsigned int max_sm_ps;
     unsigned int max_sm_cs;
     BOOL no_3d;
+  BOOL override_vertex_constants;
+  int vertex_constants_number;
+  int user_quirks;
+
 };
 
 extern struct wined3d_settings wined3d_settings DECLSPEC_HIDDEN;
@@ -549,9 +563,12 @@ enum wined3d_shader_conditional_op
 /* TODO: Make this dynamic, based on shader limits ? */
 #define MAX_ATTRIBS 16
 #define MAX_REG_ADDR 1
+#define MAX_REG_TEMP 32
 #define MAX_REG_TEXCRD 8
 #define MAX_REG_INPUT 32
 #define MAX_REG_OUTPUT 32
+#define MAX_CONST_I 16
+#define MAX_CONST_B 16
 #define WINED3D_MAX_CBS 15
 #define WINED3D_MAX_CONSTS_B 16
 #define WINED3D_MAX_CONSTS_I 16
@@ -1945,6 +1962,7 @@ enum wined3d_pci_device
     CARD_NVIDIA_GEFORCE_9200        = 0x086d,
     CARD_NVIDIA_GEFORCE_9300        = 0x086c,
     CARD_NVIDIA_GEFORCE_9400M       = 0x0863,
+    CARD_NVIDIA_GEFORCE_9400        = 0x0867,
     CARD_NVIDIA_GEFORCE_9400GT      = 0x042c,
     CARD_NVIDIA_GEFORCE_9500GT      = 0x0640,
     CARD_NVIDIA_GEFORCE_9600GT      = 0x0622,
@@ -1952,6 +1970,7 @@ enum wined3d_pci_device
     CARD_NVIDIA_GEFORCE_9800GT      = 0x0614,
     CARD_NVIDIA_GEFORCE_210         = 0x0a23,
     CARD_NVIDIA_GEFORCE_GT220       = 0x0a20,
+    CARD_NVIDIA_GEFORCE_GT221       = 0x0ca5,
     CARD_NVIDIA_GEFORCE_GT240       = 0x0ca3,
     CARD_NVIDIA_GEFORCE_GTS250      = 0x0615,
     CARD_NVIDIA_GEFORCE_GTX260      = 0x05e2,
@@ -1984,6 +2003,7 @@ enum wined3d_pci_device
     CARD_NVIDIA_GEFORCE_GTX580      = 0x1080,
     CARD_NVIDIA_GEFORCE_GT610       = 0x104a,
     CARD_NVIDIA_GEFORCE_GT630       = 0x0f00,
+    CARD_NVIDIA_GEFORCE_GT640       = 0x0fc1,
     CARD_NVIDIA_GEFORCE_GT630M      = 0x0de9,
     CARD_NVIDIA_GEFORCE_GT640M      = 0x0fd2,
     CARD_NVIDIA_GEFORCE_GT650M      = 0x0fd1,
@@ -2001,6 +2021,7 @@ enum wined3d_pci_device
     CARD_NVIDIA_GEFORCE_GT730M      = 0x0fe1,
     CARD_NVIDIA_GEFORCE_GT740M      = 0x1292,
     CARD_NVIDIA_GEFORCE_GT750M      = 0x0fe9,
+    CARD_NVIDIA_GEFORCE_GT740       = 0x0fc8,
     CARD_NVIDIA_GEFORCE_GTX750      = 0x1381,
     CARD_NVIDIA_GEFORCE_GTX750TI    = 0x1380,
     CARD_NVIDIA_GEFORCE_GTX760      = 0x1187,
@@ -2009,6 +2030,7 @@ enum wined3d_pci_device
     CARD_NVIDIA_GEFORCE_GTX770M     = 0x11e0,
     CARD_NVIDIA_GEFORCE_GTX770      = 0x1184,
     CARD_NVIDIA_GEFORCE_GTX780      = 0x1004,
+    CARD_NVIDIA_GEFORCE_GTX780M     = 0x119f,
     CARD_NVIDIA_GEFORCE_GTX780TI    = 0x100a,
     CARD_NVIDIA_GEFORCE_GTXTITAN    = 0x1005,
     CARD_NVIDIA_GEFORCE_GTXTITANB   = 0x100c,
@@ -2027,7 +2049,10 @@ enum wined3d_pci_device
     CARD_NVIDIA_GEFORCE_GTX960      = 0x1401,
     CARD_NVIDIA_GEFORCE_GTX960M     = 0x139b,
     CARD_NVIDIA_GEFORCE_GTX970      = 0x13c2,
+//    CARD_NVIDIA_GEFORCE_GTX980M     = 0x13d7,
     CARD_NVIDIA_GEFORCE_GTX970M     = 0x13d8,
+//    CARD_NVIDIA_GEFORCE_GTX965M     = 0x13d9,
+//    CARD_NVIDIA_GEFORCE_GTX960      = 0x1401,
     CARD_NVIDIA_GEFORCE_GTX980      = 0x13c0,
     CARD_NVIDIA_GEFORCE_GTX980TI    = 0x17c8,
     CARD_NVIDIA_GEFORCE_GTX1050     = 0x1c81,
