@@ -597,6 +597,10 @@ static ULONG WINAPI ddraw_surface7_Release(IDirectDrawSurface7 *iface)
     struct ddraw_surface *This = impl_from_IDirectDrawSurface7(iface);
     ULONG refcount = InterlockedDecrement(&This->ref7);
 
+    if (!This) {
+        return 0;
+    }
+
     TRACE("iface %p decreasing refcount to %u.\n", iface, refcount);
 
     if (refcount == 0)
@@ -611,6 +615,10 @@ static ULONG WINAPI ddraw_surface4_Release(IDirectDrawSurface4 *iface)
 {
     struct ddraw_surface *This = impl_from_IDirectDrawSurface4(iface);
     ULONG refcount = InterlockedDecrement(&This->ref4);
+
+    if (!This) {
+        return 0;
+    }
 
     TRACE("iface %p decreasing refcount to %u.\n", iface, refcount);
 
@@ -627,6 +635,10 @@ static ULONG WINAPI ddraw_surface3_Release(IDirectDrawSurface3 *iface)
     struct ddraw_surface *This = impl_from_IDirectDrawSurface3(iface);
     ULONG refcount = InterlockedDecrement(&This->ref3);
 
+    if (!This) {
+        return 0;
+    }
+
     TRACE("iface %p decreasing refcount to %u.\n", iface, refcount);
 
     if (refcount == 0)
@@ -641,6 +653,10 @@ static ULONG WINAPI ddraw_surface2_Release(IDirectDrawSurface2 *iface)
 {
     struct ddraw_surface *This = impl_from_IDirectDrawSurface2(iface);
     ULONG refcount = InterlockedDecrement(&This->ref2);
+
+    if (!This) {
+        return 0;
+    }
 
     TRACE("iface %p decreasing refcount to %u.\n", iface, refcount);
 
@@ -657,6 +673,10 @@ static ULONG WINAPI ddraw_surface1_Release(IDirectDrawSurface *iface)
     struct ddraw_surface *This = impl_from_IDirectDrawSurface(iface);
     ULONG refcount = InterlockedDecrement(&This->ref1);
 
+    if (!This) {
+        return 0;
+    }
+
     TRACE("iface %p decreasing refcount to %u.\n", iface, refcount);
 
     if (refcount == 0)
@@ -672,6 +692,10 @@ static ULONG WINAPI ddraw_gamma_control_Release(IDirectDrawGammaControl *iface)
     struct ddraw_surface *This = impl_from_IDirectDrawGammaControl(iface);
     ULONG refcount = InterlockedDecrement(&This->gamma_count);
 
+    if (!This) {
+        return 0;
+    }
+
     TRACE("iface %p decreasing refcount to %u.\n", iface, refcount);
 
     if (refcount == 0)
@@ -686,6 +710,10 @@ static ULONG WINAPI d3d_texture2_Release(IDirect3DTexture2 *iface)
 {
     struct ddraw_surface *surface = impl_from_IDirect3DTexture2(iface);
 
+    if (!surface) {
+        return 0;
+    }
+
     TRACE("iface %p.\n", iface);
 
     return IUnknown_Release(surface->texture_outer);
@@ -694,6 +722,10 @@ static ULONG WINAPI d3d_texture2_Release(IDirect3DTexture2 *iface)
 static ULONG WINAPI d3d_texture1_Release(IDirect3DTexture *iface)
 {
     struct ddraw_surface *surface = impl_from_IDirect3DTexture(iface);
+
+    if (!surface) {
+        return 0;
+    }
 
     TRACE("iface %p.\n", iface);
 
@@ -734,6 +766,10 @@ static HRESULT WINAPI ddraw_surface7_GetAttachedSurface(IDirectDrawSurface7 *ifa
     struct ddraw_surface *surf;
     DDSCAPS2 our_caps;
     int i;
+
+    if (!This) {
+        return 0;
+    }
 
     TRACE("iface %p, caps %p, attachment %p.\n", iface, Caps, Surface);
 
@@ -821,6 +857,10 @@ static HRESULT WINAPI ddraw_surface4_GetAttachedSurface(IDirectDrawSurface4 *ifa
     IDirectDrawSurface7 *attachment7;
     HRESULT hr;
 
+    if (!surface) {
+        return 0;
+    }
+
     TRACE("iface %p, caps %p, attachment %p.\n", iface, caps, attachment);
 
     hr = ddraw_surface7_GetAttachedSurface(&surface->IDirectDrawSurface7_iface,
@@ -846,6 +886,10 @@ static HRESULT WINAPI ddraw_surface3_GetAttachedSurface(IDirectDrawSurface3 *ifa
     IDirectDrawSurface7 *attachment7;
     DDSCAPS2 caps2;
     HRESULT hr;
+
+    if (!surface) {
+        return 0;
+    }
 
     TRACE("iface %p, caps %p, attachment %p.\n", iface, caps, attachment);
 
@@ -878,6 +922,10 @@ static HRESULT WINAPI ddraw_surface2_GetAttachedSurface(IDirectDrawSurface2 *ifa
     DDSCAPS2 caps2;
     HRESULT hr;
 
+    if (!surface) {
+        return 0;
+    }
+
     TRACE("iface %p, caps %p, attachment %p.\n", iface, caps, attachment);
 
     caps2.dwCaps  = caps->dwCaps;
@@ -908,6 +956,10 @@ static HRESULT WINAPI ddraw_surface1_GetAttachedSurface(IDirectDrawSurface *ifac
     IDirectDrawSurface7 *attachment7;
     DDSCAPS2 caps2;
     HRESULT hr;
+
+    if (!surface) {
+        return 0;
+    }
 
     TRACE("iface %p, caps %p, attachment %p.\n", iface, caps, attachment);
 
