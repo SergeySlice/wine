@@ -151,6 +151,9 @@ static HRESULT WINAPI d3d8_surface_FreePrivateData(IDirect3DSurface8 *iface, REF
 {
     struct d3d8_surface *surface = impl_from_IDirect3DSurface8(iface);
     TRACE("iface %p, guid %s.\n", iface, debugstr_guid(guid));
+    if (!surface) {
+        return D3DERR_INVALIDCALL;
+    }
 
     return d3d8_resource_free_private_data(&surface->resource, guid);
 }
@@ -161,6 +164,9 @@ static HRESULT WINAPI d3d8_surface_GetContainer(IDirect3DSurface8 *iface, REFIID
     HRESULT hr;
 
     TRACE("iface %p, riid %s, container %p.\n", iface, debugstr_guid(riid), container);
+    if (!surface) {
+        return D3DERR_INVALIDCALL;
+    }
 
     if (!surface->container)
         return E_NOINTERFACE;
@@ -178,6 +184,9 @@ static HRESULT WINAPI d3d8_surface_GetDesc(IDirect3DSurface8 *iface, D3DSURFACE_
     struct wined3d_sub_resource_desc wined3d_desc;
 
     TRACE("iface %p, desc %p.\n", iface, desc);
+    if (!surface) {
+        return D3DERR_INVALIDCALL;
+    }
 
     wined3d_mutex_lock();
     wined3d_texture_get_sub_resource_desc(surface->wined3d_texture, surface->sub_resource_idx, &wined3d_desc);
@@ -206,6 +215,9 @@ static HRESULT WINAPI d3d8_surface_LockRect(IDirect3DSurface8 *iface,
 
     TRACE("iface %p, locked_rect %p, rect %s, flags %#x.\n",
             iface, locked_rect, wine_dbgstr_rect(rect), flags);
+    if (!surface) {
+        return D3DERR_INVALIDCALL;
+    }
 
     wined3d_mutex_lock();
 
@@ -266,6 +278,9 @@ static HRESULT WINAPI d3d8_surface_UnlockRect(IDirect3DSurface8 *iface)
     HRESULT hr;
 
     TRACE("iface %p.\n", iface);
+    if (!surface) {
+        return D3DERR_INVALIDCALL;
+    }
 
     wined3d_mutex_lock();
     hr = wined3d_resource_unmap(wined3d_texture_get_resource(surface->wined3d_texture), surface->sub_resource_idx);
@@ -299,6 +314,10 @@ static const IDirect3DSurface8Vtbl d3d8_surface_vtbl =
 static void STDMETHODCALLTYPE surface_wined3d_object_destroyed(void *parent)
 {
     struct d3d8_surface *surface = parent;
+    if (!surface) {
+        return;
+    }
+
     d3d8_resource_cleanup(&surface->resource);
     HeapFree(GetProcessHeap(), 0, surface);
 }
@@ -366,7 +385,7 @@ struct wined3d_rendertarget_view *d3d8_surface_get_rendertarget_view(struct d3d8
     HRESULT hr;
 
     if (!surface) {
-        return;
+        return NULL;
     }
 
     if (surface->wined3d_rtv)
