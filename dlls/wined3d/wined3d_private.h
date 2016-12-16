@@ -1892,6 +1892,7 @@ enum wined3d_pci_device
     CARD_AMD_RADEON_HD6480G         = 0x9648,
     CARD_AMD_RADEON_HD6550D         = 0x9640,
     CARD_AMD_RADEON_HD6600          = 0x6758,
+    CARD_AMD_RADEON_HD6770M         = 0x6740,
     CARD_AMD_RADEON_HD6600M         = 0x6741,
     CARD_AMD_RADEON_HD6700          = 0x68ba,
     CARD_AMD_RADEON_HD6800          = 0x6739,
@@ -1924,6 +1925,7 @@ enum wined3d_pci_device
     CARD_NVIDIA_GEFORCE_6200        = 0x014f,
     CARD_NVIDIA_GEFORCE_6600GT      = 0x0140,
     CARD_NVIDIA_GEFORCE_6800        = 0x0041,
+    CARD_NVIDIA_GEFORCE_7300LE      = 0x01d1, /* GeForce 7300LE */
     CARD_NVIDIA_GEFORCE_7300        = 0x01d7, /* GeForce Go 7300 */
     CARD_NVIDIA_GEFORCE_7400        = 0x01d8,
     CARD_NVIDIA_GEFORCE_7600        = 0x0391,

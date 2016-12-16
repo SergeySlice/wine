@@ -636,6 +636,47 @@ static BOOL match_not_dx10_capable(const struct wined3d_gl_info *gl_info, const 
     return !match_dx10_capable(gl_info, gl_renderer, gl_vendor, card_vendor, device);
 }
 
+
+static BOOL match_apple_broken_uniforms(const struct wined3d_gl_info *gl_info, const char *gl_renderer,
+                                        enum wined3d_gl_vendor gl_vendor, enum wined3d_pci_vendor card_vendor, enum wined3d_pci_device device)
+{
+  const char *sysrelease;
+  unsigned int major, minor, ret;
+  void (CDECL *my_wine_get_host_version)(const char **sysname, const char **release);
+
+  /* MacOS dx9 GPU drivers more GLSL vertex shader uniforms than supported by the hardware, and if
+   * more are used it falls back to software. While the compiler can detect if the shader uses all
+   * declared uniforms, the optimization fails if the shader uses relative addressing. So any GLSL
+   * shader using relative addressing falls back to software.
+   *
+   * ARB vp gives the correct amount of uniforms, so use it instead of GLSL.
+   *
+   * In addition, AMD Radeon HD GPUs advertise > 256 constants and can support this in HW, but the
+   * driver nevertheless falls back to software if more than 256 are used. This is fixed in MacOS
+   * 10.8.3 */
+
+  /* Non-Apple GL vendors report uniforms correctly */
+  if (!match_apple(gl_info, gl_renderer, gl_vendor, card_vendor, device)) return FALSE;
+  /* All dx9 cards are overreported on OSX */
+  if (!match_dx10_capable(gl_info, gl_renderer, gl_vendor, card_vendor, device)) return TRUE;
+  /* Nvidia and Intel DX10 cards support > 256 uniforms */
+  if (card_vendor != HW_VENDOR_AMD) return FALSE;
+
+  /* On OSX 10.8.3 and later, AMD GPUs support more than 256 constants. This OSX version reports
+   * uname -r "12.3.0" */
+  my_wine_get_host_version = (void *)GetProcAddress(GetModuleHandleA("ntdll.dll"), "wine_get_host_version");
+  if (!my_wine_get_host_version) return FALSE;
+
+  my_wine_get_host_version(NULL, &sysrelease);
+  ret = sscanf(sysrelease, "%u.%u", &major, &minor);
+  TRACE("host version %s\n", sysrelease);
+  if (ret != 2) return FALSE; /* String format changed, assume workaround not needed */
+  if (major > 12) return FALSE;
+  if (major == 12 && minor >= 3) return FALSE;
+
+  return TRUE;
+}
+
 /* A GL context is provided by the caller */
 static BOOL match_allows_spec_alpha(const struct wined3d_gl_info *gl_info, const char *gl_renderer,
         enum wined3d_gl_vendor gl_vendor, enum wined3d_pci_vendor card_vendor, enum wined3d_pci_device device)
@@ -788,6 +829,18 @@ static BOOL match_fglrx(const struct wined3d_gl_info *gl_info, const char *gl_re
         enum wined3d_gl_vendor gl_vendor, enum wined3d_pci_vendor card_vendor, enum wined3d_pci_device device)
 {
     return gl_vendor == GL_VENDOR_FGLRX;
+}
+
+static void quirk_arb_constants(struct wined3d_gl_info *gl_info)
+{
+    TRACE("Using ARB vs constant limit(%u->%u) for GLSL.\n", 
+    gl_info->limits.glsl_vs_float_constants,
+    gl_info->limits.arb_vs_native_constants);
+    gl_info->limits.glsl_vs_float_constants = gl_info->limits.arb_vs_native_constants;
+    TRACE("Using ARB ps constant limit(%u->%u) for GLSL.\n",
+    gl_info->limits.glsl_ps_float_constants,
+    gl_info->limits.arb_ps_native_constants);
+    gl_info->limits.glsl_ps_float_constants = gl_info->limits.arb_ps_native_constants;
 }
 
 static BOOL match_r200(const struct wined3d_gl_info *gl_info, const char *gl_renderer,
@@ -1228,6 +1281,7 @@ static const struct gpu_description gpu_description_table[] =
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_6600GT,     "NVIDIA GeForce 6600 GT",           DRIVER_NVIDIA_GEFORCE6,  128 },
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_6800,       "NVIDIA GeForce 6800",              DRIVER_NVIDIA_GEFORCE6,  128 },
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_7300,       "NVIDIA GeForce Go 7300",           DRIVER_NVIDIA_GEFORCE6,  256 },
+    {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_7300LE,       "NVIDIA GeForce 7300LE",           DRIVER_NVIDIA_GEFORCE6,  128 },
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_7400,       "NVIDIA GeForce Go 7400",           DRIVER_NVIDIA_GEFORCE6,  256 },
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_7600,       "NVIDIA GeForce 7600 GT",           DRIVER_NVIDIA_GEFORCE6,  256 },
     {HW_VENDOR_NVIDIA,     CARD_NVIDIA_GEFORCE_7800GT,     "NVIDIA GeForce 7800 GT",           DRIVER_NVIDIA_GEFORCE6,  256 },
@@ -1361,6 +1415,7 @@ static const struct gpu_description gpu_description_table[] =
     {HW_VENDOR_AMD,        CARD_AMD_RADEON_HD6480G,        "AMD Radeon HD 6480G",              DRIVER_AMD_R600,         512 },
     {HW_VENDOR_AMD,        CARD_AMD_RADEON_HD6550D,        "AMD Radeon HD 6550D",              DRIVER_AMD_R600,         1024},
     {HW_VENDOR_AMD,        CARD_AMD_RADEON_HD6600,         "AMD Radeon HD 6600 Series",        DRIVER_AMD_R600,         1024},
+    {HW_VENDOR_AMD,        CARD_AMD_RADEON_HD6770M,        "AMD Radeon HD 6770M",           DRIVER_AMD_R600,         2048},
     {HW_VENDOR_AMD,        CARD_AMD_RADEON_HD6600M,        "AMD Radeon HD 6600M Series",       DRIVER_AMD_R600,         512 },
     {HW_VENDOR_AMD,        CARD_AMD_RADEON_HD6700,         "AMD Radeon HD 6700 Series",        DRIVER_AMD_R600,         1024},
     {HW_VENDOR_AMD,        CARD_AMD_RADEON_HD6800,         "AMD Radeon HD 6800 Series",        DRIVER_AMD_R600,         1024},
@@ -1532,9 +1587,13 @@ static void init_driver_info(struct wined3d_driver_info *driver_info,
 {
     OSVERSIONINFOW os_version;
     WORD driver_os_version;
-    enum wined3d_display_driver driver;
+    enum wined3d_display_driver driver = DRIVER_UNKNOWN;
     enum wined3d_driver_model driver_model;
     const struct driver_version_information *version_info;
+
+    /* Set a default amount of video memory (64MB). In general this code isn't used unless the user
+     * overrides the pci ids to a card which is not in our database. */
+    driver_info->vram_bytes = WINE_DEFAULT_VIDMEM;
 
     memset(&os_version, 0, sizeof(os_version));
     os_version.dwOSVersionInfoSize = sizeof(os_version);
@@ -1929,7 +1988,8 @@ cards_nvidia_binary[] =
     {"7700",                        CARD_NVIDIA_GEFORCE_7600},      /* Geforce 7 - midend */
     {"7600",                        CARD_NVIDIA_GEFORCE_7600},      /* Geforce 7 - midend */
     {"7400",                        CARD_NVIDIA_GEFORCE_7400},      /* Geforce 7 - lower medium */
-    {"7300",                        CARD_NVIDIA_GEFORCE_7300},      /* Geforce 7 - lowend */
+    {"7300 LE",                     CARD_NVIDIA_GEFORCE_7300LE},    /* Geforce 7 - lowend */
+    {"7300",                        CARD_NVIDIA_GEFORCE_7300},      /* Geforce 7 - go */
     {"6800",                        CARD_NVIDIA_GEFORCE_6800},      /* Geforce 6 - highend */
     {"6700",                        CARD_NVIDIA_GEFORCE_6600GT},    /* Geforce 6 - midend */
     {"6610",                        CARD_NVIDIA_GEFORCE_6600GT},    /* Geforce 6 - midend */
@@ -1996,7 +2056,7 @@ cards_amd_binary[] =
     {"HD 6970",                     CARD_AMD_RADEON_HD6900},
     {"HD 6900",                     CARD_AMD_RADEON_HD6900},
     {"HD 6800",                     CARD_AMD_RADEON_HD6800},
-    {"HD 6770M",                    CARD_AMD_RADEON_HD6600M},
+    {"HD 6770M",                    CARD_AMD_RADEON_HD6770M},
     {"HD 6750M",                    CARD_AMD_RADEON_HD6600M},
     {"HD 6700",                     CARD_AMD_RADEON_HD6700},
     {"HD 6670",                     CARD_AMD_RADEON_HD6600},
@@ -2097,6 +2157,7 @@ cards_intel[] =
     {"Sandybridge Server",          CARD_INTEL_SNBS},
     {"Sandybridge Mobile",          CARD_INTEL_SNBM},
     {"Sandybridge Desktop",         CARD_INTEL_SNBD},
+    {"HD Graphics 3000",            CARD_INTEL_SNBM},
     /* Ironlake */
     {"Ironlake Mobile",             CARD_INTEL_ILKM},
     {"Ironlake Desktop",            CARD_INTEL_ILKD},
@@ -3952,6 +4013,17 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter *adapter, DWORD 
     }
 
     wined3d_adapter_init_limits(gl_info);
+
+  gl_vendor = wined3d_guess_gl_vendor(gl_info, gl_vendor_str, gl_renderer_str);
+  card_vendor = wined3d_guess_card_vendor(gl_vendor_str, gl_renderer_str);
+  TRACE("Found GL_VENDOR (%s)->(0x%04x/0x%04x).\n", debugstr_a(gl_vendor_str), gl_vendor, card_vendor);
+  
+  device = wined3d_guess_card(&shader_caps, &fragment_caps, gl_info->glsl_version, gl_renderer_str, &gl_vendor, &card_vendor);
+  TRACE("Found (fake) card: 0x%x (vendor id), 0x%x (device id).\n", card_vendor, device);
+
+  if (match_apple_broken_uniforms(gl_info, gl_renderer_str, gl_vendor, card_vendor, device)) {
+    quirk_arb_constants(gl_info);
+  }
 
     if (gl_info->supported[ARB_VERTEX_PROGRAM] && test_arb_vs_offset_limit(gl_info))
         gl_info->quirks |= WINED3D_QUIRK_ARB_VS_OFFSET_LIMIT;
