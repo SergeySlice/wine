@@ -768,7 +768,7 @@ static HRESULT WINAPI ddraw_surface7_GetAttachedSurface(IDirectDrawSurface7 *ifa
     int i;
 
     if (!This) {
-        return 0;
+        return DDERR_INVALIDPARAMS;
     }
 
     TRACE("iface %p, caps %p, attachment %p.\n", iface, Caps, Surface);
@@ -858,7 +858,7 @@ static HRESULT WINAPI ddraw_surface4_GetAttachedSurface(IDirectDrawSurface4 *ifa
     HRESULT hr;
 
     if (!surface) {
-        return 0;
+        return DDERR_INVALIDPARAMS;
     }
 
     TRACE("iface %p, caps %p, attachment %p.\n", iface, caps, attachment);
@@ -888,7 +888,7 @@ static HRESULT WINAPI ddraw_surface3_GetAttachedSurface(IDirectDrawSurface3 *ifa
     HRESULT hr;
 
     if (!surface) {
-        return 0;
+        return DDERR_INVALIDPARAMS;
     }
 
     TRACE("iface %p, caps %p, attachment %p.\n", iface, caps, attachment);
@@ -923,7 +923,7 @@ static HRESULT WINAPI ddraw_surface2_GetAttachedSurface(IDirectDrawSurface2 *ifa
     HRESULT hr;
 
     if (!surface) {
-        return 0;
+        return DDERR_INVALIDPARAMS;
     }
 
     TRACE("iface %p, caps %p, attachment %p.\n", iface, caps, attachment);
@@ -958,7 +958,7 @@ static HRESULT WINAPI ddraw_surface1_GetAttachedSurface(IDirectDrawSurface *ifac
     HRESULT hr;
 
     if (!surface) {
-        return 0;
+        return DDERR_INVALIDPARAMS;
     }
 
     TRACE("iface %p, caps %p, attachment %p.\n", iface, caps, attachment);
@@ -1009,6 +1009,10 @@ static HRESULT surface_lock(struct ddraw_surface *surface,
 
     TRACE("surface %p, rect %s, surface_desc %p, flags %#x, h %p.\n",
             surface, wine_dbgstr_rect(rect), surface_desc, flags, h);
+
+    if (!surface) {
+        return DDERR_INVALIDPARAMS;
+    }
 
     /* surface->surface_desc.dwWidth and dwHeight are changeable, thus lock */
     wined3d_mutex_lock();
@@ -1089,6 +1093,10 @@ static HRESULT WINAPI ddraw_surface7_Lock(IDirectDrawSurface7 *iface,
 {
     struct ddraw_surface *surface = impl_from_IDirectDrawSurface7(iface);
 
+    if (!surface) {
+        return DDERR_INVALIDPARAMS;
+    }
+
     TRACE("iface %p, rect %s, surface_desc %p, flags %#x, h %p.\n",
             iface, wine_dbgstr_rect(rect), surface_desc, flags, h);
 
@@ -1106,6 +1114,10 @@ static HRESULT WINAPI ddraw_surface4_Lock(IDirectDrawSurface4 *iface, RECT *rect
         DDSURFACEDESC2 *surface_desc, DWORD flags, HANDLE h)
 {
     struct ddraw_surface *surface = impl_from_IDirectDrawSurface4(iface);
+
+    if (!surface) {
+        return DDERR_INVALIDPARAMS;
+    }
 
     TRACE("iface %p, rect %s, surface_desc %p, flags %#x, h %p.\n",
             iface, wine_dbgstr_rect(rect), surface_desc, flags, h);
@@ -1126,6 +1138,10 @@ static HRESULT WINAPI ddraw_surface3_Lock(IDirectDrawSurface3 *iface, RECT *rect
     struct ddraw_surface *surface = impl_from_IDirectDrawSurface3(iface);
     DDSURFACEDESC2 surface_desc2;
     HRESULT hr;
+
+    if (!surface) {
+        return DDERR_INVALIDPARAMS;
+    }
 
     TRACE("iface %p, rect %s, surface_desc %p, flags %#x, h %p.\n",
             iface, wine_dbgstr_rect(rect), surface_desc, flags, h);
@@ -1153,6 +1169,10 @@ static HRESULT WINAPI ddraw_surface2_Lock(IDirectDrawSurface2 *iface, RECT *rect
     DDSURFACEDESC2 surface_desc2;
     HRESULT hr;
 
+    if (!surface) {
+        return DDERR_INVALIDPARAMS;
+    }
+
     TRACE("iface %p, rect %s, surface_desc %p, flags %#x, h %p.\n",
             iface, wine_dbgstr_rect(rect), surface_desc, flags, h);
 
@@ -1178,6 +1198,11 @@ static HRESULT WINAPI ddraw_surface1_Lock(IDirectDrawSurface *iface, RECT *rect,
     struct ddraw_surface *surface = impl_from_IDirectDrawSurface(iface);
     DDSURFACEDESC2 surface_desc2;
     HRESULT hr;
+
+    if (!surface) {
+        return DDERR_INVALIDPARAMS;
+    }
+
     TRACE("iface %p, rect %s, surface_desc %p, flags %#x, h %p.\n",
             iface, wine_dbgstr_rect(rect), surface_desc, flags, h);
 
@@ -1215,6 +1240,10 @@ static HRESULT WINAPI DECLSPEC_HOTPATCH ddraw_surface7_Unlock(IDirectDrawSurface
     struct ddraw_surface *surface = impl_from_IDirectDrawSurface7(iface);
     HRESULT hr;
 
+    if (!surface) {
+        return DDERR_INVALIDPARAMS;
+    }
+
     TRACE("iface %p, rect %s.\n", iface, wine_dbgstr_rect(pRect));
 
     wined3d_mutex_lock();
@@ -1230,6 +1259,10 @@ static HRESULT WINAPI DECLSPEC_HOTPATCH ddraw_surface4_Unlock(IDirectDrawSurface
 {
     struct ddraw_surface *surface = impl_from_IDirectDrawSurface4(iface);
 
+    if (!surface) {
+        return DDERR_INVALIDPARAMS;
+    }
+
     TRACE("iface %p, rect %p.\n", iface, pRect);
 
     return ddraw_surface7_Unlock(&surface->IDirectDrawSurface7_iface, pRect);
@@ -1238,6 +1271,10 @@ static HRESULT WINAPI DECLSPEC_HOTPATCH ddraw_surface4_Unlock(IDirectDrawSurface
 static HRESULT WINAPI DECLSPEC_HOTPATCH ddraw_surface3_Unlock(IDirectDrawSurface3 *iface, void *data)
 {
     struct ddraw_surface *surface = impl_from_IDirectDrawSurface3(iface);
+
+    if (!surface) {
+        return DDERR_INVALIDPARAMS;
+    }
 
     TRACE("iface %p, data %p.\n", iface, data);
 
@@ -1249,6 +1286,10 @@ static HRESULT WINAPI DECLSPEC_HOTPATCH ddraw_surface2_Unlock(IDirectDrawSurface
 {
     struct ddraw_surface *surface = impl_from_IDirectDrawSurface2(iface);
 
+    if (!surface) {
+        return DDERR_INVALIDPARAMS;
+    }
+
     TRACE("iface %p, data %p.\n", iface, data);
 
     /* data might not be the LPRECT of later versions, so drop it. */
@@ -1258,6 +1299,10 @@ static HRESULT WINAPI DECLSPEC_HOTPATCH ddraw_surface2_Unlock(IDirectDrawSurface
 static HRESULT WINAPI DECLSPEC_HOTPATCH ddraw_surface1_Unlock(IDirectDrawSurface *iface, void *data)
 {
     struct ddraw_surface *surface = impl_from_IDirectDrawSurface(iface);
+
+    if (!surface) {
+        return DDERR_INVALIDPARAMS;
+    }
 
     TRACE("iface %p, data %p.\n", iface, data);
 
