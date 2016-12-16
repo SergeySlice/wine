@@ -251,6 +251,13 @@ DDRAW_Create(const GUID *guid,
     {
         device_type = WINED3D_DEVICE_TYPE_HAL;
     }
+    //Slice
+    /*
+    else if(guid && guid->Data1 == 0xaeb2cdd4)
+    {
+         device_type = WINED3D_DEVICE_TYPE_HAL;
+    }
+     */
     else
     {
         device_type = 0;
