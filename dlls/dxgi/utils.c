@@ -610,16 +610,24 @@ D3D_FEATURE_LEVEL dxgi_check_feature_level_support(struct dxgi_factory *factory,
         level_count = 0;
 
     shader_model = min(caps.VertexShaderVersion, caps.PixelShaderVersion);
+    //Slice
+    FIXME("shader_model: VS=%d, PS=%d\n", caps.VertexShaderVersion, caps.PixelShaderVersion);
+    if (shader_model < 5) {
+        shader_model = 5;
+    }
+
     for (i = 0; i < level_count; ++i)
     {
         for (j = 0; j < sizeof(feature_levels_sm) / sizeof(feature_levels_sm[0]); ++j)
         {
+            TRACE("feature_levels[%d]=%d, levels_sm[%d]=%d\n", i, feature_levels[i], j, feature_levels_sm[j].feature_level);
+
             if (feature_levels[i] == feature_levels_sm[j].feature_level)
             {
                 if (shader_model >= feature_levels_sm[j].sm)
                 {
                     selected_feature_level = feature_levels[i];
-                    TRACE("Choosing supported feature level %s (SM%u).\n",
+                    FIXME("Choosing supported feature level %s (SM%u).\n",
                             debug_feature_level(selected_feature_level), feature_levels_sm[j].sm);
                 }
                 break;
