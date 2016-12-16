@@ -344,21 +344,16 @@ static int CDROM_MediaChanged(int dev)
 }
 #endif
 
-
-/******************************************************************
- *		get_parent_device
- *
- * On Mac OS, get the device for the whole disk from a fd that points to a partition.
- * This is ugly and inefficient, but we have no choice since the partition fd doesn't
- * support the eject ioctl.
- */
 #ifdef __APPLE__
-static NTSTATUS get_parent_device( int fd, char *name, size_t len )
+/******************************************************************
+ *		get_device_service
+ *
+ * On Mac OS, get IOService object for a device from a fd.
+ */
+static NTSTATUS get_device_service( int fd, io_service_t *svc )
 {
-    NTSTATUS status = STATUS_NO_SUCH_FILE;
     struct stat st;
     int i;
-    io_service_t service;
     CFMutableDictionaryRef dict;
     CFTypeRef val;
 
@@ -381,15 +376,35 @@ static NTSTATUS get_parent_device( int fd, char *name, size_t len )
 
     CFDictionaryAddValue( dict, CFSTR("Removable"), kCFBooleanTrue );
 
-    service = IOServiceGetMatchingService( kIOMasterPortDefault, dict );
+    *svc = IOServiceGetMatchingService( kIOMasterPortDefault, dict );
+
+    if (!*svc) return STATUS_NO_SUCH_FILE;
+    return STATUS_SUCCESS;
+}
+
+/******************************************************************
+ *		get_parent_device_service
+ *
+ * On Mac OS, get the IOService object for the device for the whole
+ * disk from a fd that points to a partition. This is ugly and inefficient,
+ * but we have no choice since the partition fd doesn't support the eject ioctl.
+ */
+static NTSTATUS get_parent_device_service( int fd, io_service_t *svc )
+{
+    NTSTATUS status;
+    io_service_t service;
+
+    /* get the IOService object for the partition */
+    status = get_device_service( fd, &service );
+    if (status != STATUS_SUCCESS) return status;
 
     /* now look for the parent that has the "Whole" attribute set to TRUE */
 
+    status = STATUS_NO_SUCH_FILE;
     while (service)
     {
         io_service_t parent = 0;
         CFBooleanRef whole;
-        CFStringRef str;
         int ok;
 
         if (!IOObjectConformsTo( service, kIOMediaClass ))
@@ -400,14 +415,8 @@ static NTSTATUS get_parent_device( int fd, char *name, size_t len )
         CFRelease( whole );
         if (!ok) goto next;
 
-        if ((str = IORegistryEntryCreateCFProperty( service, CFSTR("BSD Name"), NULL, 0 )))
-        {
-            strcpy( name, "/dev/r" );
-            CFStringGetCString( str, name + 6, len - 6, kCFStringEncodingUTF8 );
-            CFRelease( str );
-            status = STATUS_SUCCESS;
-        }
-        IOObjectRelease( service );
+        *svc = service;
+        status = STATUS_SUCCESS;
         break;
 
 next:
@@ -415,6 +424,36 @@ next:
         IOObjectRelease( service );
         service = parent;
     }
+    return status;
+}
+
+/******************************************************************
+ *		get_parent_device
+ *
+ * On Mac OS, get the device for the whole disk from a fd that points to a partition.
+ * This is ugly and inefficient, but we have no choice since the partition fd doesn't
+ * support the eject ioctl.
+ */
+static NTSTATUS get_parent_device( int fd, char *name, size_t len )
+{
+    NTSTATUS status = STATUS_NO_SUCH_FILE;
+    io_service_t service;
+    CFStringRef str;
+
+    /* get the IOService object for the disk */
+    status = get_parent_device_service( fd, &service );
+    if (status != STATUS_SUCCESS) return status;
+
+    if ((str = IORegistryEntryCreateCFProperty( service, CFSTR("BSD Name"), NULL, 0 )))
+    {
+        strcpy( name, "/dev/r" );
+        CFStringGetCString( str, name + 6, len - 6, kCFStringEncodingUTF8 );
+        CFRelease( str );
+        status = STATUS_SUCCESS;
+    }
+    else
+        status = STATUS_NO_MEMORY;
+    IOObjectRelease( service );
     return status;
 }
 #endif
@@ -737,12 +776,36 @@ static NTSTATUS CDROM_GetControl(int dev, int fd, CDROM_AUDIO_CONTROL* cac)
  *		CDROM_GetDeviceNumber
  *
  */
-static NTSTATUS CDROM_GetDeviceNumber(int dev, STORAGE_DEVICE_NUMBER* devnum)
+static NTSTATUS CDROM_GetDeviceNumber(int dev, int fd, STORAGE_DEVICE_NUMBER* devnum)
 {
+#ifdef __APPLE__
+    io_service_t service;
+    CFNumberRef num;
+    NTSTATUS status = get_device_service( fd, &service );
+    if (status != STATUS_SUCCESS) return status;
+    /* What type of media is this? Is it a DVD? */
+    if (IOObjectConformsTo( service, "IODVDMedia" ))
+        devnum->DeviceType = FILE_DEVICE_DVD;
+    /* Is it a CD? */
+    else if (IOObjectConformsTo( service, "IOCDMedia" ))
+        devnum->DeviceType = FILE_DEVICE_CD_ROM;
+    else devnum->DeviceType = FILE_DEVICE_DISK;
+    num = IORegistryEntryCreateCFProperty( service, CFSTR("BSD Unit"), NULL, 0 );
+    CFNumberGetValue( num, kCFNumberSInt32Type, &devnum->DeviceNumber );
+    CFRelease( num );
+    num = IORegistryEntryCreateCFProperty( service, CFSTR("Partition ID"), NULL, 0 );
+    if (num)
+    {
+        CFNumberGetValue( num, kCFNumberSInt32Type, &devnum->PartitionNumber );
+        CFRelease( num );
+    }
+    else devnum->PartitionNumber = (ULONG)(-1);
+#else
     FIXME( "stub\n" );
     devnum->DeviceType = FILE_DEVICE_DISK;
     devnum->DeviceNumber = 1;
     devnum->PartitionNumber = 1;
+#endif
     return STATUS_SUCCESS;
 }
 
@@ -2860,6 +2923,7 @@ NTSTATUS CDROM_DeviceIoControl(HANDLE hDevice,
     }
 
 #ifdef __APPLE__
+    if (dwIoControlCode != IOCTL_STORAGE_GET_DEVICE_NUMBER)
     {
         char name[100];
 
@@ -2869,6 +2933,8 @@ NTSTATUS CDROM_DeviceIoControl(HANDLE hDevice,
          * the handle that the caller gave us.
          * Also for some reason it wants the fd to be closed before we even
          * open the parent if we're trying to eject the disk.
+         * We don't do this for IOCTL_STORAGE_GET_DEVICE_NUMBER, because it
+         * cares which partition we invoke it on.
          */
         if ((status = get_parent_device( fd, name, sizeof(name) ))) goto error;
         if (dwIoControlCode == IOCTL_STORAGE_EJECT_MEDIA)
@@ -2945,7 +3011,7 @@ NTSTATUS CDROM_DeviceIoControl(HANDLE hDevice,
         sz = sizeof(STORAGE_DEVICE_NUMBER);
         if (lpInBuffer != NULL || nInBufferSize != 0) status = STATUS_INVALID_PARAMETER;
         else if (nOutBufferSize < sz) status = STATUS_BUFFER_TOO_SMALL;
-        else status = CDROM_GetDeviceNumber(dev, lpOutBuffer);
+        else status = CDROM_GetDeviceNumber(dev, fd, lpOutBuffer);
         break;
 
     case IOCTL_STORAGE_RESET_DEVICE:
