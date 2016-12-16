@@ -814,6 +814,7 @@ static struct macdrv_win_data *macdrv_create_win_data(HWND hwnd, const RECT *win
 {
     struct macdrv_win_data *data;
     HWND parent;
+    DWORD ex_style;
 
     if (GetWindowThreadProcessId(hwnd, NULL) != GetCurrentThreadId()) return NULL;
 
@@ -830,6 +831,18 @@ static struct macdrv_win_data *macdrv_create_win_data(HWND hwnd, const RECT *win
 
     data->whole_rect = data->window_rect = *window_rect;
     data->client_rect = *client_rect;
+  /* - from 11819-4 */
+    ex_style = GetWindowLongW( hwnd, GWL_EXSTYLE );
+    if (ex_style & WS_EX_TRANSPARENT)
+    {
+        FIXME("transparent window, fixing window rect\n");
+        data->window_rect.right = data->window_rect.left;
+        data->window_rect.bottom = data->window_rect.top;
+        data->whole_rect = data->window_rect;
+        data->client_rect.right = data->client_rect.left;
+        data->client_rect.bottom = data->client_rect.top;
+    }
+  
 
     if (parent == GetDesktopWindow())
     {
@@ -2010,6 +2023,7 @@ void CDECL macdrv_WindowPosChanged(HWND hwnd, HWND insert_after, UINT swp_flags,
     struct macdrv_win_data *data;
     DWORD new_style = GetWindowLongW(hwnd, GWL_STYLE);
     RECT old_window_rect, old_whole_rect, old_client_rect;
+    DWORD ex_style;
 
     if (!(data = get_win_data(hwnd))) return;
 
@@ -2049,6 +2063,19 @@ void CDECL macdrv_WindowPosChanged(HWND hwnd, HWND insert_after, UINT swp_flags,
            hwnd, data->cocoa_window, wine_dbgstr_rect(window_rect),
            wine_dbgstr_rect(visible_rect), wine_dbgstr_rect(client_rect),
            new_style, swp_flags, surface);
+ /* - from 11819-4 */
+    ex_style = GetWindowLongW( hwnd, GWL_EXSTYLE );
+    if (ex_style & WS_EX_TRANSPARENT)
+    {
+        FIXME("transparent window, fixing window rect\n");
+        data->window_rect.right = data->window_rect.left;
+        data->window_rect.bottom = data->window_rect.top;
+        data->whole_rect.right = data->whole_rect.left;
+        data->whole_rect.bottom = data->whole_rect.top;
+        data->client_rect.right = data->client_rect.left;
+        data->client_rect.bottom = data->client_rect.top;
+    }
+ 
 
     if (!IsRectEmpty(&valid_rects[0]))
     {
@@ -2169,6 +2196,7 @@ void macdrv_window_frame_changed(HWND hwnd, const macdrv_event *event)
     UINT flags = SWP_NOACTIVATE | SWP_NOZORDER;
     int width, height;
     BOOL being_dragged;
+    DWORD ex_style;
 
     if (!hwnd) return;
     if (!(data = get_win_data(hwnd))) return;
@@ -2189,7 +2217,16 @@ void macdrv_window_frame_changed(HWND hwnd, const macdrv_event *event)
     rect = rect_from_cgrect(event->window_frame_changed.frame);
     macdrv_mac_to_window_rect(data, &rect);
     MapWindowPoints(0, parent, (POINT *)&rect, 2);
-
+  
+  /* - from 11819-4 */
+    ex_style = GetWindowLongW( hwnd, GWL_EXSTYLE );
+    if (ex_style & WS_EX_TRANSPARENT)
+    {
+        FIXME("transparent window, fixing window rect\n");
+        rect.right = rect.left;
+        rect.bottom = rect.top;
+    }
+  
     width = rect.right - rect.left;
     height = rect.bottom - rect.top;
 

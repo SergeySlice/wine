@@ -1840,6 +1840,7 @@ static struct x11drv_win_data *X11DRV_create_win_data( HWND hwnd, const RECT *wi
     Display *display;
     struct x11drv_win_data *data;
     HWND parent;
+    DWORD ex_style;
 
     if (!(parent = GetAncestor( hwnd, GA_PARENT ))) return NULL;  /* desktop */
 
@@ -1855,6 +1856,17 @@ static struct x11drv_win_data *X11DRV_create_win_data( HWND hwnd, const RECT *wi
 
     data->whole_rect = data->window_rect = *window_rect;
     data->client_rect = *client_rect;
+    ex_style = GetWindowLongW( hwnd, GWL_EXSTYLE );
+    if (ex_style & WS_EX_TRANSPARENT)
+    {
+        FIXME("transparent window, fixing window rect\n");
+        data->window_rect.right = data->window_rect.left;
+        data->window_rect.bottom = data->window_rect.top;
+        data->whole_rect = data->window_rect;
+        data->client_rect.right = data->client_rect.left;
+        data->client_rect.bottom = data->client_rect.top;
+    }
+
     if (parent == GetDesktopWindow())
     {
         create_whole_window( data );
@@ -2276,6 +2288,7 @@ void CDECL X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags
     DWORD new_style = GetWindowLongW( hwnd, GWL_STYLE );
     RECT old_window_rect, old_whole_rect, old_client_rect;
     int event_type;
+    DWORD ex_style;
 
     if (!(data = get_win_data( hwnd ))) return;
 
@@ -2296,6 +2309,18 @@ void CDECL X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags
 
     TRACE( "win %p window %s client %s style %08x flags %08x\n",
            hwnd, wine_dbgstr_rect(rectWindow), wine_dbgstr_rect(rectClient), new_style, swp_flags );
+
+    ex_style = GetWindowLongW( hwnd, GWL_EXSTYLE );
+    if (ex_style & WS_EX_TRANSPARENT)
+    {
+        FIXME("transparent window, fixing window rect\n");
+        data->window_rect.right = data->window_rect.left;
+        data->window_rect.bottom = data->window_rect.top;
+        data->whole_rect.right = data->whole_rect.left;
+        data->whole_rect.bottom = data->whole_rect.top;
+        data->client_rect.right = data->client_rect.left;
+        data->client_rect.bottom = data->client_rect.top;
+    }
 
     if (!IsRectEmpty( &valid_rects[0] ))
     {
