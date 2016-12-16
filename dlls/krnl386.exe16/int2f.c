@@ -1027,8 +1027,8 @@ static void MSCDEX_Handler(CONTEXT* context)
                ERR("ES:BX==0 ! SEGFAULT ?\n");
                ERR("-->BX=0x%04x, ES=0x%04x, DS=0x%04x, CX=0x%04x\n",
                    BX_reg(context), context->SegEs, context->SegDs, CX_reg(context));
-               driver_request[4] |= 0x80;
-               driver_request[3] = 5;  /* bad request length */
+           //    driver_request[4] |= 0x80;
+           //    driver_request[3] = 5;  /* bad request length */
                return;
            }
 
