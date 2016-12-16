@@ -19564,6 +19564,261 @@ done:
     DestroyWindow(window);
 }
 
+static void do_test_indexed_vertex_blending(IDirect3DDevice9 *device, const char *test_id_str)
+{
+    D3DCAPS9 caps;
+    D3DCOLOR color;
+    HRESULT hr;
+    int i;
+
+    static const D3DMATRIX view_mat =
+    {{{
+        2.0f / 10.0f, 0.0f,         0.0f, 0.0f,
+        0.0f,         2.0f / 10.0f, 0.0f, 0.0f,
+        0.0f,         0.0f,         1.0f, 0.0f,
+        0.0f,         0.0f,         0.0f, 1.0f
+    }}},
+    upper_left =
+    {{{
+         1.0f, 0.0f, 0.0f, 0.0f,
+         0.0f, 1.0f, 0.0f, 0.0f,
+         0.0f, 0.0f, 1.0f, 0.0f,
+        -4.0f, 4.0f, 0.0f, 1.0f
+    }}},
+    lower_left =
+    {{{
+         1.0f,  0.0f, 0.0f, 0.0f,
+         0.0f,  1.0f, 0.0f, 0.0f,
+         0.0f,  0.0f, 1.0f, 0.0f,
+        -4.0f, -4.0f, 0.0f, 1.0f
+    }}},
+    upper_right =
+    {{{
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        4.0f, 4.0f, 0.0f, 1.0f
+    }}},
+    lower_right =
+    {{{
+        1.0f,  0.0f, 0.0f, 0.0f,
+        0.0f,  1.0f, 0.0f, 0.0f,
+        0.0f,  0.0f, 1.0f, 0.0f,
+        4.0f, -4.0f, 0.0f, 1.0f
+    }}};
+
+    static const POINT quad_upper_right_points[] =
+    {
+        {576, 48}, {-1, -1},
+    },
+    quad_upper_right_empty_points[] =
+    {
+        {64, 48}, {64, 432}, {576, 432}, {320, 240}, {-1, -1}
+    },
+    quad_center_points[] =
+    {
+        {320, 240}, {-1, -1}
+    },
+    quad_center_empty_points[] =
+    {
+        {64, 48}, {576, 48}, {64, 432}, {576, 432}, {-1, -1}
+    },
+    quad_upper_center_points[] =
+    {
+        {320, 48}, {-1, -1}
+    },
+    quad_upper_center_empty_points[] =
+    {
+        {320, 240}, {64, 48}, {576, 48}, {-1, -1}
+    },
+    quad_fullscreen_points[] =
+    {
+        {320, 48}, {320, 240}, {64, 48}, {576, 48}, {64, 432}, {576, 432}, {-1, -1}
+    },
+    quad_fullscreen_empty_points[] =
+    {
+        {-1, -1}
+    };
+
+    static const struct
+    {
+        struct
+        {
+            struct vec3 position;
+            struct vec3 blendweights;
+            DWORD matrixIndices;
+        }
+        vertex_data[4];
+        const POINT *quad_points;
+        const POINT *empty_points;
+    }
+    tests[] =
+    {
+        /* upper right */
+        {
+            {{{-1.0f, -1.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, 0x06070405},
+             {{-1.0f,  1.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, 0x06070405},
+             {{ 1.0f, -1.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, 0x06070405},
+             {{ 1.0f,  1.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, 0x06070405}},
+            quad_upper_right_points, quad_upper_right_empty_points
+        },
+        /* center */
+        {
+            {{{-1.0f, -1.0f, 0.0f}, {0.25f, 0.25f, 0.25f}, 0x06070405},
+             {{-1.0f,  1.0f, 0.0f}, {0.25f, 0.25f, 0.25f}, 0x06070405},
+             {{ 1.0f, -1.0f, 0.0f}, {0.25f, 0.25f, 0.25f}, 0x06070405},
+             {{ 1.0f,  1.0f, 0.0f}, {0.25f, 0.25f, 0.25f}, 0x06070405}},
+            quad_center_points, quad_center_empty_points
+        },
+        /*  upper center */
+        {
+            {{{-1.0f, -1.0f, 0.0f}, {0.5f, 0.0f, 0.0f}, 0x06070405},
+             {{-1.0f,  1.0f, 0.0f}, {0.5f, 0.0f, 0.0f}, 0x06070405},
+             {{ 1.0f, -1.0f, 0.0f}, {0.5f, 0.0f, 0.0f}, 0x06070405},
+             {{ 1.0f,  1.0f, 0.0f}, {0.5f, 0.0f, 0.0f}, 0x06070405}},
+            quad_upper_center_points, quad_upper_center_empty_points
+        },
+        /*  full screen */
+        {
+            {{{-1.0f, -1.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, 0x06070405},
+             {{-1.0f,  1.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, 0x06070405},
+             {{ 1.0f, -1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, 0x06070405},
+             {{ 1.0f,  1.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, 0x06070405}},
+            quad_fullscreen_points, quad_fullscreen_empty_points
+        }
+    };
+
+    hr = IDirect3DDevice9_GetDeviceCaps(device, &caps);
+    ok(SUCCEEDED(hr), "Failed to get device caps, hr %#x.\n", hr);
+    if (caps.MaxVertexBlendMatrixIndex < 7 || caps.MaxVertexBlendMatrices < 4)
+    {
+        skip("(%s) Too few vertex blend matrices supported: MaxVertexBlendMatrices=%u, MaxVertexBlendMatrixIndex=%u\n",
+            test_id_str, caps.MaxVertexBlendMatrices,caps.MaxVertexBlendMatrixIndex);
+        goto done;
+    }
+    hr = IDirect3DDevice9_SetRenderState(device, D3DRS_LIGHTING, FALSE);
+    ok(hr == D3D_OK, "IDirect3DDevice9_SetRenderState returned %08x\n", hr);
+
+    hr = IDirect3DDevice9_SetTransform(device, D3DTS_VIEW, &view_mat);
+    ok(hr == D3D_OK, "IDirect3DDevice9_SetTransform returned %08x\n", hr);
+
+    hr = IDirect3DDevice9_SetTransform(device, D3DTS_WORLDMATRIX(5), &upper_left);
+    ok(hr == D3D_OK, "(%s) IDirect3DDevice9_SetTransform returned %08x\n", test_id_str, hr);
+    hr = IDirect3DDevice9_SetTransform(device, D3DTS_WORLDMATRIX(4), &lower_left);
+    ok(hr == D3D_OK, "(%s) IDirect3DDevice9_SetTransform returned %08x\n", test_id_str, hr);
+    hr = IDirect3DDevice9_SetTransform(device, D3DTS_WORLDMATRIX(7), &lower_right);
+    ok(hr == D3D_OK, "(%s) IDirect3DDevice9_SetTransform returned %08x\n", test_id_str, hr);
+    hr = IDirect3DDevice9_SetTransform(device, D3DTS_WORLDMATRIX(6), &upper_right);
+    ok(hr == D3D_OK, "(%s) IDirect3DDevice9_SetTransform returned %08x\n", test_id_str, hr);
+
+    hr = IDirect3DDevice9_SetRenderState(device, D3DRS_VERTEXBLEND, D3DVBF_3WEIGHTS);
+    ok(hr == D3D_OK, "(%s) IDirect3DDevice9_SetRenderState failed %08x\n", test_id_str, hr);
+    hr = IDirect3DDevice9_SetRenderState(device, D3DRS_INDEXEDVERTEXBLENDENABLE, TRUE);
+    ok(hr == D3D_OK, "(%s) IDirect3DDevice9_SetRenderState D3DRS_INDEXEDVERTEXBLENDENABLE failed %08x\n", test_id_str, hr);
+
+    for (i = 0; i < sizeof(tests) / sizeof(tests[0]); ++i)
+    {
+        const POINT *point;
+
+        hr = IDirect3DDevice9_Clear(device, 0, NULL, D3DCLEAR_TARGET, 0xff000000, 0.0, 0);
+        ok(SUCCEEDED(hr), "Failed to clear %08x\n", hr);
+
+        hr = IDirect3DDevice9_BeginScene(device);
+        ok(SUCCEEDED(hr), "Failed to begin scene, hr %#x.\n", hr);
+
+        hr = IDirect3DDevice9_SetFVF(device, D3DFVF_XYZB4 | D3DFVF_LASTBETA_UBYTE4);
+        ok(SUCCEEDED(hr), "(%s) Failed to set FVF, hr %#x.\n", test_id_str, hr);
+
+        hr = IDirect3DDevice9_DrawPrimitiveUP(device, D3DPT_TRIANGLESTRIP, 2, tests[i].vertex_data, 6 * sizeof(float) + sizeof(DWORD));
+        ok(SUCCEEDED(hr), "Failed to draw, hr %#x.\n", hr);
+
+        hr = IDirect3DDevice9_EndScene(device);
+        ok(SUCCEEDED(hr), "Failed to end scene, hr %#x.\n", hr);
+
+        point = tests[i].quad_points;
+        while (point->x != -1 && point->y != -1)
+        {
+            color = getPixelColor(device, point->x, point->y);
+            ok(color_match(color, 0x00ffffff, 1), "(%s) Expected quad at %dx%d.\n", test_id_str, point->x, point->y);
+            ++point;
+        }
+
+        point = tests[i].empty_points;
+        while (point->x != -1 && point->y != -1)
+        {
+            color = getPixelColor(device, point->x, point->y);
+            ok(color_match(color, 0x00000000, 1), "(%s) Unexpected quad at %dx%d.\n", test_id_str, point->x, point->y);
+            ++point;
+        }
+
+        hr = IDirect3DDevice9_Present(device, NULL, NULL, NULL, NULL);
+        ok(SUCCEEDED(hr), "Failed to present, hr %#x.\n", hr);
+    }
+done:
+	;
+}
+
+static void test_indexed_vertex_blending(void)
+{
+IDirect3D9 *d3d;
+IDirect3DDevice9 *device;
+ULONG refcount;
+HWND window;
+D3DPRESENT_PARAMETERS present_parameters = {0};
+
+    window = CreateWindowA("static", "d3d9_test", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+            0, 0, 640, 480, NULL, NULL, NULL, NULL);
+    d3d = Direct3DCreate9(D3D_SDK_VERSION);
+    ok(!!d3d, "Failed to create a D3D object.\n");
+    if (!(device = create_device(d3d, window, window, TRUE)))
+    {
+        skip("Failed to create a D3D device, skipping tests.\n");
+        goto done;
+    }
+    present_parameters.Windowed = TRUE;
+    present_parameters.hDeviceWindow = window;
+    present_parameters.SwapEffect = D3DSWAPEFFECT_DISCARD;
+    present_parameters.BackBufferWidth = 640;
+    present_parameters.BackBufferHeight = 480;
+    present_parameters.BackBufferFormat = D3DFMT_A8R8G8B8;
+    present_parameters.EnableAutoDepthStencil = TRUE;
+    present_parameters.AutoDepthStencilFormat = D3DFMT_D24S8;
+
+    if (!SUCCEEDED(IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, window,
+            D3DCREATE_HARDWARE_VERTEXPROCESSING, &present_parameters, &device)))
+    {
+        skip("Failed to create a D3D device, skipping tests.\n");
+        goto done;
+    }
+    do_test_indexed_vertex_blending(device,"IVB software");
+    refcount = IDirect3DDevice9_Release(device);
+    ok(!refcount, "Device has %u references left.\n", refcount);
+
+    if (!SUCCEEDED(IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, window,
+            D3DCREATE_SOFTWARE_VERTEXPROCESSING, &present_parameters, &device)))
+    {
+        skip("Failed to create a D3D device, skipping tests.\n");
+        goto done;
+    }
+    do_test_indexed_vertex_blending(device,"IVB hardware");
+    refcount = IDirect3DDevice9_Release(device);
+    ok(!refcount, "Device has %u references left.\n", refcount);
+
+    if (!SUCCEEDED(IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, window,
+            D3DCREATE_MIXED_VERTEXPROCESSING, &present_parameters, &device)))
+    {
+        skip("Failed to create a D3D device, skipping tests.\n");
+        goto done;
+    }
+    do_test_indexed_vertex_blending(device,"IVB mixed");
+    refcount = IDirect3DDevice9_Release(device);
+    ok(!refcount, "Device has %u references left.\n", refcount);
+
+done:
+    IDirect3D9_Release(d3d);
+    DestroyWindow(window);
+}
+
 static void test_updatetexture(void)
 {
     IDirect3DDevice9 *device;
@@ -22335,6 +22590,7 @@ START_TEST(visual)
     test_multisample_mismatch();
     test_texcoordindex();
     test_vertex_blending();
+    test_indexed_vertex_blending();
     test_updatetexture();
     test_depthbias();
     test_flip();

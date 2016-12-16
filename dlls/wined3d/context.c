@@ -3535,6 +3535,8 @@ BOOL context_apply_draw_state(struct wined3d_context *context,
     {
         device->shader_backend->shader_load_constants(device->shader_priv, context, state);
         context->constant_update_mask = 0;
+        for (i = 0; i < MAX_VB_UPD_WORDS; i++)
+            context->blend_mat_update_mask[i] = 0;
     }
 
     if (context->update_shader_resource_bindings)

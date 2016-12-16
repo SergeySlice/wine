@@ -187,6 +187,9 @@ static inline enum complex_fixup get_complex_fixup(struct color_fixup_desc fixup
 #define MAX_UNORDERED_ACCESS_VIEWS  8
 #define MAX_VERTEX_BLENDS           4
 #define MAX_MULTISAMPLE_TYPES       8
+#define MAX_VERTEX_BLEND_IND_UBO    255
+#define MAX_VERTEX_BLEND_IND_UNF    149
+#define MAX_VB_UPD_WORDS ((MAX_VERTEX_BLEND_IND_UBO+1 + 31)/32)
 
 struct min_lookup
 {
@@ -1565,6 +1568,7 @@ struct wined3d_context
     DWORD last_swizzle_map; /* MAX_ATTRIBS, 16 */
     DWORD shader_update_mask;
     DWORD constant_update_mask;
+    DWORD blend_mat_update_mask[MAX_VB_UPD_WORDS];
     DWORD                   numbered_array_mask;
     GLenum                  tracking_parm;     /* Which source is tracking current colour         */
     GLenum                  untracked_materials[2];
@@ -2209,6 +2213,7 @@ struct wined3d_d3d_limits
     UINT ffp_textures;
     UINT ffp_blend_stages;
     UINT ffp_vertex_blend_matrices;
+    UINT ffp_max_vertex_blend_matrix_index;
 };
 
 typedef void (WINE_GLAPI *wined3d_ffp_attrib_func)(const void *data);
@@ -2391,7 +2396,8 @@ struct wined3d_ffp_vs_settings
     DWORD texcoords       : 8;  /* MAX_TEXTURES */
     DWORD ortho_fog       : 1;
     DWORD flatshading     : 1;
-    DWORD padding         : 10;
+    DWORD vb_indices      : 1;
+    DWORD padding         : 9;
 
     DWORD texgen[MAX_TEXTURES];
 
