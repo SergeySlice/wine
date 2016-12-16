@@ -1966,28 +1966,6 @@ cards_nvidia_binary[] =
  * eg HD 4800 is returned for multiple cards, even for RV790 based ones. */
 cards_amd_binary[] =
 {
-    /* by family name */
-    {"Hawaii",                      CARD_AMD_RADEON_R9    },
-    {"Kaveri",                      CARD_AMD_RADEON_R7    },
-    {"Kabini",                      CARD_AMD_RADEON_R3    },
-    {"Bonair",                      CARD_AMD_RADEON_HD8770},
-    /* Southern Islands */
-    {"Oland",                       CARD_AMD_RADEON_HD8670},
-    {"Hainan",                      CARD_AMD_RADEON_HD8600M},
-    {"Tahiti",                      CARD_AMD_RADEON_HD7900},
-    {"Pitcairn",                    CARD_AMD_RADEON_HD7800},
-    {"Verde",                       CARD_AMD_RADEON_HD7700},
-    /* Northern Islands */
-    {"Cayman",                      CARD_AMD_RADEON_HD6900},
-    {"Barts",                       CARD_AMD_RADEON_HD6800},
-    {"Turks",                       CARD_AMD_RADEON_HD6600},
-    {"Caicos",                      CARD_AMD_RADEON_HD6400},
-    /* Evergreen */
-    {"Hemlock",                     CARD_AMD_RADEON_HD5900},
-    {"Cypress",                     CARD_AMD_RADEON_HD5800},
-    {"Juniper",                     CARD_AMD_RADEON_HD5700},
-    {"Redwood",                     CARD_AMD_RADEON_HD5600},
-    {"Cedar",                       CARD_AMD_RADEON_HD5400},
     /* Southern Islands */
     {"HD 7900",                     CARD_AMD_RADEON_HD7900},
     {"HD 7800",                     CARD_AMD_RADEON_HD7800},
