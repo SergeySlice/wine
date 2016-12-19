@@ -738,11 +738,12 @@ static NSString* WineLocalizedString(unsigned int stringID)
         NSDictionary* options = nil;
 
 #if defined(MAC_OS_X_VERSION_10_8) && MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_8
+#ifdef  kCGDisplayShowDuplicateLowResolutionModes        
         if (&kCGDisplayShowDuplicateLowResolutionModes != NULL)
             options = [NSDictionary dictionaryWithObject:[NSNumber numberWithBool:TRUE]
                                                   forKey:(NSString*)kCGDisplayShowDuplicateLowResolutionModes];
 #endif
-
+#endif
         NSArray *modes = [(NSArray*)CGDisplayCopyAllDisplayModes(displayID, (CFDictionaryRef)options) autorelease];
         for (id candidateModeObject in modes)
         {

@@ -559,6 +559,7 @@ static CFArrayRef copy_display_modes(CGDirectDisplayID display)
     CFArrayRef modes = NULL;
 
 #if defined(MAC_OS_X_VERSION_10_8) && MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_8
+#ifdef kCGDisplayShowDuplicateLowResolutionModes    
     if (&kCGDisplayShowDuplicateLowResolutionModes != NULL &&
         CGDisplayModeGetPixelWidth != NULL && CGDisplayModeGetPixelHeight != NULL)
     {
@@ -667,6 +668,7 @@ static CFArrayRef copy_display_modes(CGDirectDisplayID display)
     }
     else
 #endif
+#endif        
         modes = CGDisplayCopyAllDisplayModes(display, NULL);
 
     return modes;
