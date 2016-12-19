@@ -1570,7 +1570,7 @@ static const struct gpu_description *query_gpu_description(const struct wined3d_
             device = value;
         if (GL_EXTCALL(wglQueryCurrentRendererIntegerWINE(WGL_RENDERER_VIDEO_MEMORY_WINE, &value)))
             *vram_bytes = (UINT64)value * 1024 * 1024;
-        FIXME("Card reports vendor PCI ID 0x%04x, device PCI ID 0x%04x, 0x%s bytes of video memory.\n",
+        TRACE("Card reports vendor PCI ID 0x%04x, device PCI ID 0x%04x, 0x%s bytes of video memory.\n",
                 vendor, device, wine_dbgstr_longlong(*vram_bytes));
     }
 
@@ -1583,13 +1583,13 @@ static const struct gpu_description *query_gpu_description(const struct wined3d_
     if (wined3d_settings.pci_device_id != PCI_DEVICE_NONE)
     {
         device = wined3d_settings.pci_device_id;
-        FIXME("Overriding device PCI ID with 0x%04x.\n", device);
+        TRACE("Overriding device PCI ID with 0x%04x.\n", device);
     }
 
     if (wined3d_settings.emulated_textureram)
     {
         *vram_bytes = wined3d_settings.emulated_textureram;
-        FIXME("Overriding amount of video memory with 0x%s bytes.\n",
+        TRACE("Overriding amount of video memory with 0x%s bytes.\n",
                 wine_dbgstr_longlong(*vram_bytes));
     }
 

@@ -3548,7 +3548,12 @@ static HRESULT surface_cpu_blt(struct wined3d_texture *dst_texture, unsigned int
     }
 
     if (flags & WINED3D_BLT_DEPTH_FILL)
-        FIXME("WINED3D_BLT_DEPTH_FILL needs to be implemented!\n");
+    {
+        static int once_b = 0;
+        if (!once_b++) {
+            FIXME("WINED3D_BLT_DEPTH_FILL needs to be implemented!\n");
+        }
+    }
 
     /* Now the 'with source' blits. */
     if (src_texture)
@@ -3561,8 +3566,11 @@ static HRESULT surface_cpu_blt(struct wined3d_texture *dst_texture, unsigned int
         if (filter != WINED3D_TEXF_NONE && filter != WINED3D_TEXF_POINT
                 && (src_width != dst_width || src_height != dst_height))
         {
+            static int once = 0;
             /* Can happen when d3d9 apps do a StretchRect() call which isn't handled in GL. */
-            FIXME("Filter %s not supported in software blit.\n", debug_d3dtexturefiltertype(filter));
+            if (!once++) {
+                FIXME("Filter %s not supported in software blit.\n", debug_d3dtexturefiltertype(filter));
+            }
         }
 
         xinc = (src_width << 16) / dst_width;

@@ -2513,7 +2513,12 @@ static HRESULT WINAPI d3d_device3_GetRenderState(IDirect3DDevice3 *iface,
                         && colorarg1 == WINED3DTA_TEXTURE && colorarg2 == WINED3DTA_CURRENT
                         && alphaop == (tex_alpha ? WINED3D_TOP_SELECT_ARG1 : WINED3D_TOP_SELECT_ARG2)
                         && alphaarg1 == WINED3DTA_TEXTURE && alphaarg2 == WINED3DTA_CURRENT))
-                    ERR("Unexpected texture stage state setup, returning D3DTBLEND_MODULATE - likely erroneous.\n");
+                {
+                    static int once = 0;
+                    if (!once++) {
+                        ERR("Unexpected texture stage state setup, returning D3DTBLEND_MODULATE - likely erroneous.\n");
+                    }
+                }
 
                 *value = D3DTBLEND_MODULATE;
             }
