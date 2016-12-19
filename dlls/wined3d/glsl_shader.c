@@ -593,7 +593,9 @@ static void shader_glsl_load_samplers(const struct wined3d_gl_info *gl_info,
             mapped_unit = tex_unit_map[sampler_info[i].base_idx + j];
             if (mapped_unit == WINED3D_UNMAPPED_STAGE || mapped_unit >= gl_info->limits.combined_samplers)
             {
-                ERR("Trying to load sampler %s on unsupported unit %u.\n", sampler_name->buffer, mapped_unit);
+                //WINED3D_UNMAPPED_STAGE = 0xFFFFFFFF =
+                //err:d3d_shader:shader_glsl_load_samplers Trying to load sampler vs_sampler3 on unsupported unit 4294967295.
+                ERR("Trying to load sampler %s on unsupported unit %x.\n", sampler_name->buffer, mapped_unit);
                 continue;
             }
 
@@ -1432,7 +1434,7 @@ static void shader_glsl_load_constants(void *shader_priv, struct wined3d_context
     const struct wined3d_gl_info *gl_info = context->gl_info;
     struct shader_glsl_priv *priv = shader_priv;
     float position_fixup[4];
-    DWORD update_mask;
+    DWORD update_mask = 0;
 
     struct glsl_shader_prog_link *prog = ctx_data->glsl_program;
     UINT constant_version;

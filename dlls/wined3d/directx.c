@@ -6378,6 +6378,8 @@ static BOOL wined3d_adapter_init(struct wined3d_adapter *adapter, UINT ordinal, 
     TRACE("adapter %p, ordinal %u.\n", adapter, ordinal);
 
     adapter->ordinal = ordinal;
+//    adapter->monitorPoint.x = -1;
+//    adapter->monitorPoint.y = -1;
 
 /* Dynamically load all GL core functions */
 #ifdef USE_WIN32_OPENGL
@@ -6491,8 +6493,10 @@ static void wined3d_adapter_init_nogl(struct wined3d_adapter *adapter, UINT ordi
 {
     DISPLAY_DEVICEW display_device;
 
-    memset(adapter, 0, sizeof(*adapter));
+    memset(adapter, 0, sizeof(struct wined3d_adapter));
     adapter->ordinal = ordinal;
+//    adapter->monitorPoint.x = -1;
+//    adapter->monitorPoint.y = -1;
 
     adapter->driver_info.name = "Display";
     adapter->driver_info.description = "WineD3D DirectDraw Emulation";

@@ -873,6 +873,7 @@ ULONG CDECL wined3d_texture_decref(struct wined3d_texture *texture)
 
     if (!refcount)
     {
+    	 //Slice - here HeroesVI crashed
         /* Wait for the texture to become idle if it's using user memory,
          * since the application is allowed to free that memory once the
          * texture is destroyed. Note that this implies that

@@ -91,6 +91,10 @@ struct wined3d_settings wined3d_settings =
     ~0U,            /* No PS shader model limit by default. */
     ~0u,            /* No CS shader model limit by default. */
     FALSE,          /* 3D support enabled by default. */
+  FALSE,            /* Override vertex constants? */
+  256,             /* Number of vertex shaders to use */
+  253,              /* default for UserQuirks */
+
 };
 
 struct wined3d * CDECL wined3d_create(DWORD flags)
@@ -251,6 +255,7 @@ static BOOL wined3d_dll_init(HINSTANCE hInstDLL)
                 wined3d_settings.pci_device_id = pci_device_id;
             }
         }
+        tmpvalue = 0;
         if ( !get_config_key_dword( hkey, appkey, "VideoPciVendorID", &tmpvalue) )
         {
             int pci_vendor_id = tmpvalue;
@@ -310,6 +315,32 @@ static BOOL wined3d_dll_init(HINSTANCE hInstDLL)
             TRACE("Not always rendering backbuffers offscreen.\n");
             wined3d_settings.always_offscreen = FALSE;
         }
+        //Slice
+        if (!get_config_key(hkey, appkey, "OverrideVertexShaders", buffer, size) && !strcmp(buffer,"enabled"))
+        {
+          TRACE("Override Vertex Shader Constants\n");
+          wined3d_settings.override_vertex_constants = TRUE;
+        }
+        if (!get_config_key(hkey, appkey, "VertexShaderConstants", buffer, size))
+        {
+          int TmpVertexShaderConstants = atoi(buffer);
+          if (TmpVertexShaderConstants > 0)
+          {
+            wined3d_settings.vertex_constants_number = TmpVertexShaderConstants;
+            TRACE("Use %i Vertex Shader Constants\n", TmpVertexShaderConstants);
+          }
+        }
+        tmpvalue = 0;
+      if (!get_config_key_dword(hkey, appkey, "UserQuirks", &tmpvalue))
+      {
+        int TmpUserQuirks = tmpvalue;
+        if (TmpUserQuirks > 0)
+        {
+          wined3d_settings.user_quirks = TmpUserQuirks;
+          TRACE("Use %i UserQuirks\n", TmpUserQuirks);
+        }
+      }
+
         if (!get_config_key(hkey, appkey, "CheckFloatConstants", buffer, size)
                 && !strcmp(buffer, "enabled"))
         {
