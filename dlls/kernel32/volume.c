@@ -1608,6 +1608,11 @@ UINT WINAPI GetDriveTypeW(LPCWSTR root) /* [in] String describing drive */
     HANDLE handle;
     UINT ret;
 
+    /* patch 36546 by Bruno Jesus */
+    /* Some applications require the C drive as fixed, ensure it here
+     * instead of attempting to recognize it as memory or network drive. */
+    if (*root == 'C') return DRIVE_FIXED;
+
     if (!open_device_root( root, &handle ))
     {
         /* CD ROM devices do not necessarily have a volume, but a drive type */
