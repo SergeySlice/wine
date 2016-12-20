@@ -164,6 +164,7 @@ static int change_last_param;
 static int last_bpp;
 static BOOL displaychange_ok = FALSE, displaychange_test_active = FALSE;
 static HANDLE displaychange_sem = 0;
+static BOOL wm_user_received, wm_user1_received;
 
 static LRESULT CALLBACK SysParamsTestWndProc( HWND hWnd, UINT msg, WPARAM wParam,
                                               LPARAM lParam )
@@ -210,6 +211,14 @@ static LRESULT CALLBACK SysParamsTestWndProc( HWND hWnd, UINT msg, WPARAM wParam
 
     case WM_DESTROY:
         PostQuitMessage( 0 );
+        break;
+
+    case WM_USER:
+        wm_user_received = TRUE;
+        break;
+
+    case WM_USER + 1:
+        wm_user1_received = TRUE;
         break;
 
     /* drop through */
@@ -2917,6 +2926,130 @@ static void test_GetSysColorBrush(void)
         win_skip("COLOR_MENUBAR unsupported\n");
 }
 
+struct displaychange_test_param
+{
+    HWND thread_window;
+    HANDLE window_created;
+};
+
+static LRESULT CALLBACK displaychange_test_thread_proc(HWND hWnd, UINT msg, WPARAM wParam,
+                                                       LPARAM lParam)
+{
+    if (msg == WM_DISPLAYCHANGE)
+        SendMessageA(ghTestWnd, WM_USER + 1, 0, 0);
+
+    return DefWindowProcA(hWnd, msg, wParam, lParam);
+}
+
+static DWORD WINAPI displaychange_test_thread(void *param)
+{
+    struct displaychange_test_param *p = param;
+    WNDCLASSA wc = {0};
+    MSG msg;
+
+    wc.lpszClassName = "SysParamsTestThreadClass";
+    wc.lpfnWndProc = displaychange_test_thread_proc;
+    RegisterClassA(&wc);
+
+    SendNotifyMessageA(ghTestWnd, WM_USER, 0, 0);
+
+    p->thread_window = CreateWindowA("SysParamsTestThreadClass", "Test System Parameters Application",
+                                     WS_OVERLAPPEDWINDOW, 0, 0, 100, 100, 0, 0, 0, NULL);
+    SetEvent(p->window_created);
+
+    while (GetMessageA(&msg, 0, 0, 0))
+    {
+        if (msg.message == WM_USER)
+            break;
+        TranslateMessage( &msg );
+        DispatchMessageA( &msg );
+    }
+
+    DestroyWindow(p->thread_window);
+    UnregisterClassA(wc.lpszClassName, NULL);
+
+    return 0;
+}
+
+static void test_displaychange_message(void)
+{
+    DEVMODEA mode, startmode;
+    LONG change_ret;
+    DWORD tid, wait_ret;
+    HANDLE thread;
+    MSG msg;
+    unsigned int i = 0;
+    DWORD width = 0, height;
+    struct displaychange_test_param param;
+
+    if (!pChangeDisplaySettingsExA)
+    {
+        win_skip("ChangeDisplaySettingsExA is not available\n");
+        return;
+    }
+
+    memset(&startmode, 0, sizeof(startmode));
+    startmode.dmSize = sizeof(startmode);
+    EnumDisplaySettingsA(NULL, ENUM_CURRENT_SETTINGS, &startmode);
+
+    memset(&mode, 0, sizeof(mode));
+    mode.dmSize = sizeof(mode);
+    while (EnumDisplaySettingsA(NULL, i++, &mode))
+    {
+        if (mode.dmPelsWidth != startmode.dmPelsWidth || mode.dmPelsHeight != startmode.dmPelsHeight)
+        {
+            width = mode.dmPelsWidth;
+            height = mode.dmPelsHeight;
+            break;
+        }
+    }
+    if (!width)
+    {
+        skip("Cound not find a mode different from the startup mode\n");
+        return;
+    }
+    memset(&mode, 0, sizeof(mode));
+    mode.dmSize = sizeof(mode);
+    mode.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
+    mode.dmPelsWidth = width;
+    mode.dmPelsHeight = height;
+
+    displaychange_sem = CreateSemaphoreW(NULL, 0, 1, NULL);
+    param.window_created = CreateEventA(NULL, FALSE, FALSE, NULL);
+
+    wm_user_received = FALSE;
+    thread = CreateThread(NULL, 0, displaychange_test_thread, &param, 0, &tid);
+    ok(thread != NULL, "CreateThread failed\n");
+    wait_ret = WaitForSingleObject(param.window_created, INFINITE);
+    ok(wait_ret == WAIT_OBJECT_0, "Waiting for the thread to create its window failed\n");
+
+    displaychange_ok = TRUE;
+    change_ret = ChangeDisplaySettingsExA(NULL, &mode, NULL, CDS_FULLSCREEN, NULL);
+    ok(change_ret == DISP_CHANGE_SUCCESSFUL, "ChangeDisplaySettingsEx failed, %d\n", change_ret);
+    ok(!wm_user_received, "Received WM_USER, did not expect it\n");
+    ok(!wm_user1_received, "Received WM_USER + 1, did not expect it\n");
+    wait_ret = WaitForSingleObject(displaychange_sem, 0);
+    ok(wait_ret == WAIT_OBJECT_0, "Expected WM_DISPLAYCHANGE, did not receive it\n");
+
+    while (PeekMessageA(&msg, 0, 0, 0, PM_REMOVE) || !wm_user1_received)
+    {
+        ok(msg.message != WM_DISPLAYCHANGE, "WM_DISPLAYCHANGE was posted, not sent\n");
+    }
+    ok(wm_user_received, "Expected WM_USER, did not receive it\n");
+
+    PostThreadMessageA(tid, WM_USER, 0, 0);
+
+    displaychange_ok = TRUE;
+    change_ret = pChangeDisplaySettingsExA(NULL, &startmode, NULL, 0, NULL);
+    ok(change_ret == DISP_CHANGE_SUCCESSFUL, "ChangeDisplaySettingsEx failed, %d\n", change_ret);
+
+    wait_ret = WaitForSingleObject(thread, INFINITE);
+    ok(wait_ret == WAIT_OBJECT_0, "Waiting for the thread to finish timed out\n");
+    CloseHandle(param.window_created);
+    CloseHandle(displaychange_sem);
+    displaychange_sem = 0;
+}
+
 START_TEST(sysparams)
 {
     int argc;
@@ -2966,6 +3099,8 @@ START_TEST(sysparams)
 
     ghTestWnd = CreateWindowA( "SysParamsTestClass", "Test System Parameters Application",
                                WS_OVERLAPPEDWINDOW, 0, 0, 100, 100, 0, 0, hInstance, NULL );
+
+    test_displaychange_message();
 
     hThread = CreateThread( NULL, 0, SysParamsThreadFunc, 0, 0, &dwThreadId );
     assert( hThread );

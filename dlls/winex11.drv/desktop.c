@@ -265,7 +265,9 @@ void X11DRV_resize_desktop( unsigned int width, unsigned int height )
 
     if (GetWindowThreadProcessId( hwnd, NULL ) != GetCurrentThreadId())
     {
-        SendMessageW( hwnd, WM_X11DRV_RESIZE_DESKTOP, 0, MAKELPARAM( width, height ) );
+        SendMessageTimeoutW( hwnd, WM_X11DRV_RESIZE_DESKTOP, 0,
+                             MAKELPARAM( width, height ), SMTO_BLOCK, ~0U, NULL );
+        SendNotifyMessageW( HWND_BROADCAST, WM_DISPLAYCHANGE, screen_bpp, MAKELPARAM( width, height ) );
     }
     else
     {
@@ -276,8 +278,6 @@ void X11DRV_resize_desktop( unsigned int width, unsigned int height )
                       resize_data.new_virtual_rect.bottom - resize_data.new_virtual_rect.top,
                       SWP_NOZORDER | SWP_NOACTIVATE | SWP_DEFERERASE );
         ungrab_clipping_window();
-        SendMessageTimeoutW( HWND_BROADCAST, WM_DISPLAYCHANGE, screen_bpp,
-                             MAKELPARAM( width, height ), SMTO_ABORTIFHUNG, 2000, NULL );
     }
 
     EnumWindows( update_windows_on_desktop_resize, (LPARAM)&resize_data );
