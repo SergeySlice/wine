@@ -3606,8 +3606,12 @@ const struct wined3d_format *wined3d_get_format(const struct wined3d_gl_info *gl
 
     if (idx == -1)
     {
-        FIXME("Can't find format %s (%#x) in the format lookup table.\n",
+        static enum wined3d_format_id old_id;
+        if (old_id != format_id) {
+              old_id = format_id;
+            FIXME("Can't find format %s (%#x) in the format lookup table.\n",
                 debug_d3dformat(format_id), format_id);
+        }
         return &gl_info->formats[get_format_idx(WINED3DFMT_UNKNOWN)];
     }
 
