@@ -3690,8 +3690,15 @@ HRESULT CDECL wined3d_device_update_texture(struct wined3d_device *device,
         return WINED3DERR_INVALIDCALL;
     }
 
-    level_count = min(wined3d_texture_get_level_count(src_texture),
-            wined3d_texture_get_level_count(dst_texture));
+    //level_count = min(wined3d_texture_get_level_count(src_texture),
+    //        wined3d_texture_get_level_count(dst_texture));
+    //Slice
+    level_count = wined3d_texture_get_level_count(dst_texture);
+    if (wined3d_texture_get_level_count(src_texture) < level_count)
+    {
+        WARN("Source has fewer level counts then destination, returning WINED3DERR_INVALIDCALL.\n");
+        return WINED3DERR_INVALIDCALL;
+    }
 
     src_size = max(src_texture->resource.width, src_texture->resource.height);
     dst_size = max(dst_texture->resource.width, dst_texture->resource.height);
