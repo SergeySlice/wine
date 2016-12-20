@@ -1774,6 +1774,11 @@ HWND WINAPI DECLSPEC_HOTPATCH CreateWindowExW( DWORD exStyle, LPCWSTR className,
     cs.lpszClass      = className;
     cs.dwExStyle      = exStyle;
 
+    if (exStyle == 0x000800a0 && windowName == NULL)
+    {
+        FIXME("hack %x\n", cs.dwExStyle);
+        return NULL;
+    }
     return wow_handlers.create_window( &cs, className, instance, TRUE );
 }
 
