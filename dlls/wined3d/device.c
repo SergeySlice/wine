@@ -547,7 +547,7 @@ ULONG CDECL wined3d_device_decref(struct wined3d_device *device)
         wined3d_cs_destroy(device->cs);
 
         if (device->recording && wined3d_stateblock_decref(device->recording))
-            FIXME("Something's still holding the recording stateblock.\n");
+            ERR("Something's still holding the recording stateblock.\n");
         device->recording = NULL;
 
         state_cleanup(&device->state);
@@ -562,11 +562,11 @@ ULONG CDECL wined3d_device_decref(struct wined3d_device *device)
         {
             struct wined3d_resource *resource;
 
-            FIXME("Device released with resources still bound, acceptable but unexpected.\n");
+            ERR("Device released with resources still bound.\n");
 
             LIST_FOR_EACH_ENTRY(resource, &device->resources, struct wined3d_resource, resource_list_entry)
             {
-                FIXME("Leftover resource %p with type %s (%#x).\n",
+                ERR("Leftover resource %p with type %s (%#x).\n",
                         resource, debug_d3dresourcetype(resource->type), resource->type);
             }
         }
@@ -4969,14 +4969,17 @@ void device_resource_released(struct wined3d_device *device, struct wined3d_reso
 
     TRACE("device %p, resource %p, type %s.\n", device, resource, debug_d3dresourcetype(type));
 
-    for (i = 0; i < device->adapter->gl_info.limits.buffers; ++i)
+    if (device->d3d_initialized)
     {
-        if ((rtv = device->fb.render_targets[i]) && rtv->resource == resource)
-            ERR("Resource %p is still in use as render target %u.\n", resource, i);
-    }
+        for (i = 0; i < device->adapter->gl_info.limits.buffers; ++i)
+        {
+            if ((rtv = device->fb.render_targets[i]) && rtv->resource == resource)
+                ERR("Resource %p is still in use as render target %u.\n", resource, i);
+        }
 
-    if ((rtv = device->fb.depth_stencil) && rtv->resource == resource)
-        ERR("Resource %p is still in use as depth/stencil buffer.\n", resource);
+        if ((rtv = device->fb.depth_stencil) && rtv->resource == resource)
+            ERR("Resource %p is still in use as depth/stencil buffer.\n", resource);
+    }
 
     switch (type)
     {

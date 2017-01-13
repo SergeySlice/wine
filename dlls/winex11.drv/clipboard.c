@@ -116,6 +116,7 @@ static HANDLE import_string( Atom type, const void *data, size_t size );
 static HANDLE import_utf8_string( Atom type, const void *data, size_t size );
 static HANDLE import_compound_text( Atom type, const void *data, size_t size );
 static HANDLE import_text( Atom type, const void *data, size_t size );
+static HANDLE import_text_html( Atom type, const void *data, size_t size );
 static HANDLE import_text_uri_list( Atom type, const void *data, size_t size );
 static HANDLE import_targets( Atom type, const void *data, size_t size );
 
@@ -133,8 +134,8 @@ static BOOL export_targets( Display *display, Window win, Atom prop, Atom target
 static BOOL export_multiple( Display *display, Window win, Atom prop, Atom target, HANDLE handle );
 static BOOL export_timestamp( Display *display, Window win, Atom prop, Atom target, HANDLE handle );
 
-static BOOL X11DRV_CLIPBOARD_ReadProperty( Display *display, Window w, Atom prop,
-                                           Atom *type, unsigned char **data, unsigned long *datasize );
+static BOOL read_property( Display *display, Window w, Atom prop,
+                           Atom *type, unsigned char **data, unsigned long *datasize );
 
 /* Clipboard formats */
 
@@ -174,7 +175,7 @@ static const struct
     { JFIFW, 0,              XATOM_image_jpeg,          import_data,          export_data },
     { PNGW, 0,               XATOM_image_png,           import_data,          export_data },
     { HTMLFormatW, 0,        XATOM_HTML_Format,         import_data,          export_data },
-    { HTMLFormatW, 0,        XATOM_text_html,           import_data,          export_text_html },
+    { HTMLFormatW, 0,        XATOM_text_html,           import_text_html,     export_text_html },
     { 0, 0,                  XATOM_TARGETS,             import_targets,       export_targets },
     { 0, 0,                  XATOM_MULTIPLE,            NULL,                 export_multiple },
     { 0, 0,                  XATOM_TIMESTAMP,           NULL,                 export_timestamp },
@@ -191,6 +192,7 @@ static BOOL is_clipboard_owner;
 static Window selection_window;
 static Window import_window;
 static Atom current_selection;
+static UINT rendered_formats;
 static ULONG64 last_clipboard_update;
 static struct clipboard_format **current_x11_formats;
 static unsigned int nb_current_x11_formats;
@@ -435,22 +437,28 @@ static void put_property( Display *display, Window win, Atom prop, Atom type, in
 /**************************************************************************
  *		convert_selection
  */
-static Atom convert_selection( Display *display, Window win, Atom selection, Atom target )
+static BOOL convert_selection( Display *display, Window win, Atom selection,
+                               struct clipboard_format *format, Atom *type,
+                               unsigned char **data, unsigned long *size )
 {
     int i;
     XEvent event;
 
-    XConvertSelection( display, selection, target, x11drv_atom(SELECTION_DATA), win, CurrentTime );
+    TRACE( "import %s from %s win %lx to format %s\n",
+           debugstr_xatom( format->atom ), debugstr_xatom( selection ),
+           win, debugstr_format( format->id ) );
+
+    XConvertSelection( display, selection, format->atom, x11drv_atom(SELECTION_DATA), win, CurrentTime );
 
     for (i = 0; i < SELECTION_RETRIES; i++)
     {
         Bool res = XCheckTypedWindowEvent( display, win, SelectionNotify, &event );
-        if (res && event.xselection.selection == selection && event.xselection.target == target)
-            return event.xselection.property;
+        if (res && event.xselection.selection == selection && event.xselection.target == format->atom)
+            return read_property( display, win, event.xselection.property, type, data, size );
         usleep( SELECTION_WAIT );
     }
     ERR( "Timed out waiting for SelectionNotify event\n" );
-    return None;
+    return FALSE;
 }
 
 
@@ -835,6 +843,50 @@ static HANDLE import_enhmetafile( Atom type, const void *data, size_t size )
 
 
 /**************************************************************************
+ *              import_text_html
+ */
+static HANDLE import_text_html( Atom type, const void *data, size_t size )
+{
+    static const char header[] =
+        "Version:0.9\n"
+        "StartHTML:0000000100\n"
+        "EndHTML:%010lu\n"
+        "StartFragment:%010lu\n"
+        "EndFragment:%010lu\n"
+        "<!--StartFragment-->";
+    static const char trailer[] = "\n<!--EndFragment-->";
+    char *text = NULL;
+    HANDLE ret;
+    SIZE_T len, total;
+
+    /* Firefox uses UTF-16LE with byte order mark. Convert to UTF-8 without the BOM. */
+    if (size >= sizeof(WCHAR) && ((const WCHAR *)data)[0] == 0xfeff)
+    {
+        len = WideCharToMultiByte( CP_UTF8, 0, (const WCHAR *)data + 1, size / sizeof(WCHAR) - 1,
+                                   NULL, 0, NULL, NULL );
+        if (!(text = HeapAlloc( GetProcessHeap(), 0, len ))) return 0;
+        WideCharToMultiByte( CP_UTF8, 0, (const WCHAR *)data + 1, size / sizeof(WCHAR) - 1,
+                             text, len, NULL, NULL );
+        size = len;
+        data = text;
+    }
+
+    len = strlen( header ) + 12;  /* 3 * 4 extra chars for %010lu */
+    total = len + size + sizeof(trailer);
+    if ((ret = GlobalAlloc( GMEM_FIXED, total )))
+    {
+        char *p = ret;
+        p += sprintf( p, header, total - 1, len, len + size + 1 /* include the final \n in the data */ );
+        memcpy( p, data, size );
+        strcpy( p + size, trailer );
+        TRACE( "returning %s\n", debugstr_a( ret ));
+    }
+    HeapFree( GetProcessHeap(), 0, text );
+    return ret;
+}
+
+
+/**************************************************************************
  *      import_text_uri_list
  *
  *  Import text/uri-list.
@@ -975,23 +1027,14 @@ static HANDLE import_selection( Display *display, Window win, Atom selection,
 {
     unsigned char *data;
     unsigned long size;
-    Atom prop, type;
+    Atom type;
     HANDLE ret;
 
     if (!format->import) return 0;
 
-    TRACE( "import %s from %s win %lx to format %s\n",
-           debugstr_xatom( format->atom ), debugstr_xatom( selection ),
-           win, debugstr_format( format->id ) );
-
-    if ((prop = convert_selection( display, win, selection, format->atom )) == None)
+    if (!convert_selection( display, win, selection, format, &type, &data, &size ))
     {
         TRACE( "failed to convert selection\n" );
-        return 0;
-    }
-    if (!X11DRV_CLIPBOARD_ReadProperty( display, win, prop, &type, &data, &size ))
-    {
-        TRACE( "failed to read property\n" );
         return 0;
     }
     ret = format->import( type, data, size );
@@ -1028,13 +1071,13 @@ void X11DRV_CLIPBOARD_ImportSelection( Display *display, Window win, Atom select
 /**************************************************************************
  *		render_format
  */
-static void render_format( UINT id )
+static HANDLE render_format( UINT id )
 {
     Display *display = thread_display();
     unsigned int i;
     HANDLE handle = 0;
 
-    if (!current_selection) return;
+    if (!current_selection) return 0;
 
     for (i = 0; i < nb_current_x11_formats; i++)
     {
@@ -1043,6 +1086,7 @@ static void render_format( UINT id )
         if (handle) SetClipboardData( id, handle );
         break;
     }
+    return handle;
 }
 
 
@@ -1627,11 +1671,12 @@ struct clipboard_data_packet {
 };
 
 /**************************************************************************
- *		X11DRV_CLIPBOARD_ReadProperty
+ *		read_property
+ *
  *  Reads the contents of the X selection property.
  */
-static BOOL X11DRV_CLIPBOARD_ReadProperty( Display *display, Window w, Atom prop,
-                                           Atom *type, unsigned char** data, unsigned long* datasize )
+static BOOL read_property( Display *display, Window w, Atom prop,
+                           Atom *type, unsigned char **data, unsigned long *datasize )
 {
     XEvent xe;
 
@@ -1780,46 +1825,79 @@ static void release_selection( Display *display, Time time )
  *
  * Retrieve the contents of the X11 selection when it's owned by an X11 app.
  */
-static void request_selection_contents( Display *display )
+static BOOL request_selection_contents( Display *display, BOOL changed )
 {
     struct clipboard_format *targets = find_x11_format( x11drv_atom(TARGETS) );
     struct clipboard_format *string = find_x11_format( XA_STRING );
+    struct clipboard_format *format = NULL;
+    Window owner = 0;
+    unsigned char *data = NULL;
+    unsigned long size = 0;
+    Atom type = 0;
+
+    static Atom last_selection;
+    static Window last_owner;
+    static struct clipboard_format *last_format;
+    static Atom last_type;
+    static unsigned char *last_data;
+    static unsigned long last_size;
 
     assert( targets );
     assert( string );
 
     current_selection = 0;
-    if (use_primary_selection && XGetSelectionOwner( display, XA_PRIMARY ))
+    if (use_primary_selection)
     {
-        if (import_selection( display, import_window, XA_PRIMARY, targets ))
+        if ((owner = XGetSelectionOwner( display, XA_PRIMARY )))
             current_selection = XA_PRIMARY;
-        else
-            import_selection( display, import_window, XA_PRIMARY, string );
     }
-    else if (XGetSelectionOwner( display, x11drv_atom(CLIPBOARD) ))
+    if (!current_selection)
     {
-        if (import_selection( display, import_window, x11drv_atom(CLIPBOARD), targets ))
+        if ((owner = XGetSelectionOwner( display, x11drv_atom(CLIPBOARD) )))
             current_selection = x11drv_atom(CLIPBOARD);
-        else
-            import_selection( display, import_window, x11drv_atom(CLIPBOARD), string );
     }
-}
 
+    if (current_selection)
+    {
+        if (convert_selection( display, import_window, current_selection, targets, &type, &data, &size ))
+            format = targets;
+        else if (convert_selection( display, import_window, current_selection, string, &type, &data, &size ))
+            format = string;
+    }
 
-/**************************************************************************
- *		grab_win32_clipboard
- *
- * Grab the Win32 clipboard when an X11 app has grabbed the X11 selection,
- * and fill it with the selection contents.
- */
-static BOOL grab_win32_clipboard( Display *display )
-{
+    changed = (changed ||
+               rendered_formats ||
+               last_selection != current_selection ||
+               last_owner != owner ||
+               last_format != format ||
+               last_type != type ||
+               last_size != size ||
+               memcmp( last_data, data, size ));
+
+    if (!changed)
+    {
+        HeapFree( GetProcessHeap(), 0, data );
+        return FALSE;
+    }
+
     if (!OpenClipboard( clipboard_hwnd )) return FALSE;
+    TRACE( "selection changed, importing\n" );
     EmptyClipboard();
     is_clipboard_owner = TRUE;
+    rendered_formats = 0;
+
+    if (format) format->import( type, data, size );
+
+    HeapFree( GetProcessHeap(), 0, last_data );
+    last_selection = current_selection;
+    last_owner = owner;
+    last_format = format;
+    last_type = type;
+    last_data = data;
+    last_size = size;
     last_clipboard_update = GetTickCount64();
-    request_selection_contents( display );
     CloseClipboard();
+    SetTimer( clipboard_hwnd, 1, SELECTION_UPDATE_DELAY, NULL );
     return TRUE;
 }
 
@@ -1834,7 +1912,7 @@ BOOL update_clipboard( HWND hwnd )
     if (hwnd != clipboard_hwnd) return TRUE;
     if (!is_clipboard_owner) return TRUE;
     if (GetTickCount64() - last_clipboard_update <= SELECTION_UPDATE_DELAY) return TRUE;
-    return grab_win32_clipboard( thread_display() );
+    return request_selection_contents( thread_display(), FALSE );
 }
 
 
@@ -1854,11 +1932,16 @@ static LRESULT CALLBACK clipboard_wndproc( HWND hwnd, UINT msg, WPARAM wp, LPARA
         acquire_selection( thread_init_display() );
         break;
     case WM_RENDERFORMAT:
-        render_format( wp );
+        if (render_format( wp )) rendered_formats++;
+        break;
+    case WM_TIMER:
+        if (!is_clipboard_owner) break;
+        request_selection_contents( thread_display(), FALSE );
         break;
     case WM_DESTROYCLIPBOARD:
         TRACE( "WM_DESTROYCLIPBOARD: lost ownership\n" );
         is_clipboard_owner = FALSE;
+        KillTimer( hwnd, 1 );
         break;
     }
     return DefWindowProcW( hwnd, msg, wp, lp );
@@ -1937,7 +2020,7 @@ static DWORD WINAPI clipboard_thread( void *arg )
     clipboard_thread_id = GetCurrentThreadId();
     AddClipboardFormatListener( clipboard_hwnd );
     register_builtin_formats();
-    grab_win32_clipboard( clipboard_display );
+    request_selection_contents( clipboard_display, TRUE );
 
     TRACE( "clipboard thread %04x running\n", GetCurrentThreadId() );
     while (GetMessageW( &msg, 0, 0, 0 )) DispatchMessageW( &msg );
@@ -2016,7 +2099,7 @@ BOOL X11DRV_SelectionClear( HWND hwnd, XEvent *xev )
     if (event->selection != x11drv_atom(CLIPBOARD)) return FALSE;
 
     release_selection( event->display, event->time );
-    grab_win32_clipboard( event->display );
+    request_selection_contents( event->display, TRUE );
     return FALSE;
 }
 

@@ -1260,7 +1260,7 @@ static void test_get_containing_output(void)
     output_count = 0;
     while (IDXGIAdapter_EnumOutputs(adapter, output_count, &output) != DXGI_ERROR_NOT_FOUND)
     {
-        ok(SUCCEEDED(hr), "Failed to enumarate output %u, hr %#x.\n", output_count, hr);
+        ok(SUCCEEDED(hr), "Failed to enumerate output %u, hr %#x.\n", output_count, hr);
         IDXGIOutput_Release(output);
         ++output_count;
     }
@@ -1309,7 +1309,7 @@ static void test_get_containing_output(void)
     output_idx = 0;
     while ((hr = IDXGIAdapter_EnumOutputs(adapter, output_idx, &output)) != DXGI_ERROR_NOT_FOUND)
     {
-        ok(SUCCEEDED(hr), "Failed to enumarate output %u, hr %#x.\n", output_idx, hr);
+        ok(SUCCEEDED(hr), "Failed to enumerate output %u, hr %#x.\n", output_idx, hr);
 
         hr = IDXGIOutput_GetDesc(output, &output_desc);
         ok(SUCCEEDED(hr), "GetDesc failed, hr %#x.\n", hr);
@@ -1616,8 +1616,10 @@ static void test_set_fullscreen(void)
     ok(SUCCEEDED(hr), "CreateSwapChain failed, hr %#x.\n", hr);
     check_swapchain_fullscreen_state(swapchain, &initial_state);
     hr = IDXGISwapChain_SetFullscreenState(swapchain, TRUE, NULL);
-    ok(SUCCEEDED(hr) || hr == DXGI_ERROR_NOT_CURRENTLY_AVAILABLE, "SetFullscreenState failed, hr %#x.\n", hr);
-    if (hr == DXGI_ERROR_NOT_CURRENTLY_AVAILABLE)
+    ok(SUCCEEDED(hr) || hr == DXGI_ERROR_NOT_CURRENTLY_AVAILABLE ||
+       broken(hr == DXGI_ERROR_UNSUPPORTED), /* Win 7 testbot */
+       "SetFullscreenState failed, hr %#x.\n", hr);
+    if (FAILED(hr))
     {
         skip("Could not change fullscreen state.\n");
         goto done;
@@ -1708,7 +1710,7 @@ static void test_default_fullscreen_target_output(void)
     output_idx = 0;
     while ((hr = IDXGIAdapter_EnumOutputs(adapter, output_idx, &output)) != DXGI_ERROR_NOT_FOUND)
     {
-        ok(SUCCEEDED(hr), "Failed to enumarate output %u, hr %#x.\n", output_idx, hr);
+        ok(SUCCEEDED(hr), "Failed to enumerate output %u, hr %#x.\n", output_idx, hr);
 
         hr = IDXGIOutput_GetDesc(output, &output_desc);
         ok(SUCCEEDED(hr), "GetDesc failed, hr %#x.\n", hr);
