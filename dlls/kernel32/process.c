@@ -1696,6 +1696,12 @@ static startup_info_t *create_startup_info( LPCWSTR filename, LPCWSTR cmdline,
         hstdout = startup->hStdOutput;
         hstderr = startup->hStdError;
     }
+    else if (flags & DETACHED_PROCESS)
+    {
+        hstdin  = INVALID_HANDLE_VALUE;
+        hstdout = INVALID_HANDLE_VALUE;
+        hstderr = INVALID_HANDLE_VALUE;
+    }
     else
     {
         hstdin  = GetStdHandle( STD_INPUT_HANDLE );
@@ -1705,7 +1711,7 @@ static startup_info_t *create_startup_info( LPCWSTR filename, LPCWSTR cmdline,
     info->hstdin  = wine_server_obj_handle( hstdin );
     info->hstdout = wine_server_obj_handle( hstdout );
     info->hstderr = wine_server_obj_handle( hstderr );
-    if ((flags & (CREATE_NEW_CONSOLE | DETACHED_PROCESS)) != 0)
+    if ((flags & CREATE_NEW_CONSOLE) != 0)
     {
         /* this is temporary (for console handles). We have no way to control that the handle is invalid in child process otherwise */
         if (is_console_handle(hstdin))  info->hstdin  = wine_server_obj_handle( INVALID_HANDLE_VALUE );
@@ -4206,4 +4212,14 @@ BOOL WINAPI UpdateProcThreadAttribute(struct _PROC_THREAD_ATTRIBUTE_LIST *list,
 void WINAPI DeleteProcThreadAttributeList(struct _PROC_THREAD_ATTRIBUTE_LIST *list)
 {
     return;
+}
+
+/**********************************************************************
+ *           BaseFlushAppcompatCache     (KERNEL32.@)
+ */
+BOOL WINAPI BaseFlushAppcompatCache(void)
+{
+    FIXME(": stub\n");
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
 }

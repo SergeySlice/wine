@@ -90,7 +90,9 @@ static HRESULT WINAPI cf_QueryInterface( IClassFactory *iface, REFIID riid, LPVO
         return S_OK;
     }
 
-    FIXME("interface %s not implemented\n", debugstr_guid(riid));
+    if (!IsEqualGUID(riid, &IID_IInternetProtocolInfo))
+        FIXME("interface %s not implemented\n", debugstr_guid(riid));
+    *ppobj = NULL;
     return E_NOINTERFACE;
 }
 
@@ -115,13 +117,20 @@ static HRESULT WINAPI cf_CreateInstance( IClassFactory *iface, LPUNKNOWN pOuter,
 
     *ppobj = NULL;
 
+    if (pOuter && !IsEqualGUID(&IID_IUnknown, riid))
+        return CLASS_E_NOAGGREGATION;
+
     r = This->create_object( pOuter, (LPVOID*) &punk );
     if (FAILED(r))
         return r;
 
+    if (IsEqualGUID(&IID_IUnknown, riid)) {
+        *ppobj = punk;
+        return S_OK;
+    }
+
     r = IUnknown_QueryInterface( punk, riid, ppobj );
     IUnknown_Release( punk );
-
     return r;
 }
 
@@ -145,6 +154,7 @@ static cf mime_allocator_cf = { { &cf_vtbl }, MimeAllocator_create };
 static cf mime_message_cf   = { { &cf_vtbl }, MimeMessage_create };
 static cf mime_security_cf  = { { &cf_vtbl }, MimeSecurity_create };
 static cf virtual_stream_cf = { { &cf_vtbl }, VirtualStream_create };
+static cf mhtml_protocol_cf = { { &cf_vtbl }, MimeHtmlProtocol_create };
 
 /***********************************************************************
  *              DllGetClassObject (INETCOMM.@)
@@ -186,6 +196,10 @@ HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID iid, LPVOID *ppv)
     else if( IsEqualCLSID( rclsid, &CLSID_IVirtualStream ))
     {
         cf = &virtual_stream_cf.IClassFactory_iface;
+    }
+    else if( IsEqualCLSID( rclsid, &CLSID_IMimeHtmlProtocol ))
+    {
+        cf = &mhtml_protocol_cf.IClassFactory_iface;
     }
 
     if ( !cf )

@@ -143,7 +143,7 @@ struct glyphrunanalysis_desc
 {
     const DWRITE_GLYPH_RUN *run;
     const DWRITE_MATRIX *transform;
-    DWRITE_RENDERING_MODE rendering_mode;
+    DWRITE_RENDERING_MODE1 rendering_mode;
     DWRITE_MEASURING_MODE measuring_mode;
     DWRITE_GRID_FIT_MODE gridfit_mode;
     DWRITE_TEXT_ANTIALIAS_MODE aa_mode;
@@ -287,6 +287,7 @@ extern void freetype_get_glyph_bbox(struct dwrite_glyphbitmap*) DECLSPEC_HIDDEN;
 extern BOOL freetype_get_glyph_bitmap(struct dwrite_glyphbitmap*) DECLSPEC_HIDDEN;
 extern INT freetype_get_charmap_index(IDWriteFontFace4*,BOOL*) DECLSPEC_HIDDEN;
 extern INT32 freetype_get_glyph_advance(IDWriteFontFace4*,FLOAT,UINT16,DWRITE_MEASURING_MODE) DECLSPEC_HIDDEN;
+extern void freetype_get_design_glyph_bbox(IDWriteFontFace4*,UINT16,UINT16,RECT*) DECLSPEC_HIDDEN;
 
 /* Glyph shaping */
 enum SCRIPT_JUSTIFY

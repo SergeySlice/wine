@@ -28,6 +28,7 @@ enum wined3d_cs_op
 {
     WINED3D_CS_OP_PRESENT,
     WINED3D_CS_OP_CLEAR,
+    WINED3D_CS_OP_DISPATCH,
     WINED3D_CS_OP_DRAW,
     WINED3D_CS_OP_SET_PREDICATION,
     WINED3D_CS_OP_SET_VIEWPORT,
@@ -81,6 +82,14 @@ struct wined3d_cs_clear
     DWORD stencil;
     unsigned int rect_count;
     RECT rects[1];
+};
+
+struct wined3d_cs_dispatch
+{
+    enum wined3d_cs_op opcode;
+    unsigned int group_count_x;
+    unsigned int group_count_y;
+    unsigned int group_count_z;
 };
 
 struct wined3d_cs_draw
@@ -416,14 +425,104 @@ void wined3d_cs_emit_clear(struct wined3d_cs *cs, DWORD rect_count, const RECT *
     cs->ops->submit(cs);
 }
 
+static void acquire_shader_resources(const struct wined3d_state *state, unsigned int shader_mask)
+{
+    struct wined3d_shader_sampler_map_entry *entry;
+    struct wined3d_shader_resource_view *view;
+    struct wined3d_shader *shader;
+    unsigned int i, j;
+
+    for (i = 0; i < WINED3D_SHADER_TYPE_COUNT; ++i)
+    {
+        if (!(shader_mask & (1u << i)))
+            continue;
+
+        if (!(shader = state->shader[i]))
+            continue;
+
+        for (j = 0; j < WINED3D_MAX_CBS; ++j)
+        {
+            if (state->cb[i][j])
+                wined3d_resource_acquire(&state->cb[i][j]->resource);
+        }
+
+        for (j = 0; j < shader->reg_maps.sampler_map.count; ++j)
+        {
+            entry = &shader->reg_maps.sampler_map.entries[j];
+
+            if (!(view = state->shader_resource_view[i][entry->resource_idx]))
+                continue;
+
+            wined3d_resource_acquire(view->resource);
+        }
+    }
+}
+
+static void release_shader_resources(const struct wined3d_state *state, unsigned int shader_mask)
+{
+    struct wined3d_shader_sampler_map_entry *entry;
+    struct wined3d_shader_resource_view *view;
+    struct wined3d_shader *shader;
+    unsigned int i, j;
+
+    for (i = 0; i < WINED3D_SHADER_TYPE_COUNT; ++i)
+    {
+        if (!(shader_mask & (1u << i)))
+            continue;
+
+        if (!(shader = state->shader[i]))
+            continue;
+
+        for (j = 0; j < WINED3D_MAX_CBS; ++j)
+        {
+            if (state->cb[i][j])
+                wined3d_resource_release(&state->cb[i][j]->resource);
+        }
+
+        for (j = 0; j < shader->reg_maps.sampler_map.count; ++j)
+        {
+            entry = &shader->reg_maps.sampler_map.entries[j];
+
+            if (!(view = state->shader_resource_view[i][entry->resource_idx]))
+                continue;
+
+            wined3d_resource_release(view->resource);
+        }
+    }
+}
+
+static void wined3d_cs_exec_dispatch(struct wined3d_cs *cs, const void *data)
+{
+    const struct wined3d_cs_dispatch *op = data;
+
+    dispatch_compute(cs->device, &cs->device->state,
+            op->group_count_x, op->group_count_y, op->group_count_z);
+
+    release_shader_resources(&cs->device->state, 1u << WINED3D_SHADER_TYPE_COMPUTE);
+}
+
+void wined3d_cs_emit_dispatch(struct wined3d_cs *cs,
+        unsigned int group_count_x, unsigned int group_count_y, unsigned int group_count_z)
+{
+    struct wined3d_cs_dispatch *op;
+
+    op = cs->ops->require_space(cs, sizeof(*op));
+    op->opcode = WINED3D_CS_OP_DISPATCH;
+    op->group_count_x = group_count_x;
+    op->group_count_y = group_count_y;
+    op->group_count_z = group_count_z;
+
+    acquire_shader_resources(&cs->device->state, 1u << WINED3D_SHADER_TYPE_COMPUTE);
+
+    cs->ops->submit(cs);
+}
+
 static void wined3d_cs_exec_draw(struct wined3d_cs *cs, const void *data)
 {
     struct wined3d_state *state = &cs->device->state;
-    struct wined3d_shader_sampler_map_entry *entry;
-    struct wined3d_shader_resource_view *view;
     const struct wined3d_cs_draw *op = data;
     struct wined3d_shader *shader;
-    unsigned int i, j;
+    unsigned int i;
 
     if (!cs->device->adapter->gl_info.supported[ARB_DRAW_ELEMENTS_BASE_VERTEX]
             && state->load_base_vertex_index != op->base_vertex_idx)
@@ -454,22 +553,16 @@ static void wined3d_cs_exec_draw(struct wined3d_cs *cs, const void *data)
     }
     if (state->fb->depth_stencil)
         wined3d_resource_release(state->fb->depth_stencil->resource);
-    for (i = 0; i < WINED3D_SHADER_TYPE_COUNT; ++i)
+    release_shader_resources(state, ~(1u << WINED3D_SHADER_TYPE_COMPUTE));
+    if ((shader = state->shader[WINED3D_SHADER_TYPE_PIXEL]))
     {
-        if (!(shader = state->shader[i]))
-            continue;
-
-        for (j = 0; j < WINED3D_MAX_CBS; ++j)
+        struct wined3d_unordered_access_view *view;
+        for (i = 0; i < MAX_UNORDERED_ACCESS_VIEWS; ++i)
         {
-            if (state->cb[i][j])
-                wined3d_resource_release(&state->cb[i][j]->resource);
-        }
+            if (!shader->reg_maps.uav_resource_info[i].type)
+                continue;
 
-        for (j = 0; j < shader->reg_maps.sampler_map.count; ++j)
-        {
-            entry = &shader->reg_maps.sampler_map.entries[j];
-
-            if (!(view = state->shader_resource_view[i][entry->resource_idx]))
+            if (!(view = state->unordered_access_view[i]))
                 continue;
 
             wined3d_resource_release(view->resource);
@@ -481,11 +574,9 @@ void wined3d_cs_emit_draw(struct wined3d_cs *cs, int base_vertex_idx, unsigned i
         unsigned int index_count, unsigned int start_instance, unsigned int instance_count, BOOL indexed)
 {
     const struct wined3d_state *state = &cs->device->state;
-    struct wined3d_shader_sampler_map_entry *entry;
-    struct wined3d_shader_resource_view *view;
     struct wined3d_shader *shader;
     struct wined3d_cs_draw *op;
-    unsigned int i, j;
+    unsigned int i;
 
     op = cs->ops->require_space(cs, sizeof(*op));
     op->opcode = WINED3D_CS_OP_DRAW;
@@ -515,22 +606,16 @@ void wined3d_cs_emit_draw(struct wined3d_cs *cs, int base_vertex_idx, unsigned i
     }
     if (state->fb->depth_stencil)
         wined3d_resource_acquire(state->fb->depth_stencil->resource);
-    for (i = 0; i < WINED3D_SHADER_TYPE_COUNT; ++i)
+    acquire_shader_resources(state, ~(1u << WINED3D_SHADER_TYPE_COMPUTE));
+    if ((shader = state->shader[WINED3D_SHADER_TYPE_PIXEL]))
     {
-        if (!(shader = state->shader[i]))
-            continue;
-
-        for (j = 0; j < WINED3D_MAX_CBS; ++j)
+        struct wined3d_unordered_access_view *view;
+        for (i = 0; i < MAX_UNORDERED_ACCESS_VIEWS; ++i)
         {
-            if (state->cb[i][j])
-                wined3d_resource_acquire(&state->cb[i][j]->resource);
-        }
+            if (!shader->reg_maps.uav_resource_info[i].type)
+                continue;
 
-        for (j = 0; j < shader->reg_maps.sampler_map.count; ++j)
-        {
-            entry = &shader->reg_maps.sampler_map.entries[j];
-
-            if (!(view = state->shader_resource_view[i][entry->resource_idx]))
+            if (!(view = state->unordered_access_view[i]))
                 continue;
 
             wined3d_resource_acquire(view->resource);
@@ -632,12 +717,8 @@ static void wined3d_cs_exec_set_depth_stencil_view(struct wined3d_cs *cs, const 
         if (prev_surface && (device->swapchains[0]->desc.flags & WINED3D_SWAPCHAIN_DISCARD_DEPTHSTENCIL
                 || prev_surface->container->flags & WINED3D_TEXTURE_DISCARD))
         {
-            surface_modify_ds_location(prev_surface, WINED3D_LOCATION_DISCARDED, prev->width, prev->height);
-            if (prev_surface == device->onscreen_depth_stencil)
-            {
-                wined3d_texture_decref(device->onscreen_depth_stencil->container);
-                device->onscreen_depth_stencil = NULL;
-            }
+            wined3d_texture_validate_location(prev_surface->container,
+                    prev->sub_resource_idx, WINED3D_LOCATION_DISCARDED);
         }
     }
 
@@ -1417,6 +1498,7 @@ static void (* const wined3d_cs_op_handlers[])(struct wined3d_cs *cs, const void
 {
     /* WINED3D_CS_OP_PRESENT                    */ wined3d_cs_exec_present,
     /* WINED3D_CS_OP_CLEAR                      */ wined3d_cs_exec_clear,
+    /* WINED3D_CS_OP_DISPATCH                   */ wined3d_cs_exec_dispatch,
     /* WINED3D_CS_OP_DRAW                       */ wined3d_cs_exec_draw,
     /* WINED3D_CS_OP_SET_PREDICATION            */ wined3d_cs_exec_set_predication,
     /* WINED3D_CS_OP_SET_VIEWPORT               */ wined3d_cs_exec_set_viewport,

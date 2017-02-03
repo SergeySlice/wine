@@ -722,6 +722,248 @@ void __thiscall _Condition_variable_notify_all(_Condition_variable *this)
 }
 #endif
 
+#if _MSVCR_VER >= 100
+typedef struct rwl_queue
+{
+    struct rwl_queue *next;
+} rwl_queue;
+
+#define WRITER_WAITING 0x80000000
+/* FIXME: reader_writer_lock structure is not binary compatible
+ * it can't exceed 28/56 bytes */
+typedef struct
+{
+    LONG count;
+    LONG thread_id;
+    rwl_queue active;
+    rwl_queue *writer_head;
+    rwl_queue *writer_tail;
+    rwl_queue *reader_head;
+} reader_writer_lock;
+
+/* ??0reader_writer_lock@Concurrency@@QAE@XZ */
+/* ??0reader_writer_lock@Concurrency@@QEAA@XZ */
+DEFINE_THISCALL_WRAPPER(reader_writer_lock_ctor, 4)
+reader_writer_lock* __thiscall reader_writer_lock_ctor(reader_writer_lock *this)
+{
+    TRACE("(%p)\n", this);
+
+    if (!keyed_event) {
+        HANDLE event;
+
+        NtCreateKeyedEvent(&event, GENERIC_READ|GENERIC_WRITE, NULL, 0);
+        if (InterlockedCompareExchangePointer(&keyed_event, event, NULL) != NULL)
+            NtClose(event);
+    }
+
+    memset(this, 0, sizeof(*this));
+    return this;
+}
+
+/* ??1reader_writer_lock@Concurrency@@QAE@XZ */
+/* ??1reader_writer_lock@Concurrency@@QEAA@XZ */
+DEFINE_THISCALL_WRAPPER(reader_writer_lock_dtor, 4)
+void __thiscall reader_writer_lock_dtor(reader_writer_lock *this)
+{
+    TRACE("(%p)\n", this);
+
+    if (this->thread_id != 0 || this->count)
+        WARN("destroying locked reader_writer_lock\n");
+}
+
+static inline void spin_wait_for_next_rwl(rwl_queue *q)
+{
+    SpinWait sw;
+
+    if(q->next) return;
+
+    SpinWait_ctor(&sw, &spin_wait_yield);
+    SpinWait__Reset(&sw);
+    while(!q->next)
+        SpinWait__SpinOnce(&sw);
+    SpinWait_dtor(&sw);
+}
+
+/* Remove when proper InterlockedOr implementation is added to wine */
+static LONG InterlockedOr(LONG *d, LONG v)
+{
+    LONG l;
+    while (~(l = *d) & v)
+        if (InterlockedCompareExchange(d, l|v, l) == l) break;
+    return l;
+}
+
+static LONG InterlockedAnd(LONG *d, LONG v)
+{
+    LONG l = *d, old;
+    while ((l & v) != l) {
+        if((old = InterlockedCompareExchange(d, l&v, l)) == l) break;
+        l = old;
+    }
+    return l;
+}
+
+/* ?lock@reader_writer_lock@Concurrency@@QAEXXZ */
+/* ?lock@reader_writer_lock@Concurrency@@QEAAXXZ */
+DEFINE_THISCALL_WRAPPER(reader_writer_lock_lock, 4)
+void __thiscall reader_writer_lock_lock(reader_writer_lock *this)
+{
+    rwl_queue q = { NULL }, *last;
+
+    TRACE("(%p)\n", this);
+
+    if (this->thread_id == GetCurrentThreadId())
+        FIXME("throw improper_lock exception\n");
+
+    last = InterlockedExchangePointer((void**)&this->writer_tail, &q);
+    if (last) {
+        last->next = &q;
+        NtWaitForKeyedEvent(keyed_event, &q, 0, NULL);
+    } else {
+        this->writer_head = &q;
+        if (InterlockedOr(&this->count, WRITER_WAITING))
+            NtWaitForKeyedEvent(keyed_event, &q, 0, NULL);
+    }
+
+    this->thread_id = GetCurrentThreadId();
+    this->writer_head = &this->active;
+    this->active.next = NULL;
+    if (InterlockedCompareExchangePointer((void**)&this->writer_tail, &this->active, &q) != &q) {
+        spin_wait_for_next_rwl(&q);
+        this->active.next = q.next;
+    }
+}
+
+/* ?lock_read@reader_writer_lock@Concurrency@@QAEXXZ */
+/* ?lock_read@reader_writer_lock@Concurrency@@QEAAXXZ */
+DEFINE_THISCALL_WRAPPER(reader_writer_lock_lock_read, 4)
+void __thiscall reader_writer_lock_lock_read(reader_writer_lock *this)
+{
+    rwl_queue q;
+
+    TRACE("(%p)\n", this);
+
+    if (this->thread_id == GetCurrentThreadId())
+        FIXME("throw improper_lock exception\n");
+
+    do {
+        q.next = this->reader_head;
+    } while(InterlockedCompareExchangePointer((void**)&this->reader_head, &q, q.next) != q.next);
+
+    if (!q.next) {
+        rwl_queue *head;
+        LONG count;
+
+        while (!((count = this->count) & WRITER_WAITING))
+            if (InterlockedCompareExchange(&this->count, count+1, count) == count) break;
+
+        if (count & WRITER_WAITING)
+            NtWaitForKeyedEvent(keyed_event, &q, 0, NULL);
+
+        head = InterlockedExchangePointer((void**)&this->reader_head, NULL);
+        while(head && head != &q) {
+            rwl_queue *next = head->next;
+            InterlockedIncrement(&this->count);
+            NtReleaseKeyedEvent(keyed_event, head, 0, NULL);
+            head = next;
+        }
+    } else {
+        NtWaitForKeyedEvent(keyed_event, &q, 0, NULL);
+    }
+}
+
+/* ?try_lock@reader_writer_lock@Concurrency@@QAE_NXZ */
+/* ?try_lock@reader_writer_lock@Concurrency@@QEAA_NXZ */
+DEFINE_THISCALL_WRAPPER(reader_writer_lock_try_lock, 4)
+MSVCRT_bool __thiscall reader_writer_lock_try_lock(reader_writer_lock *this)
+{
+    rwl_queue q = { NULL };
+
+    TRACE("(%p)\n", this);
+
+    if (this->thread_id == GetCurrentThreadId())
+        FIXME("throw improper_lock exception\n");
+
+    if (InterlockedCompareExchangePointer((void**)&this->writer_tail, &q, NULL))
+        return FALSE;
+    this->writer_head = &q;
+    if (!InterlockedCompareExchange(&this->count, WRITER_WAITING, 0)) {
+        this->thread_id = GetCurrentThreadId();
+        this->writer_head = &this->active;
+        this->active.next = NULL;
+        if (InterlockedCompareExchangePointer((void**)&this->writer_tail, &this->active, &q) != &q) {
+            spin_wait_for_next_rwl(&q);
+            this->active.next = q.next;
+        }
+        return TRUE;
+    }
+
+    if (InterlockedCompareExchangePointer((void**)&this->writer_tail, NULL, &q) == &q)
+        return FALSE;
+    spin_wait_for_next_rwl(&q);
+    this->writer_head = q.next;
+    if (!InterlockedOr(&this->count, WRITER_WAITING)) {
+        this->thread_id = GetCurrentThreadId();
+        this->writer_head = &this->active;
+        this->active.next = q.next;
+        return TRUE;
+    }
+    return FALSE;
+}
+
+/* ?try_lock_read@reader_writer_lock@Concurrency@@QAE_NXZ */
+/* ?try_lock_read@reader_writer_lock@Concurrency@@QEAA_NXZ */
+DEFINE_THISCALL_WRAPPER(reader_writer_lock_try_lock_read, 4)
+MSVCRT_bool __thiscall reader_writer_lock_try_lock_read(reader_writer_lock *this)
+{
+    LONG count;
+
+    TRACE("(%p)\n", this);
+
+    while (!((count = this->count) & WRITER_WAITING))
+        if (InterlockedCompareExchange(&this->count, count+1, count) == count) return TRUE;
+    return FALSE;
+}
+
+/* ?unlock@reader_writer_lock@Concurrency@@QAEXXZ */
+/* ?unlock@reader_writer_lock@Concurrency@@QEAAXXZ */
+DEFINE_THISCALL_WRAPPER(reader_writer_lock_unlock, 4)
+void __thiscall reader_writer_lock_unlock(reader_writer_lock *this)
+{
+    LONG count;
+    rwl_queue *head, *next;
+
+    TRACE("(%p)\n", this);
+
+    if ((count = this->count) & ~WRITER_WAITING) {
+        count = InterlockedDecrement(&this->count);
+        if (count != WRITER_WAITING)
+            return;
+        NtReleaseKeyedEvent(keyed_event, this->writer_head, 0, NULL);
+        return;
+    }
+
+    this->thread_id = 0;
+    next = this->writer_head->next;
+    if (next) {
+        NtReleaseKeyedEvent(keyed_event, next, 0, NULL);
+        return;
+    }
+    InterlockedAnd(&this->count, ~WRITER_WAITING);
+    head = InterlockedExchangePointer((void**)&this->reader_head, NULL);
+    while (head) {
+        next = head->next;
+        InterlockedIncrement(&this->count);
+        NtReleaseKeyedEvent(keyed_event, head, 0, NULL);
+        head = next;
+    }
+
+    if (InterlockedCompareExchangePointer((void**)&this->writer_tail, NULL, this->writer_head) == this->writer_head)
+        return;
+    InterlockedOr(&this->count, WRITER_WAITING);
+}
+#endif
+
 /**********************************************************************
  *     msvcrt_free_locks (internal)
  *

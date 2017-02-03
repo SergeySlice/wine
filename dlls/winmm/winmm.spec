@@ -1,5 +1,5 @@
 # ordinal exports
-1 stdcall @(ptr long long) PlaySoundA
+2 stdcall @(ptr long long) PlaySoundA
 3 stub @
 4 stub @
 
@@ -88,7 +88,7 @@
 @ stdcall midiOutOpen(ptr long long long long)
 @ stdcall midiOutPrepareHeader(long ptr long)
 @ stdcall midiOutReset(long)
-@ stdcall midiOutSetVolume(long ptr)
+@ stdcall midiOutSetVolume(long long)
 @ stdcall midiOutShortMsg(long long)
 @ stdcall midiOutUnprepareHeader(long ptr long)
 @ stdcall midiStreamClose(long)

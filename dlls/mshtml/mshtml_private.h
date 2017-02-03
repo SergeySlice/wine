@@ -577,7 +577,7 @@ struct HTMLDocument {
     IObjectSafety               IObjectSafety_iface;
     IProvideClassInfo           IProvideClassInfo_iface;
 
-    IUnknown *unk_impl;
+    IUnknown *outer_unk;
     IDispatchEx *dispex;
 
     HTMLDocumentObj *doc_obj;
@@ -593,22 +593,23 @@ struct HTMLDocument {
 
 static inline HRESULT htmldoc_query_interface(HTMLDocument *This, REFIID riid, void **ppv)
 {
-    return IUnknown_QueryInterface(This->unk_impl, riid, ppv);
+    return IUnknown_QueryInterface(This->outer_unk, riid, ppv);
 }
 
 static inline ULONG htmldoc_addref(HTMLDocument *This)
 {
-    return IUnknown_AddRef(This->unk_impl);
+    return IUnknown_AddRef(This->outer_unk);
 }
 
 static inline ULONG htmldoc_release(HTMLDocument *This)
 {
-    return IUnknown_Release(This->unk_impl);
+    return IUnknown_Release(This->outer_unk);
 }
 
 struct HTMLDocumentObj {
     HTMLDocument basedoc;
     DispatchEx dispex;
+    IUnknown IUnknown_outer;
     ICustomDoc ICustomDoc_iface;
     ITargetContainer ITargetContainer_iface;
 
@@ -823,6 +824,7 @@ struct HTMLDocumentNode {
 };
 
 HRESULT HTMLDocument_Create(IUnknown*,REFIID,void**) DECLSPEC_HIDDEN;
+HRESULT MHTMLDocument_Create(IUnknown*,REFIID,void**) DECLSPEC_HIDDEN;
 HRESULT HTMLLoadOptions_Create(IUnknown*,REFIID,void**) DECLSPEC_HIDDEN;
 HRESULT create_doc_from_nsdoc(nsIDOMHTMLDocument*,HTMLDocumentObj*,HTMLInnerWindow*,HTMLDocumentNode**) DECLSPEC_HIDDEN;
 

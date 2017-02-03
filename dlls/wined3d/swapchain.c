@@ -621,15 +621,8 @@ static void swapchain_gl_present(struct wined3d_swapchain *swapchain,
 
         if (ds && (swapchain->desc.flags & WINED3D_SWAPCHAIN_DISCARD_DEPTHSTENCIL
                 || ds->container->flags & WINED3D_TEXTURE_DISCARD))
-        {
-            surface_modify_ds_location(ds, WINED3D_LOCATION_DISCARDED,
-                    fb->depth_stencil->width, fb->depth_stencil->height);
-            if (ds == swapchain->device->onscreen_depth_stencil)
-            {
-                wined3d_texture_decref(swapchain->device->onscreen_depth_stencil->container);
-                swapchain->device->onscreen_depth_stencil = NULL;
-            }
-        }
+            wined3d_texture_validate_location(ds->container,
+                    fb->depth_stencil->sub_resource_idx, WINED3D_LOCATION_DISCARDED);
     }
 
     context_release(context);
@@ -749,33 +742,12 @@ static const struct wined3d_swapchain_ops swapchain_gdi_ops =
 
 static void swapchain_update_render_to_fbo(struct wined3d_swapchain *swapchain)
 {
-    RECT client_rect;
-
     if (wined3d_settings.offscreen_rendering_mode != ORM_FBO)
         return;
 
     if (!swapchain->desc.backbuffer_count)
     {
         TRACE("Single buffered rendering.\n");
-        swapchain->render_to_fbo = FALSE;
-        return;
-    }
-
-    GetClientRect(swapchain->win_handle, &client_rect);
-
-    TRACE("Backbuffer %ux%u, window %ux%u.\n",
-            swapchain->desc.backbuffer_width,
-            swapchain->desc.backbuffer_height,
-            client_rect.right, client_rect.bottom);
-    TRACE("Multisample type %#x, quality %#x.\n",
-            swapchain->desc.multisample_type,
-            swapchain->desc.multisample_quality);
-
-    if (!wined3d_settings.always_offscreen && !swapchain->desc.multisample_type
-            && swapchain->desc.backbuffer_width == client_rect.right
-            && swapchain->desc.backbuffer_height == client_rect.bottom)
-    {
-        TRACE("Backbuffer dimensions match window dimensions, rendering onscreen.\n");
         swapchain->render_to_fbo = FALSE;
         return;
     }

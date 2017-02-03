@@ -26,13 +26,25 @@
 #ifdef HAVE_UNISTD_H
 # include <unistd.h>
 #endif
+#ifdef HAVE_ARPA_INET_H
+# include <arpa/inet.h>
+#endif
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
-#include "winsock2.h"
-#include "ws2tcpip.h"
+#ifdef __MINGW32__
+# include "winsock2.h"
+# include "ws2tcpip.h"
+# define WS_AF_UNSPEC AF_UNSPEC
+# define WS_NI_MAXHOST NI_MAXHOST
+# define WS_NI_NAMEREQD NI_NAMEREQD
+#else
+# define USE_WS_PREFIX
+# include "winsock2.h"
+# include "ws2tcpip.h"
+#endif
 #include "initguid.h"
 #include "wbemcli.h"
 #include "wbemprov.h"
@@ -72,6 +84,8 @@ static const WCHAR class_diskdriveW[] =
     {'W','i','n','3','2','_','D','i','s','k','D','r','i','v','e',0};
 static const WCHAR class_diskpartitionW[] =
     {'W','i','n','3','2','_','D','i','s','k','P','a','r','t','i','t','i','o','n',0};
+static const WCHAR class_ip4routetableW[] =
+    {'W','i','n','3','2','_','I','P','4','R','o','u','t','e','T','a','b','l','e',0};
 static const WCHAR class_logicaldiskW[] =
     {'W','i','n','3','2','_','L','o','g','i','c','a','l','D','i','s','k',0};
 static const WCHAR class_logicaldisk2W[] =
@@ -175,6 +189,8 @@ static const WCHAR prop_defaultvalueW[] =
     {'D','e','f','a','u','l','t','V','a','l','u','e',0};
 static const WCHAR prop_descriptionW[] =
     {'D','e','s','c','r','i','p','t','i','o','n',0};
+static const WCHAR prop_destinationW[] =
+    {'D','e','s','t','i','n','a','t','i','o','n',0};
 static const WCHAR prop_deviceidW[] =
     {'D','e','v','i','c','e','I','d',0};
 static const WCHAR prop_dhcpenabledW[] =
@@ -263,6 +279,8 @@ static const WCHAR prop_netconnectionstatusW[] =
     {'N','e','t','C','o','n','n','e','c','t','i','o','n','S','t','a','t','u','s',0};
 static const WCHAR prop_networkW[] =
     {'N','e','t','w','o','r','k',0};
+static const WCHAR prop_nexthopW[] =
+    {'N','e','x','t','H','o','p',0};
 static const WCHAR prop_numcoresW[] =
     {'N','u','m','b','e','r','O','f','C','o','r','e','s',0};
 static const WCHAR prop_numlogicalprocessorsW[] =
@@ -461,6 +479,12 @@ static const struct column col_diskpartition[] =
     { prop_sizeW,           CIM_UINT64 },
     { prop_startingoffsetW, CIM_UINT64 },
     { prop_typeW,           CIM_STRING|COL_FLAG_DYNAMIC }
+};
+static const struct column col_ip4routetable[] =
+{
+    { prop_destinationW,    CIM_STRING|COL_FLAG_DYNAMIC|COL_FLAG_KEY },
+    { prop_interfaceindexW, CIM_SINT32|COL_FLAG_KEY },
+    { prop_nexthopW,        CIM_STRING|COL_FLAG_DYNAMIC|COL_FLAG_KEY },
 };
 static const struct column col_logicaldisk[] =
 {
@@ -845,6 +869,12 @@ struct record_diskpartition
     UINT64       size;
     UINT64       startingoffset;
     const WCHAR *type;
+};
+struct record_ip4routetable
+{
+    const WCHAR *destination;
+    INT32        interfaceindex;
+    const WCHAR *nexthop;
 };
 struct record_logicaldisk
 {
@@ -2016,6 +2046,59 @@ static enum fill_status fill_diskpartition( struct table *table, const struct ex
     return status;
 }
 
+static WCHAR *get_ip4_string( DWORD addr )
+{
+    static const WCHAR fmtW[] = {'%','u','.','%','u','.','%','u','.','%','u',0};
+    WCHAR *ret;
+
+    if (!(ret = heap_alloc( sizeof("ddd.ddd.ddd.ddd") * sizeof(WCHAR) ))) return NULL;
+    sprintfW( ret, fmtW, (addr >> 24) & 0xff, (addr >> 16) & 0xff, (addr >> 8) & 0xff, addr & 0xff );
+    return ret;
+}
+
+static enum fill_status fill_ip4routetable( struct table *table, const struct expr *cond )
+{
+    struct record_ip4routetable *rec;
+    UINT i, row = 0, offset = 0, size = 0;
+    MIB_IPFORWARDTABLE *forwards;
+    enum fill_status status = FILL_STATUS_UNFILTERED;
+
+    if (GetIpForwardTable( NULL, &size, TRUE ) != ERROR_INSUFFICIENT_BUFFER) return FILL_STATUS_FAILED;
+    if (!(forwards = heap_alloc( size ))) return FILL_STATUS_FAILED;
+    if (GetIpForwardTable( forwards, &size, TRUE ))
+    {
+        heap_free( forwards );
+        return FILL_STATUS_FAILED;
+    }
+    if (!resize_table( table, forwards->dwNumEntries, sizeof(*rec) ))
+    {
+        heap_free( forwards );
+        return FILL_STATUS_FAILED;
+    }
+
+    for (i = 0; i < forwards->dwNumEntries; i++)
+    {
+        rec = (struct record_ip4routetable *)(table->data + offset);
+
+        rec->destination    = get_ip4_string( ntohl(forwards->table[i].dwForwardDest) );
+        rec->interfaceindex = forwards->table[i].dwForwardIfIndex;
+        rec->nexthop        = get_ip4_string( ntohl(forwards->table[i].dwForwardNextHop) );
+
+        if (!match_row( table, row, cond, &status ))
+        {
+            free_row_values( table, row );
+            continue;
+        }
+        offset += sizeof(*rec);
+        row++;
+    }
+    TRACE("created %u rows\n", row);
+    table->num_rows = row;
+
+    heap_free( forwards );
+    return status;
+}
+
 static WCHAR *get_volumename( const WCHAR *root )
 {
     WCHAR buf[MAX_PATH + 1] = {0};
@@ -2350,7 +2433,7 @@ static enum fill_status fill_printer( struct table *table, const struct expr *co
     struct record_printer *rec;
     enum fill_status status = FILL_STATUS_UNFILTERED;
     PRINTER_INFO_2W *info;
-    DWORD i, offset = 0, count = 0, size = 0;
+    DWORD i, offset = 0, count = 0, size = 0, num_rows = 0;
 
     EnumPrintersW( PRINTER_ENUM_LOCAL, NULL, 2, NULL, 0, &size, &count );
     if (GetLastError() != ERROR_INSUFFICIENT_BUFFER) return FILL_STATUS_FAILED;
@@ -2382,9 +2465,10 @@ static enum fill_status fill_printer( struct table *table, const struct expr *co
             continue;
         }
         offset += sizeof(*rec);
+        num_rows++;
     }
-    TRACE("created %u rows\n", count);
-    table->num_rows = count;
+    TRACE("created %u rows\n", num_rows);
+    table->num_rows = num_rows;
 
     heap_free( info );
     return status;
@@ -2567,7 +2651,7 @@ static enum fill_status fill_processor( struct table *table, const struct expr *
     static const WCHAR fmtW[] = {'C','P','U','%','u',0};
     WCHAR caption[100], device_id[14], processor_id[17], manufacturer[13], name[49] = {0}, version[50];
     struct record_processor *rec;
-    UINT i, offset = 0, num_cores, num_logical_processors, count = get_processor_count();
+    UINT i, offset = 0, num_rows = 0, num_cores, num_logical_processors, count = get_processor_count();
     enum fill_status status = FILL_STATUS_UNFILTERED;
 
     if (!resize_table( table, count, sizeof(*rec) )) return FILL_STATUS_FAILED;
@@ -2608,10 +2692,11 @@ static enum fill_status fill_processor( struct table *table, const struct expr *
             continue;
         }
         offset += sizeof(*rec);
+        num_rows++;
     }
 
-    TRACE("created %u rows\n", count);
-    table->num_rows = count;
+    TRACE("created %u rows\n", num_rows);
+    table->num_rows = num_rows;
     return status;
 }
 
@@ -3160,6 +3245,7 @@ static struct table builtin_classes[] =
     { class_directoryW, SIZEOF(col_directory), col_directory, 0, 0, NULL, fill_directory },
     { class_diskdriveW, SIZEOF(col_diskdrive), col_diskdrive, 0, 0, NULL, fill_diskdrive },
     { class_diskpartitionW, SIZEOF(col_diskpartition), col_diskpartition, 0, 0, NULL, fill_diskpartition },
+    { class_ip4routetableW, SIZEOF(col_ip4routetable), col_ip4routetable, 0, 0, NULL, fill_ip4routetable },
     { class_logicaldiskW, SIZEOF(col_logicaldisk), col_logicaldisk, 0, 0, NULL, fill_logicaldisk },
     { class_logicaldisk2W, SIZEOF(col_logicaldisk), col_logicaldisk, 0, 0, NULL, fill_logicaldisk },
     { class_networkadapterW, SIZEOF(col_networkadapter), col_networkadapter, 0, 0, NULL, fill_networkadapter },

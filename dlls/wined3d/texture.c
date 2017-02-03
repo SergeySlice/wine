@@ -572,7 +572,7 @@ void wined3d_texture_bind(struct wined3d_texture *texture,
 
     TRACE("texture %p, context %p, srgb %#x.\n", texture, context, srgb);
 
-    if (!needs_separate_srgb_gl_texture(context))
+    if (!needs_separate_srgb_gl_texture(context, texture))
         srgb = FALSE;
 
     /* sRGB mode cache for preload() calls outside drawprim. */
@@ -913,7 +913,7 @@ void wined3d_texture_load(struct wined3d_texture *texture,
 
     TRACE("texture %p, context %p, srgb %#x.\n", texture, context, srgb);
 
-    if (!needs_separate_srgb_gl_texture(context))
+    if (!needs_separate_srgb_gl_texture(context, texture))
         srgb = FALSE;
 
     if (srgb)
@@ -1367,7 +1367,7 @@ BOOL wined3d_texture_prepare_location(struct wined3d_texture *texture, unsigned 
             return TRUE;
 
         case WINED3D_LOCATION_DRAWABLE:
-            if (!texture->swapchain && wined3d_settings.always_offscreen)
+            if (!texture->swapchain && wined3d_settings.offscreen_rendering_mode != ORM_BACKBUFFER)
                 ERR("Texture %p does not have a drawable.\n", texture);
             return TRUE;
 

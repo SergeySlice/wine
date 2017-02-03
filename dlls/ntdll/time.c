@@ -46,6 +46,7 @@
 #define WIN32_NO_STATUS
 #include "windef.h"
 #include "winternl.h"
+#include "wine/exception.h"
 #include "wine/unicode.h"
 #include "wine/debug.h"
 #include "ntdll_misc.h"
@@ -472,10 +473,17 @@ NTSTATUS WINAPI NtQuerySystemTime( PLARGE_INTEGER Time )
  */
 NTSTATUS WINAPI NtQueryPerformanceCounter( LARGE_INTEGER *counter, LARGE_INTEGER *frequency )
 {
-    if (!counter) return STATUS_ACCESS_VIOLATION;
+    __TRY
+    {
+        counter->QuadPart = monotonic_counter();
+        if (frequency) frequency->QuadPart = TICKSPERSEC;
+    }
+    __EXCEPT_PAGE_FAULT
+    {
+        return STATUS_ACCESS_VIOLATION;
+    }
+    __ENDTRY
 
-    counter->QuadPart = monotonic_counter();
-    if (frequency) frequency->QuadPart = TICKSPERSEC;
     return STATUS_SUCCESS;
 }
 
@@ -951,14 +959,21 @@ NTSTATUS WINAPI NtSetSystemTime(const LARGE_INTEGER *NewTime, LARGE_INTEGER *Old
 
     RtlTimeToSecondsSince1970( NewTime, &sec );
 
+    /* fake success if time didn't change */
+    if (oldsec == sec)
+        return STATUS_SUCCESS;
+
     /* set the new time */
     tv.tv_sec = sec;
     tv.tv_usec = 0;
 
 #ifdef HAVE_SETTIMEOFDAY
-    if (!settimeofday(&tv, NULL)) /* 0 is OK, -1 is error */
-        return STATUS_SUCCESS;
     tm_t = sec;
+    if (!settimeofday(&tv, NULL)) /* 0 is OK, -1 is error */
+    {
+        TRACE("OS time changed to %s\n", ctime(&tm_t));
+        return STATUS_SUCCESS;
+    }
     ERR("Cannot set time to %s, time adjustment %ld: %s\n",
         ctime(&tm_t), (long)(sec-oldsec), strerror(errno));
     if (errno == EPERM)

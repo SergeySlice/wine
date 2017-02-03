@@ -70,6 +70,7 @@ static HANDLE import_clipboard_data(CFDataRef data);
 static HANDLE import_bmp_to_bitmap(CFDataRef data);
 static HANDLE import_bmp_to_dib(CFDataRef data);
 static HANDLE import_enhmetafile(CFDataRef data);
+static HANDLE import_html(CFDataRef data);
 static HANDLE import_metafilepict(CFDataRef data);
 static HANDLE import_nsfilenames_to_hdrop(CFDataRef data);
 static HANDLE import_utf8_to_text(CFDataRef data);
@@ -81,6 +82,7 @@ static CFDataRef export_bitmap_to_bmp(HANDLE data);
 static CFDataRef export_dib_to_bmp(HANDLE data);
 static CFDataRef export_enhmetafile(HANDLE data);
 static CFDataRef export_hdrop_to_filenames(HANDLE data);
+static CFDataRef export_html(HANDLE data);
 static CFDataRef export_metafilepict(HANDLE data);
 static CFDataRef export_text_to_utf8(HANDLE data);
 static CFDataRef export_unicodetext_to_utf8(HANDLE data);
@@ -177,13 +179,15 @@ static const struct
     CFStringRef   type;
     DRVIMPORTFUNC import;
     DRVEXPORTFUNC export;
+    BOOL          synthesized;
 } builtin_format_names[] =
 {
     { wszRichTextFormat,    CFSTR("public.rtf"),                            import_clipboard_data,          export_clipboard_data },
     { wszGIF,               CFSTR("com.compuserve.gif"),                    import_clipboard_data,          export_clipboard_data },
     { wszJFIF,              CFSTR("public.jpeg"),                           import_clipboard_data,          export_clipboard_data },
     { wszPNG,               CFSTR("public.png"),                            import_clipboard_data,          export_clipboard_data },
-    { wszHTMLFormat,        CFSTR("public.html"),                           import_clipboard_data,          export_clipboard_data },
+    { wszHTMLFormat,        NULL,                                           import_clipboard_data,          export_clipboard_data },
+    { wszHTMLFormat,        CFSTR("public.html"),                           import_html,                    export_html,            TRUE },
     { CFSTR_SHELLURLW,      CFSTR("public.url"),                            import_utf8_to_text,            export_text_to_utf8 },
 };
 
@@ -355,23 +359,31 @@ static void register_builtin_formats(void)
         list_add_tail(&format_list, &format->entry);
     }
 
-    LIST_FOR_EACH_ENTRY(format, &format_list, WINE_CLIPFORMAT, entry)
-    {
-        if (format->synthesized)
-            format->natural_format = natural_format_for_format(format->format_id);
-    }
-
     /* Register known mappings between Windows formats and Mac types */
     for (i = 0; i < sizeof(builtin_format_names)/sizeof(builtin_format_names[0]); i++)
     {
         if (!(format = HeapAlloc(GetProcessHeap(), 0, sizeof(*format)))) break;
         format->format_id       = RegisterClipboardFormatW(builtin_format_names[i].name);
-        format->type            = CFRetain(builtin_format_names[i].type);
         format->import_func     = builtin_format_names[i].import;
         format->export_func     = builtin_format_names[i].export;
-        format->synthesized     = FALSE;
+        format->synthesized     = builtin_format_names[i].synthesized;
         format->natural_format  = NULL;
+
+        if (builtin_format_names[i].type)
+            format->type = CFRetain(builtin_format_names[i].type);
+        else
+        {
+            format->type = CFStringCreateWithFormat(NULL, NULL, CFSTR("%@%S"),
+                                                    registered_name_type_prefix, builtin_format_names[i].name);
+        }
+
         list_add_tail(&format_list, &format->entry);
+    }
+
+    LIST_FOR_EACH_ENTRY(format, &format_list, WINE_CLIPFORMAT, entry)
+    {
+        if (format->synthesized)
+            format->natural_format = natural_format_for_format(format->format_id);
     }
 }
 
@@ -511,6 +523,28 @@ static HANDLE create_bitmap_from_dib(HANDLE dib)
 
 
 /**************************************************************************
+ *		get_html_description_field
+ *
+ *  Find the value of a field in an HTML Format description.
+ */
+static const char* get_html_description_field(const char* data, const char* keyword)
+{
+    const char* pos = data;
+
+    while (pos && *pos && *pos != '<')
+    {
+        if (memcmp(pos, keyword, strlen(keyword)) == 0)
+            return pos + strlen(keyword);
+
+        pos = strchr(pos, '\n');
+        if (pos) pos++;
+    }
+
+    return NULL;
+}
+
+
+/**************************************************************************
  *              import_clipboard_data
  *
  *  Generic import clipboard data routine.
@@ -611,6 +645,39 @@ static HANDLE import_enhmetafile(CFDataRef data)
     if (len)
         ret = SetEnhMetaFileBits(len, (const BYTE*)CFDataGetBytePtr(data));
 
+    return ret;
+}
+
+
+/**************************************************************************
+ *              import_html
+ *
+ *  Import HTML data.
+ */
+static HANDLE import_html(CFDataRef data)
+{
+    static const char header[] =
+        "Version:0.9\n"
+        "StartHTML:0000000100\n"
+        "EndHTML:%010lu\n"
+        "StartFragment:%010lu\n"
+        "EndFragment:%010lu\n"
+        "<!--StartFragment-->";
+    static const char trailer[] = "\n<!--EndFragment-->";
+    HANDLE ret;
+    SIZE_T len, total;
+    size_t size = CFDataGetLength(data);
+
+    len = strlen(header) + 12;  /* 3 * 4 extra chars for %010lu */
+    total = len + size + sizeof(trailer);
+    if ((ret = GlobalAlloc(GMEM_FIXED, total)))
+    {
+        char *p = ret;
+        p += sprintf(p, header, total - 1, len, len + size + 1 /* include the final \n in the data */);
+        CFDataGetBytes(data, CFRangeMake(0, size), (UInt8*)p);
+        strcpy(p + size, trailer);
+        TRACE("returning %s\n", debugstr_a(ret));
+    }
     return ret;
 }
 
@@ -1093,6 +1160,49 @@ done:
     if (filenames) CFRelease(filenames);
     TRACE(" -> %s\n", debugstr_cf(ret));
     return ret;
+}
+
+
+/**************************************************************************
+ *              export_html
+ *
+ *  Export HTML Format to public.html data.
+ *
+ * FIXME: We should attempt to add an <a base> tag and convert windows paths.
+ */
+static CFDataRef export_html(HANDLE handle)
+{
+    CFDataRef ret;
+    const char *data, *field_value;
+    int fragmentstart, fragmentend;
+
+    data = GlobalLock(handle);
+
+    /* read the important fields */
+    field_value = get_html_description_field(data, "StartFragment:");
+    if (!field_value)
+    {
+        ERR("Couldn't find StartFragment value\n");
+        goto failed;
+    }
+    fragmentstart = atoi(field_value);
+
+    field_value = get_html_description_field(data, "EndFragment:");
+    if (!field_value)
+    {
+        ERR("Couldn't find EndFragment value\n");
+        goto failed;
+    }
+    fragmentend = atoi(field_value);
+
+    /* export only the fragment */
+    ret = CFDataCreate(NULL, (const UInt8*)&data[fragmentstart], fragmentend - fragmentstart);
+    GlobalUnlock(handle);
+    return ret;
+
+failed:
+    GlobalUnlock(handle);
+    return NULL;
 }
 
 
@@ -2031,7 +2141,8 @@ void CDECL macdrv_UpdateClipboard(void)
                 else
                 {
                     result = GetLastError();
-                    if (result != ERROR_BROKEN_PIPE && result != ERROR_OPERATION_ABORTED)
+                    if (result != ERROR_BROKEN_PIPE && result != ERROR_OPERATION_ABORTED &&
+                        result != ERROR_HANDLES_CLOSED)
                         WARN("failed to read from pipe: %d\n", result);
                 }
 

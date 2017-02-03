@@ -31,16 +31,27 @@ WINE_DEFAULT_DEBUG_CHANNEL(d3d);
 
 #define WINED3D_BUFFER_HASDESC      0x01    /* A vertex description has been found. */
 #define WINED3D_BUFFER_USE_BO       0x02    /* Use a buffer object for this buffer. */
-#define WINED3D_BUFFER_DOUBLEBUFFER 0x04    /* Keep both a buffer object and a system memory copy for this buffer. */
+#define WINED3D_BUFFER_PIN_SYSMEM   0x04    /* Keep a system memory copy for this buffer. */
 #define WINED3D_BUFFER_DISCARD      0x08    /* A DISCARD lock has occurred since the last preload. */
-#define WINED3D_BUFFER_SYNC         0x10    /* There has been at least one synchronized map since the last preload. */
-#define WINED3D_BUFFER_MAP          0x20    /* There has been at least one map since the last preload. */
-#define WINED3D_BUFFER_APPLESYNC    0x40    /* Using sync as in GL_APPLE_flush_buffer_range. */
+#define WINED3D_BUFFER_APPLESYNC    0x10    /* Using sync as in GL_APPLE_flush_buffer_range. */
 
 #define VB_MAXDECLCHANGES     100     /* After that number of decl changes we stop converting */
 #define VB_RESETDECLCHANGE    1000    /* Reset the decl changecount after that number of draws */
 #define VB_MAXFULLCONVERSIONS 5       /* Number of full conversions before we stop converting */
 #define VB_RESETFULLCONVS     20      /* Reset full conversion counts after that number of draws */
+
+static void wined3d_buffer_evict_sysmem(struct wined3d_buffer *buffer)
+{
+    if (buffer->flags & WINED3D_BUFFER_PIN_SYSMEM)
+    {
+        TRACE("Not evicting system memory for buffer %p.\n", buffer);
+        return;
+    }
+
+    TRACE("Evicting system memory for buffer %p.\n", buffer);
+    wined3d_buffer_invalidate_location(buffer, WINED3D_LOCATION_SYSMEM);
+    wined3d_resource_free_sysmem(&buffer->resource);
+}
 
 static void buffer_invalidate_bo_range(struct wined3d_buffer *buffer, unsigned int offset, unsigned int size)
 {
@@ -236,12 +247,7 @@ static BOOL buffer_create_buffer_object(struct wined3d_buffer *buffer, struct wi
         /* No setup is needed here for GL_ARB_map_buffer_range. */
     }
 
-    /* Reserve memory for the buffer. The amount of data won't change
-     * so we are safe with calling glBufferData once and
-     * calling glBufferSubData on updates. Upload the actual data in case
-     * we're not double buffering, so we can release the heap mem afterwards.
-     */
-    GL_EXTCALL(glBufferData(buffer->buffer_type_hint, buffer->resource.size, buffer->resource.heap_memory, gl_usage));
+    GL_EXTCALL(glBufferData(buffer->buffer_type_hint, buffer->resource.size, NULL, gl_usage));
     error = gl_info->gl_ops.gl.p_glGetError();
     if (error != GL_NO_ERROR)
     {
@@ -250,17 +256,7 @@ static BOOL buffer_create_buffer_object(struct wined3d_buffer *buffer, struct wi
     }
 
     buffer->buffer_object_usage = gl_usage;
-
-    if (buffer->flags & WINED3D_BUFFER_DOUBLEBUFFER)
-    {
-        buffer_invalidate_bo_range(buffer, 0, 0);
-    }
-    else
-    {
-        wined3d_resource_free_sysmem(&buffer->resource);
-        wined3d_buffer_validate_location(buffer, WINED3D_LOCATION_BUFFER);
-        wined3d_buffer_invalidate_location(buffer, WINED3D_LOCATION_SYSMEM);
-    }
+    buffer_invalidate_bo_range(buffer, 0, 0);
 
     return TRUE;
 
@@ -534,6 +530,80 @@ ULONG CDECL wined3d_buffer_incref(struct wined3d_buffer *buffer)
     return refcount;
 }
 
+/* Context activation is done by the caller. */
+static void wined3d_buffer_upload_ranges(struct wined3d_buffer *buffer, struct wined3d_context *context,
+        const void *data, unsigned int data_offset, unsigned int range_count, const struct wined3d_map_range *ranges)
+{
+    const struct wined3d_gl_info *gl_info = context->gl_info;
+    const struct wined3d_map_range *range;
+
+    buffer_bind(buffer, context);
+
+    while (range_count--)
+    {
+        range = &ranges[range_count];
+        GL_EXTCALL(glBufferSubData(buffer->buffer_type_hint,
+                range->offset, range->size, (BYTE *)data + range->offset - data_offset));
+    }
+    checkGLcall("glBufferSubData");
+}
+
+static void buffer_conversion_upload(struct wined3d_buffer *buffer, struct wined3d_context *context)
+{
+    unsigned int i, j, range_idx, start, end, vertex_count;
+    BYTE *data;
+
+    if (!wined3d_buffer_load_location(buffer, context, WINED3D_LOCATION_SYSMEM))
+    {
+        ERR("Failed to load system memory.\n");
+        return;
+    }
+    buffer->flags |= WINED3D_BUFFER_PIN_SYSMEM;
+
+    /* Now for each vertex in the buffer that needs conversion. */
+    vertex_count = buffer->resource.size / buffer->stride;
+
+    if (!(data = HeapAlloc(GetProcessHeap(), 0, buffer->resource.size)))
+    {
+        ERR("Out of memory.\n");
+        return;
+    }
+
+    for (range_idx = 0; range_idx < buffer->modified_areas; ++range_idx)
+    {
+        start = buffer->maps[range_idx].offset;
+        end = start + buffer->maps[range_idx].size;
+
+        memcpy(data + start, (BYTE *)buffer->resource.heap_memory + start, end - start);
+        for (i = start / buffer->stride; i < min((end / buffer->stride) + 1, vertex_count); ++i)
+        {
+            for (j = 0; j < buffer->stride;)
+            {
+                switch (buffer->conversion_map[j])
+                {
+                    case CONV_NONE:
+                        /* Done already */
+                        j += sizeof(DWORD);
+                        break;
+                    case CONV_D3DCOLOR:
+                        j += fixup_d3dcolor((DWORD *) (data + i * buffer->stride + j));
+                        break;
+                    case CONV_POSITIONT:
+                        j += fixup_transformed_pos((struct wined3d_vec4 *) (data + i * buffer->stride + j));
+                        break;
+                    default:
+                        FIXME("Unimplemented conversion %d in shifted conversion.\n", buffer->conversion_map[j]);
+                        ++j;
+                }
+            }
+        }
+    }
+
+    wined3d_buffer_upload_ranges(buffer, context, data, 0, buffer->modified_areas, buffer->maps);
+
+    HeapFree(GetProcessHeap(), 0, data);
+}
+
 static BOOL wined3d_buffer_prepare_location(struct wined3d_buffer *buffer,
         struct wined3d_context *context, DWORD location)
 {
@@ -567,7 +637,7 @@ static BOOL wined3d_buffer_prepare_location(struct wined3d_buffer *buffer,
     }
 }
 
-static BOOL wined3d_buffer_load_location(struct wined3d_buffer *buffer,
+BOOL wined3d_buffer_load_location(struct wined3d_buffer *buffer,
         struct wined3d_context *context, DWORD location)
 {
     const struct wined3d_gl_info *gl_info = context->gl_info;
@@ -578,7 +648,7 @@ static BOOL wined3d_buffer_load_location(struct wined3d_buffer *buffer,
     if (buffer->locations & location)
     {
         TRACE("Location (%#x) is already up to date.\n", location);
-        return WINED3D_OK;
+        return TRUE;
     }
 
     if (!buffer->locations)
@@ -608,12 +678,15 @@ static BOOL wined3d_buffer_load_location(struct wined3d_buffer *buffer,
             GL_EXTCALL(glGetBufferSubData(buffer->buffer_type_hint, 0, buffer->resource.size,
                     buffer->resource.heap_memory));
             checkGLcall("buffer download");
-            buffer->flags |= WINED3D_BUFFER_DOUBLEBUFFER;
             break;
 
         case WINED3D_LOCATION_BUFFER:
-            FIXME("Not implemented yet.\n");
-            return FALSE;
+            if (!buffer->conversion_map)
+                wined3d_buffer_upload_ranges(buffer, context, buffer->resource.heap_memory,
+                        0, buffer->modified_areas, buffer->maps);
+            else
+                buffer_conversion_upload(buffer, context);
+            break;
 
         default:
             ERR("Invalid location %s.\n", wined3d_debug_location(location));
@@ -621,13 +694,18 @@ static BOOL wined3d_buffer_load_location(struct wined3d_buffer *buffer,
     }
 
     wined3d_buffer_validate_location(buffer, location);
+    if (buffer->resource.heap_memory && location == WINED3D_LOCATION_BUFFER
+            && !(buffer->resource.usage & WINED3DUSAGE_DYNAMIC))
+        wined3d_buffer_evict_sysmem(buffer);
+
     return TRUE;
 }
 
 /* Context activation is done by the caller. */
 BYTE *wined3d_buffer_load_sysmem(struct wined3d_buffer *buffer, struct wined3d_context *context)
 {
-    wined3d_buffer_load_location(buffer, context, WINED3D_LOCATION_SYSMEM);
+    if (wined3d_buffer_load_location(buffer, context, WINED3D_LOCATION_SYSMEM))
+        buffer->flags |= WINED3D_BUFFER_PIN_SYSMEM;
     return buffer->resource.heap_memory;
 }
 
@@ -659,7 +737,6 @@ DWORD wined3d_buffer_get_memory(struct wined3d_buffer *buffer,
 static void buffer_unload(struct wined3d_resource *resource)
 {
     struct wined3d_buffer *buffer = buffer_from_resource(resource);
-    DWORD flags = buffer->flags;
 
     TRACE("buffer %p.\n", buffer);
 
@@ -669,11 +746,7 @@ static void buffer_unload(struct wined3d_resource *resource)
 
         context = context_acquire(resource->device, NULL);
 
-        /* Download the buffer, but don't permanently enable double buffering. */
         wined3d_buffer_load_location(buffer, context, WINED3D_LOCATION_SYSMEM);
-        if (!(flags & WINED3D_BUFFER_DOUBLEBUFFER))
-            buffer->flags &= ~WINED3D_BUFFER_DOUBLEBUFFER;
-
         wined3d_buffer_invalidate_location(buffer, WINED3D_LOCATION_BUFFER);
         buffer_destroy_buffer_object(buffer, context);
         buffer_clear_dirty_areas(buffer);
@@ -806,139 +879,15 @@ drop_query:
     This->flags &= ~WINED3D_BUFFER_APPLESYNC;
 }
 
-/* The caller provides a GL context */
-static void buffer_direct_upload(struct wined3d_buffer *This, struct wined3d_context *context, DWORD flags)
+static void buffer_mark_used(struct wined3d_buffer *buffer)
 {
-    const struct wined3d_gl_info *gl_info = context->gl_info;
-    unsigned int start, len;
-    BYTE *map;
-
-    buffer_bind(This, context);
-    if (gl_info->supported[ARB_MAP_BUFFER_RANGE])
-    {
-        GLbitfield mapflags;
-        mapflags = GL_MAP_WRITE_BIT | GL_MAP_FLUSH_EXPLICIT_BIT;
-        if (flags & WINED3D_BUFFER_DISCARD)
-            mapflags |= GL_MAP_INVALIDATE_BUFFER_BIT;
-        else if (flags & WINED3D_BUFFER_MAP && !(flags & WINED3D_BUFFER_SYNC))
-            mapflags |= GL_MAP_UNSYNCHRONIZED_BIT;
-        map = GL_EXTCALL(glMapBufferRange(This->buffer_type_hint, 0,
-                This->resource.size, mapflags));
-        checkGLcall("glMapBufferRange");
-    }
-    else
-    {
-        if (This->flags & WINED3D_BUFFER_APPLESYNC)
-        {
-            DWORD syncflags = 0;
-            if (flags & WINED3D_BUFFER_DISCARD)
-                syncflags |= WINED3D_MAP_DISCARD;
-            else if (flags & WINED3D_BUFFER_MAP && !(flags & WINED3D_BUFFER_SYNC))
-                syncflags |= WINED3D_MAP_NOOVERWRITE;
-            buffer_sync_apple(This, syncflags, gl_info);
-        }
-        map = GL_EXTCALL(glMapBuffer(This->buffer_type_hint, GL_WRITE_ONLY));
-        checkGLcall("glMapBuffer");
-    }
-    if (!map)
-    {
-        ERR("Failed to map OpenGL buffer.\n");
-        return;
-    }
-
-    while (This->modified_areas)
-    {
-        This->modified_areas--;
-        start = This->maps[This->modified_areas].offset;
-        len = This->maps[This->modified_areas].size;
-
-        memcpy(map + start, (BYTE *)This->resource.heap_memory + start, len);
-
-        if (gl_info->supported[ARB_MAP_BUFFER_RANGE])
-        {
-            GL_EXTCALL(glFlushMappedBufferRange(This->buffer_type_hint, start, len));
-            checkGLcall("glFlushMappedBufferRange");
-        }
-        else if (This->flags & WINED3D_BUFFER_APPLESYNC)
-        {
-            GL_EXTCALL(glFlushMappedBufferRangeAPPLE(This->buffer_type_hint, start, len));
-            checkGLcall("glFlushMappedBufferRangeAPPLE");
-        }
-    }
-    GL_EXTCALL(glUnmapBuffer(This->buffer_type_hint));
-    checkGLcall("glUnmapBuffer");
-
-    wined3d_buffer_validate_location(This, WINED3D_LOCATION_BUFFER);
-}
-
-static void buffer_conversion_upload(struct wined3d_buffer *buffer, struct wined3d_context *context)
-{
-    const struct wined3d_gl_info *gl_info = context->gl_info;
-    unsigned int i, j, start, end, len, vertex_count;
-    BYTE *data;
-
-    wined3d_buffer_load_location(buffer, context, WINED3D_LOCATION_SYSMEM);
-
-    /* Now for each vertex in the buffer that needs conversion. */
-    vertex_count = buffer->resource.size / buffer->stride;
-
-    if (!(data = HeapAlloc(GetProcessHeap(), 0, buffer->resource.size)))
-    {
-        ERR("Out of memory.\n");
-        return;
-    }
-
-    buffer_bind(buffer, context);
-    while (buffer->modified_areas)
-    {
-        buffer->modified_areas--;
-        start = buffer->maps[buffer->modified_areas].offset;
-        len = buffer->maps[buffer->modified_areas].size;
-        end = start + len;
-
-        memcpy(data + start, (BYTE *)buffer->resource.heap_memory + start, end - start);
-        for (i = start / buffer->stride; i < min((end / buffer->stride) + 1, vertex_count); ++i)
-        {
-            for (j = 0; j < buffer->stride;)
-            {
-                switch (buffer->conversion_map[j])
-                {
-                    case CONV_NONE:
-                        /* Done already */
-                        j += sizeof(DWORD);
-                        break;
-                    case CONV_D3DCOLOR:
-                        j += fixup_d3dcolor((DWORD *) (data + i * buffer->stride + j));
-                        break;
-                    case CONV_POSITIONT:
-                        j += fixup_transformed_pos((struct wined3d_vec4 *) (data + i * buffer->stride + j));
-                        break;
-                    default:
-                        FIXME("Unimplemented conversion %d in shifted conversion.\n", buffer->conversion_map[j]);
-                        ++j;
-                }
-            }
-        }
-
-        GL_EXTCALL(glBufferSubData(buffer->buffer_type_hint, start, len, data + start));
-        checkGLcall("glBufferSubData");
-    }
-
-    HeapFree(GetProcessHeap(), 0, data);
-
-    wined3d_buffer_validate_location(buffer, WINED3D_LOCATION_BUFFER);
-}
-
-void buffer_mark_used(struct wined3d_buffer *buffer)
-{
-    buffer->flags &= ~(WINED3D_BUFFER_MAP | WINED3D_BUFFER_SYNC | WINED3D_BUFFER_DISCARD);
+    buffer->flags &= ~WINED3D_BUFFER_DISCARD;
 }
 
 /* Context activation is done by the caller. */
 void wined3d_buffer_load(struct wined3d_buffer *buffer, struct wined3d_context *context,
         const struct wined3d_state *state)
 {
-    DWORD flags = buffer->flags & (WINED3D_BUFFER_MAP | WINED3D_BUFFER_SYNC | WINED3D_BUFFER_DISCARD);
     const struct wined3d_gl_info *gl_info = context->gl_info;
     BOOL decl_changed = FALSE;
 
@@ -959,7 +908,11 @@ void wined3d_buffer_load(struct wined3d_buffer *buffer, struct wined3d_context *
         return;
     }
 
-    wined3d_buffer_prepare_location(buffer, context, WINED3D_LOCATION_BUFFER);
+    if (!wined3d_buffer_prepare_location(buffer, context, WINED3D_LOCATION_BUFFER))
+    {
+        ERR("Failed to prepare buffer location.\n");
+        return;
+    }
 
     /* Reading the declaration makes only sense if we have valid state information
      * (i.e., if this function is called during draws). */
@@ -1009,11 +962,6 @@ void wined3d_buffer_load(struct wined3d_buffer *buffer, struct wined3d_context *
         /* The declaration changed, reload the whole buffer. */
         WARN("Reloading buffer because of a vertex declaration change.\n");
         buffer_invalidate_bo_range(buffer, 0, 0);
-
-        /* Avoid unfenced updates, we might overwrite more areas of the buffer than the application
-         * cleared for unsynchronized updates.
-         */
-        flags = 0;
     }
     else
     {
@@ -1041,25 +989,8 @@ void wined3d_buffer_load(struct wined3d_buffer *buffer, struct wined3d_context *
         }
     }
 
-    if (!buffer->conversion_map)
-    {
-        /* That means that there is nothing to fixup. Just upload from
-         * buffer->resource.heap_memory directly into the BO. Do not
-         * free the system memory copy because drawPrimitive may need it if
-         * the stride is 0, for instancing emulation, vertex blending
-         * emulation or shader emulation. */
-        TRACE("No conversion needed.\n");
-
-        /* Nothing to do because heap memory exists if the buffer is double buffer or has no BO at all. */
-        if (!(buffer->flags & WINED3D_BUFFER_DOUBLEBUFFER))
-            return;
-
-        buffer_direct_upload(buffer, context, flags);
-    }
-    else
-    {
-        buffer_conversion_upload(buffer, context);
-    }
+    if (!wined3d_buffer_load_location(buffer, context, WINED3D_LOCATION_BUFFER))
+        ERR("Failed to load buffer location.\n");
 }
 
 struct wined3d_resource * CDECL wined3d_buffer_get_resource(struct wined3d_buffer *buffer)
@@ -1102,7 +1033,9 @@ static HRESULT wined3d_buffer_map(struct wined3d_buffer *buffer, UINT offset, UI
             dirty_size = 0;
         }
 
-        if (buffer->flags & WINED3D_BUFFER_DOUBLEBUFFER)
+        if (!(flags & (WINED3D_MAP_NOOVERWRITE | WINED3D_MAP_DISCARD | WINED3D_MAP_READONLY))
+                || ((flags & WINED3D_MAP_READONLY) && (buffer->locations & WINED3D_LOCATION_SYSMEM))
+                || buffer->flags & WINED3D_BUFFER_PIN_SYSMEM)
         {
             if (!(buffer->locations & WINED3D_LOCATION_SYSMEM))
             {
@@ -1116,16 +1049,22 @@ static HRESULT wined3d_buffer_map(struct wined3d_buffer *buffer, UINT offset, UI
         }
         else
         {
+            const struct wined3d_gl_info *gl_info;
+
+            context = context_acquire(device, NULL);
+            gl_info = context->gl_info;
+
+            if (!(flags & WINED3D_MAP_DISCARD))
+                wined3d_buffer_load_location(buffer, context, WINED3D_LOCATION_BUFFER);
+
             if (!(flags & WINED3D_MAP_READONLY))
                 buffer_invalidate_bo_range(buffer, dirty_offset, dirty_size);
 
+            if ((flags & WINED3D_MAP_DISCARD) && buffer->resource.heap_memory)
+                wined3d_buffer_evict_sysmem(buffer);
+
             if (count == 1)
             {
-                const struct wined3d_gl_info *gl_info;
-
-                context = context_acquire(device, NULL);
-                gl_info = context->gl_info;
-
                 buffer_bind(buffer, context);
 
                 if (gl_info->supported[ARB_MAP_BUFFER_RANGE])
@@ -1165,19 +1104,18 @@ static HRESULT wined3d_buffer_map(struct wined3d_buffer *buffer, UINT offset, UI
                     {
                         TRACE("Falling back to doublebuffered operation.\n");
                         wined3d_buffer_load_location(buffer, context, WINED3D_LOCATION_SYSMEM);
+                        buffer->flags |= WINED3D_BUFFER_PIN_SYSMEM;
                     }
                     TRACE("New pointer is %p.\n", buffer->resource.heap_memory);
                     buffer->map_ptr = NULL;
                 }
-                context_release(context);
             }
+
+            context_release(context);
         }
 
-        buffer->flags |= WINED3D_BUFFER_MAP;
         if (flags & WINED3D_MAP_DISCARD)
             buffer->flags |= WINED3D_BUFFER_DISCARD;
-        else if (!(flags & WINED3D_MAP_NOOVERWRITE))
-            buffer->flags |= WINED3D_BUFFER_SYNC;
     }
 
     base = buffer->map_ptr ? buffer->map_ptr : buffer->resource.heap_memory;
@@ -1212,7 +1150,7 @@ static void wined3d_buffer_unmap(struct wined3d_buffer *buffer)
         return;
     }
 
-    if (!(buffer->flags & WINED3D_BUFFER_DOUBLEBUFFER) && buffer->buffer_object)
+    if (buffer->map_ptr)
     {
         struct wined3d_device *device = buffer->resource.device;
         const struct wined3d_gl_info *gl_info;
@@ -1249,10 +1187,6 @@ static void wined3d_buffer_unmap(struct wined3d_buffer *buffer)
 
         buffer_clear_dirty_areas(buffer);
         buffer->map_ptr = NULL;
-    }
-    else if (buffer->flags & WINED3D_BUFFER_HASDESC)
-    {
-        wined3d_resource_preload(&buffer->resource);
     }
 }
 
@@ -1333,31 +1267,23 @@ HRESULT wined3d_buffer_copy(struct wined3d_buffer *dst_buffer, unsigned int dst_
     return WINED3D_OK;
 }
 
-HRESULT wined3d_buffer_upload_data(struct wined3d_buffer *buffer,
+void wined3d_buffer_upload_data(struct wined3d_buffer *buffer, struct wined3d_context *context,
         const struct wined3d_box *box, const void *data)
 {
-    UINT offset, size;
-    HRESULT hr;
-    BYTE *ptr;
+    struct wined3d_map_range range;
 
     if (box)
     {
-        offset = box->left;
-        size = box->right - box->left;
+        range.offset = box->left;
+        range.size = box->right - box->left;
     }
     else
     {
-        offset = 0;
-        size = buffer->resource.size;
+        range.offset = 0;
+        range.size = buffer->resource.size;
     }
 
-    if (FAILED(hr = wined3d_buffer_map(buffer, offset, size, &ptr, 0)))
-        return hr;
-
-    memcpy(ptr, data, size);
-
-    wined3d_buffer_unmap(buffer);
-    return WINED3D_OK;
+    wined3d_buffer_upload_ranges(buffer, context, data, range.offset, 1, &range);
 }
 
 static ULONG buffer_resource_incref(struct wined3d_resource *resource)
@@ -1483,7 +1409,7 @@ static HRESULT buffer_init(struct wined3d_buffer *buffer, struct wined3d_device 
          * maps and retain data in DISCARD maps. Keep a system memory copy of
          * the buffer to provide the same behavior to the application. */
         TRACE("Using doublebuffer mode.\n");
-        buffer->flags |= WINED3D_BUFFER_DOUBLEBUFFER;
+        buffer->flags |= WINED3D_BUFFER_PIN_SYSMEM;
     }
 
     /* Observations show that draw_primitive_immediate_mode() is faster on

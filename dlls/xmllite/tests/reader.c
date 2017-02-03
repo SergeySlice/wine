@@ -427,6 +427,13 @@ static void test_reader_create(void)
     ok(hr == S_FALSE, "got %08x\n", hr);
     ok(nodetype == XmlNodeType_None, "got %d\n", nodetype);
 
+    /* crashes on XP, 2k3, works on newer versions */
+    if (0)
+    {
+        hr = IXmlReader_GetNodeType(reader, NULL);
+        ok(hr == E_INVALIDARG, "got %08x\n", hr);
+    }
+
     resolver = (void*)0xdeadbeef;
     hr = IXmlReader_GetProperty(reader, XmlReaderProperty_XmlResolver, (LONG_PTR*)&resolver);
     ok(hr == S_OK, "got 0x%08x\n", hr);
@@ -1834,8 +1841,7 @@ static void test_read_attribute(void)
         hr = IXmlReader_SetInput(reader, (IUnknown*)stream);
         ok(hr == S_OK, "got %08x\n", hr);
 
-        type = XmlNodeType_None;
-        hr = IXmlReader_Read(reader, &type);
+        hr = IXmlReader_Read(reader, NULL);
 
         if (test->hr_broken)
             ok(hr == test->hr || broken(hr == test->hr_broken), "got %08x for %s\n", hr, test->xml);
@@ -1846,6 +1852,10 @@ static void test_read_attribute(void)
             const WCHAR *str;
             WCHAR *str_exp;
             UINT len;
+
+            type = XmlNodeType_None;
+            hr = IXmlReader_GetNodeType(reader, &type);
+            ok(hr == S_OK, "Failed to get node type, %#x\n", hr);
 
             ok(type == XmlNodeType_Element, "got %d for %s\n", type, test->xml);
 

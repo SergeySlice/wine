@@ -231,6 +231,12 @@ enum wined3d_sm4_opcode
     WINED3D_SM5_OP_DERIV_RTY_FINE                   = 0x7d,
     WINED3D_SM5_OP_GATHER4_C                        = 0x7e,
     WINED3D_SM5_OP_RCP                              = 0x81,
+    WINED3D_SM5_OP_F32TOF16                         = 0x82,
+    WINED3D_SM5_OP_F16TOF32                         = 0x83,
+    WINED3D_SM5_OP_COUNTBITS                        = 0x86,
+    WINED3D_SM5_OP_FIRSTBIT_HI                      = 0x87,
+    WINED3D_SM5_OP_FIRSTBIT_LO                      = 0x88,
+    WINED3D_SM5_OP_FIRSTBIT_SHI                     = 0x89,
     WINED3D_SM5_OP_UBFE                             = 0x8a,
     WINED3D_SM5_OP_BFI                              = 0x8c,
     WINED3D_SM5_OP_BFREV                            = 0x8d,
@@ -252,6 +258,7 @@ enum wined3d_sm4_opcode
     WINED3D_SM5_OP_DCL_UAV_STRUCTURED               = 0x9e,
     WINED3D_SM5_OP_DCL_TGSM_RAW                     = 0x9f,
     WINED3D_SM5_OP_DCL_TGSM_STRUCTURED              = 0xa0,
+    WINED3D_SM5_OP_DCL_RESOURCE_RAW                 = 0xa1,
     WINED3D_SM5_OP_DCL_RESOURCE_STRUCTURED          = 0xa2,
     WINED3D_SM5_OP_LD_UAV_TYPED                     = 0xa3,
     WINED3D_SM5_OP_STORE_UAV_TYPED                  = 0xa4,
@@ -768,6 +775,13 @@ static void shader_sm5_read_dcl_resource_structured(struct wined3d_shader_instru
     ins->declaration.structured_resource.byte_stride = *tokens;
 }
 
+static void shader_sm5_read_dcl_resource_raw(struct wined3d_shader_instruction *ins,
+        DWORD opcode, DWORD opcode_token, const DWORD *tokens, unsigned int token_count,
+        struct wined3d_sm4_data *priv)
+{
+    shader_sm4_read_dst_param(priv, &tokens, WINED3D_DATA_RESOURCE, &ins->declaration.dst);
+}
+
 static void shader_sm5_read_sync(struct wined3d_shader_instruction *ins,
         DWORD opcode, DWORD opcode_token, const DWORD *tokens, unsigned int token_count,
         struct wined3d_sm4_data *priv)
@@ -922,6 +936,12 @@ static const struct wined3d_sm4_opcode_info opcode_table[] =
     {WINED3D_SM5_OP_DERIV_RTY_FINE,                   WINED3DSIH_DSY_FINE,                         "f",    "f"},
     {WINED3D_SM5_OP_GATHER4_C,                        WINED3DSIH_GATHER4_C,                        "f",    "fRSf"},
     {WINED3D_SM5_OP_RCP,                              WINED3DSIH_RCP,                              "f",    "f"},
+    {WINED3D_SM5_OP_F32TOF16,                         WINED3DSIH_F32TOF16,                         "u",    "f"},
+    {WINED3D_SM5_OP_F16TOF32,                         WINED3DSIH_F16TOF32,                         "f",    "u"},
+    {WINED3D_SM5_OP_COUNTBITS,                        WINED3DSIH_COUNTBITS,                        "u",    "u"},
+    {WINED3D_SM5_OP_FIRSTBIT_HI,                      WINED3DSIH_FIRSTBIT_HI,                      "u",    "u"},
+    {WINED3D_SM5_OP_FIRSTBIT_LO,                      WINED3DSIH_FIRSTBIT_LO,                      "u",    "u"},
+    {WINED3D_SM5_OP_FIRSTBIT_SHI,                     WINED3DSIH_FIRSTBIT_SHI,                     "u",    "i"},
     {WINED3D_SM5_OP_UBFE,                             WINED3DSIH_UBFE,                             "u",    "iiu"},
     {WINED3D_SM5_OP_BFI,                              WINED3DSIH_BFI,                              "u",    "iiuu"},
     {WINED3D_SM5_OP_BFREV,                            WINED3DSIH_BFREV,                            "u",    "u"},
@@ -959,6 +979,8 @@ static const struct wined3d_sm4_opcode_info opcode_table[] =
             shader_sm5_read_dcl_tgsm_raw},
     {WINED3D_SM5_OP_DCL_TGSM_STRUCTURED,              WINED3DSIH_DCL_TGSM_STRUCTURED,              "",     "",
             shader_sm5_read_dcl_tgsm_structured},
+    {WINED3D_SM5_OP_DCL_RESOURCE_RAW,                 WINED3DSIH_DCL_RESOURCE_RAW,                 "",     "",
+            shader_sm5_read_dcl_resource_raw},
     {WINED3D_SM5_OP_DCL_RESOURCE_STRUCTURED,          WINED3DSIH_DCL_RESOURCE_STRUCTURED,          "",     "",
             shader_sm5_read_dcl_resource_structured},
     {WINED3D_SM5_OP_LD_UAV_TYPED,                     WINED3DSIH_LD_UAV_TYPED,                     "u",    "iU"},

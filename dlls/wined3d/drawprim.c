@@ -414,8 +414,8 @@ void draw_primitive(struct wined3d_device *device, const struct wined3d_state *s
     const struct wined3d_fb_state *fb = state->fb;
     const struct wined3d_stream_info *stream_info;
     struct wined3d_event_query *ib_query = NULL;
+    struct wined3d_rendertarget_view *dsv, *rtv;
     struct wined3d_stream_info si_emulated;
-    struct wined3d_rendertarget_view *dsv;
     const struct wined3d_gl_info *gl_info;
     struct wined3d_context *context;
     unsigned int i, idx_size = 0;
@@ -425,7 +425,9 @@ void draw_primitive(struct wined3d_device *device, const struct wined3d_state *s
     if (!index_count)
         return;
 
-    context = context_acquire(device, wined3d_rendertarget_view_get_surface(fb->render_targets[0]));
+    if (!(rtv = fb->render_targets[0]))
+        rtv = fb->depth_stencil;
+    context = context_acquire(device, wined3d_rendertarget_view_get_surface(rtv));
     if (!context->valid)
     {
         context_release(context);
@@ -436,10 +438,9 @@ void draw_primitive(struct wined3d_device *device, const struct wined3d_state *s
 
     for (i = 0; i < gl_info->limits.buffers; ++i)
     {
-        struct wined3d_rendertarget_view *rtv = fb->render_targets[i];
         struct wined3d_texture *rt;
 
-        if (!rtv || rtv->format->id == WINED3DFMT_NULL)
+        if (!(rtv = fb->render_targets[i]) || rtv->format->id == WINED3DFMT_NULL)
             continue;
 
         rt = wined3d_texture_from_resource(rtv->resource);
@@ -465,25 +466,7 @@ void draw_primitive(struct wined3d_device *device, const struct wined3d_state *s
         struct wined3d_surface *ds = wined3d_rendertarget_view_get_surface(dsv);
 
         if (state->render_states[WINED3D_RS_ZWRITEENABLE] || state->render_states[WINED3D_RS_ZENABLE])
-        {
-            RECT current_rect, draw_rect, r;
-
-            if (!context->render_offscreen && ds != device->onscreen_depth_stencil)
-                device_switch_onscreen_ds(device, context, ds);
-
-            if (surface_get_sub_resource(ds)->locations & location)
-                SetRect(&current_rect, 0, 0, ds->ds_current_size.cx, ds->ds_current_size.cy);
-            else
-                SetRectEmpty(&current_rect);
-
-            wined3d_get_draw_rect(state, &draw_rect);
-
-            IntersectRect(&r, &draw_rect, &current_rect);
-            if (!EqualRect(&r, &draw_rect))
-                wined3d_texture_load_location(ds->container, dsv->sub_resource_idx, context, location);
-            else
-                wined3d_texture_prepare_location(ds->container, dsv->sub_resource_idx, context, location);
-        }
+            wined3d_texture_load_location(ds->container, dsv->sub_resource_idx, context, location);
         else
             wined3d_texture_prepare_location(ds->container, dsv->sub_resource_idx, context, location);
     }
@@ -495,12 +478,13 @@ void draw_primitive(struct wined3d_device *device, const struct wined3d_state *s
         return;
     }
 
-    if (fb->depth_stencil && state->render_states[WINED3D_RS_ZWRITEENABLE])
+    if (dsv && state->render_states[WINED3D_RS_ZWRITEENABLE])
     {
-        struct wined3d_surface *ds = wined3d_rendertarget_view_get_surface(fb->depth_stencil);
+        struct wined3d_surface *ds = wined3d_rendertarget_view_get_surface(dsv);
         DWORD location = context->render_offscreen ? ds->container->resource.draw_binding : WINED3D_LOCATION_DRAWABLE;
 
-        surface_modify_ds_location(ds, location, ds->ds_current_size.cx, ds->ds_current_size.cy);
+        wined3d_texture_validate_location(ds->container, dsv->sub_resource_idx, location);
+        wined3d_texture_invalidate_location(ds->container, dsv->sub_resource_idx, ~location);
     }
 
     if ((!gl_info->supported[WINED3D_GL_VERSION_2_0]
@@ -595,4 +579,47 @@ void draw_primitive(struct wined3d_device *device, const struct wined3d_state *s
     context_release(context);
 
     TRACE("Done all gl drawing.\n");
+}
+
+void dispatch_compute(struct wined3d_device *device, const struct wined3d_state *state,
+        unsigned int group_count_x, unsigned int group_count_y, unsigned int group_count_z)
+{
+    const struct wined3d_gl_info *gl_info;
+    struct wined3d_context *context;
+
+    context = context_acquire(device, NULL);
+    if (!context->valid)
+    {
+        context_release(context);
+        WARN("Invalid context, skipping dispatch.\n");
+        return;
+    }
+    gl_info = context->gl_info;
+
+    if (!gl_info->supported[ARB_COMPUTE_SHADER])
+    {
+        context_release(context);
+        FIXME("OpenGL implementation does not support compute shaders.\n");
+        return;
+    }
+
+    context_apply_compute_state(context, device, state);
+
+    if (!state->shader[WINED3D_SHADER_TYPE_COMPUTE])
+    {
+        context_release(context);
+        WARN("No compute shader bound, skipping dispatch.\n");
+        return;
+    }
+
+    GL_EXTCALL(glDispatchCompute(group_count_x, group_count_y, group_count_z));
+    checkGLcall("glDispatchCompute");
+
+    GL_EXTCALL(glMemoryBarrier(GL_ALL_BARRIER_BITS));
+    checkGLcall("glMemoryBarrier");
+
+    if (wined3d_settings.strict_draw_ordering)
+        gl_info->gl_ops.gl.p_glFlush(); /* Flush to ensure ordering across contexts. */
+
+    context_release(context);
 }

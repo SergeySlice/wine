@@ -475,7 +475,7 @@ static BOOL CopyKeyName(HWND hWnd, LPCWSTR keyName)
             LPVOID pLoc = GlobalLock(hClipData);
             lstrcpyW(pLoc, keyName);
             GlobalUnlock(hClipData);
-            hClipData = SetClipboardData(CF_UNICODETEXT, hClipData);
+            SetClipboardData(CF_UNICODETEXT, hClipData);
 
         } else {
             /* error emptying clipboard*/
@@ -773,7 +773,7 @@ static BOOL _CmdWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                     SetFocus(g_pChildWnd->hTreeWnd);
                 }
             } else {
-                error(hWnd, IDS_NOTFOUND, searchString);
+                messagebox(hWnd, MB_OK|MB_ICONINFORMATION, IDS_APP_TITLE, IDS_NOTFOUND, searchString);
             }
         }
         break;

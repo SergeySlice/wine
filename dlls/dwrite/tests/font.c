@@ -113,7 +113,8 @@ static const WCHAR emojiW[] = {'S','e','g','o','e',' ','U','I',' ','E','m','o','
 #include "pshpack2.h"
 typedef struct
 {
-    ULONG version;
+    USHORT majorVersion;
+    USHORT minorVersion;
     ULONG revision;
     ULONG checksumadj;
     ULONG magic;
@@ -216,7 +217,8 @@ typedef struct {
 } TT_POST;
 
 typedef struct {
-    ULONG  version;
+    USHORT majorVersion;
+    USHORT minorVersion;
     SHORT  ascender;
     SHORT  descender;
     SHORT  linegap;

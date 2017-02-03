@@ -91,6 +91,12 @@ DirectInput
 P:	Andrew Eikum <aeikum@codeweavers.com>
 F:	dlls/dinput/
 
+DirectPlay
+M:	Alistair Leslie-Hughes <leslie_alistair@hotmail.com>
+F:	dlls/dplayx/
+F:	dlls/dpnet/
+F:	dlls/dpwsockx/
+
 DirectShow
 P:	Andrew Eikum <aeikum@codeweavers.com>
 F:	dlls/amstream/
@@ -117,6 +123,10 @@ F:	dlls/gdi32/
 GDIPlus
 M:	Vincent Povirk <vincent@codeweavers.com>
 F:	dlls/gdiplus/
+
+GPhoto Driver
+M:	Marcus Meissner <marcus@jet.franken.de>
+F:	dlls/gphoto2.ds/
 
 HID support
 M:	Aric Stewart <aric@codeweavers.com>
@@ -159,6 +169,12 @@ Netstat
 M:	André Hentschel <nerv@dawncrow.de>
 F:	programs/netstat/
 
+Network
+P:	Bruno Jesus <00cpxxx@gmail.com>
+P:	Erich E. Hoover <erich.e.hoover@wine-staging.com>
+F:	dlls/iphlpapi/
+F:	dlls/ws2_32/
+
 OLE Embedding
 M:	Huw Davies <huw@codeweavers.com>
 F:	dlls/ole32/clipboard.c
@@ -194,10 +210,15 @@ OpenMP
 M:	Sebastian Lackner <sebastian@fds-team.de>
 F:	dlls/vcomp*/
 
+Postscript Driver
+M:	Huw Davies <huw@codeweavers.com>
+F:	dlls/wineps.drv/
+
 Printing
 M:	Huw Davies <huw@codeweavers.com>
+P:	Detlef Riekenberg <wine.dev@web.de>
 F:	dlls/localspl/
-F:	dlls/wineps.drv/
+F:	dlls/spoolss/
 F:	dlls/winspool.drv/
 
 Richedit
@@ -239,6 +260,7 @@ F:	dlls/wmiutils/
 Wine server, IPC
 M:	Alexandre Julliard <julliard@winehq.org>
 P:	Sebastian Lackner <sebastian@fds-team.de>
+P:	Erich E. Hoover <erich.e.hoover@wine-staging.com>
 F:	server/
 
 Winemaker
@@ -274,6 +296,7 @@ P:	Andrew Eikum <aeikum@codeweavers.com>
 P:	Huw Davies <huw@codeweavers.com>
 P:	Sebastian Lackner <sebastian@fds-team.de>
 P:	Vincent Povirk <vincent@codeweavers.com>
+P:	Erich E. Hoover <erich.e.hoover@wine-staging.com>
 F:	*
 F:	*/
 

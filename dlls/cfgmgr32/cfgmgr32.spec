@@ -42,8 +42,8 @@
 @ stub CM_Free_Res_Des
 @ stub CM_Free_Res_Des_Ex
 @ stub CM_Free_Res_Des_Handle
-@ stub CM_Get_Child
-@ stub CM_Get_Child_Ex
+@ stdcall CM_Get_Child(ptr long long) setupapi.CM_Get_Child
+@ stdcall CM_Get_Child_Ex(ptr long long ptr) setupapi.CM_Get_Child_Ex
 @ stub CM_Get_Class_Key_NameA
 @ stub CM_Get_Class_Key_NameW
 @ stub CM_Get_Class_Key_Name_ExA
@@ -56,8 +56,8 @@
 @ stdcall CM_Get_Class_Registry_PropertyW(ptr long ptr ptr long long ptr) setupapi.CM_Get_Class_Registry_PropertyW
 @ stub CM_Get_Depth
 @ stub CM_Get_Depth_Ex
-@ stdcall CM_Get_DevNode_Registry_PropertyA(long long ptr ptr long long) setupapi.CM_Get_DevNode_Registry_PropertyA
-@ stdcall CM_Get_DevNode_Registry_PropertyW(long long ptr ptr long long) setupapi.CM_Get_DevNode_Registry_PropertyW
+@ stdcall CM_Get_DevNode_Registry_PropertyA(long long ptr ptr ptr long) setupapi.CM_Get_DevNode_Registry_PropertyA
+@ stdcall CM_Get_DevNode_Registry_PropertyW(long long ptr ptr ptr long) setupapi.CM_Get_DevNode_Registry_PropertyW
 @ stdcall CM_Get_DevNode_Registry_Property_ExA(long long ptr ptr ptr long ptr) setupapi.CM_Get_DevNode_Registry_Property_ExA
 @ stdcall CM_Get_DevNode_Registry_Property_ExW(long long ptr ptr ptr long ptr) setupapi.CM_Get_DevNode_Registry_Property_ExW
 @ stdcall CM_Get_DevNode_Status(ptr ptr long long) setupapi.CM_Get_DevNode_Status
@@ -113,7 +113,7 @@
 @ stub CM_Get_Res_Des_Data_Size
 @ stub CM_Get_Res_Des_Data_Size_Ex
 @ stub CM_Get_Sibling
-@ stub CM_Get_Sibling_Ex
+@ stdcall CM_Get_Sibling_Ex(ptr long long ptr) setupapi.CM_Get_Sibling_Ex
 @ stdcall CM_Get_Version() setupapi.CM_Get_Version
 @ stub CM_Get_Version_Ex
 @ stub CM_Intersect_Range_List
@@ -133,7 +133,7 @@
 @ stub CM_Open_Class_KeyW
 @ stub CM_Open_Class_Key_ExA
 @ stub CM_Open_Class_Key_ExW
-@ stub CM_Open_DevNode_Key
+@ stdcall CM_Open_DevNode_Key(long long long long ptr long) setupapi.CM_Open_DevNode_Key
 @ stub CM_Open_DevNode_Key_Ex
 @ stub CM_Query_Arbitrator_Free_Data
 @ stub CM_Query_Arbitrator_Free_Data_Ex

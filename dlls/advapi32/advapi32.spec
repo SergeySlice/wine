@@ -411,8 +411,8 @@
 @ stdcall LookupAccountSidW(ptr ptr ptr ptr ptr ptr ptr)
 @ stdcall LookupPrivilegeDisplayNameA(str str str ptr ptr)
 @ stdcall LookupPrivilegeDisplayNameW(wstr wstr wstr ptr ptr)
-@ stdcall LookupPrivilegeNameA(str ptr ptr long)
-@ stdcall LookupPrivilegeNameW(wstr ptr ptr long)
+@ stdcall LookupPrivilegeNameA(str ptr ptr ptr)
+@ stdcall LookupPrivilegeNameW(wstr ptr ptr ptr)
 @ stdcall LookupPrivilegeValueA(ptr ptr ptr)
 @ stdcall LookupPrivilegeValueW(ptr ptr ptr)
 # @ stub LookupSecurityDescriptorPartsA
@@ -452,7 +452,7 @@
 # @ stub LsaManageSidNameMapping
 @ stdcall LsaNtStatusToWinError(long)
 @ stub LsaOpenAccount
-@ stdcall LsaOpenPolicy(long long long long)
+@ stdcall LsaOpenPolicy(long ptr long long)
 # @ stub LsaOpenPolicySce
 @ stub LsaOpenSecret
 @ stub LsaOpenTrustedDomain
@@ -698,10 +698,10 @@
 # @ stub SetInformationCodeAuthzLevelW
 # @ stub SetInformationCodeAuthzPolicyW
 @ stdcall SetKernelObjectSecurity(long long ptr)
-@ stdcall SetNamedSecurityInfoA(str long ptr ptr ptr ptr ptr)
+@ stdcall SetNamedSecurityInfoA(str long long ptr ptr ptr ptr)
 # @ stub SetNamedSecurityInfoExA
 # @ stub SetNamedSecurityInfoExW
-@ stdcall SetNamedSecurityInfoW(wstr long ptr ptr ptr ptr ptr)
+@ stdcall SetNamedSecurityInfoW(wstr long long ptr ptr ptr ptr)
 @ stdcall SetPrivateObjectSecurity(long ptr ptr ptr long)
 # @ stub SetPrivateObjectSecurityEx
 # @ stub SetSecurityAccessMask
@@ -716,7 +716,7 @@
 # @ stub SetSecurityInfoExW
 @ stdcall SetServiceBits(long long long long)
 @ stdcall SetServiceObjectSecurity(long long ptr)
-@ stdcall SetServiceStatus(long long)
+@ stdcall SetServiceStatus(long ptr)
 @ stdcall SetThreadToken (ptr ptr)
 @ stdcall SetTokenInformation (long long ptr long)
 # @ stub SetTraceCallback
@@ -783,7 +783,7 @@
 # @ stub UninstallApplication
 @ stdcall UnlockServiceDatabase (ptr)
 # @ stub UnregisterIdleTask
-@ stdcall UnregisterTraceGuids(int64)
+@ stdcall UnregisterTraceGuids(int64) ntdll.EtwUnregisterTraceGuids
 @ stub UpdateTraceA
 @ stub UpdateTraceW
 # @ stub UsePinForEncryptedFilesA

@@ -43,6 +43,7 @@ static const WCHAR symbols_stripped[] = {'j','u','s','t','a','t','e','s','t','s'
 static const WCHAR localeW[] = {'e','n','-','U','S',0};
 static const WCHAR fooW[] = {'f','o','o',0};
 static const WCHAR emptyW[] = {0};
+static const WCHAR invalidW[] = {'i','n','v','a','l','i','d',0};
 
 static inline unsigned int strlenW( const WCHAR *str )
 {
@@ -254,7 +255,7 @@ static const struct neutralsublang_name2_t neutralsublang_names2[] = {
     { {'e','s',0}, {'e','s','-','E','S',0},
       MAKELCID(MAKELANGID(LANG_SPANISH, SUBLANG_SPANISH_MODERN), SORT_DEFAULT),
       MAKELCID(MAKELANGID(LANG_SPANISH, SUBLANG_SPANISH), SORT_DEFAULT) /* vista */,
-      {'e','s','-','E','S','_','t','r','a','d','n','l',0}, 0x1 },
+      {'e','s','-','E','S','_','t','r','a','d','n','l',0} },
     { {'g','a',0}, {'g','a','-','I','E',0},
       MAKELCID(MAKELANGID(LANG_IRISH, SUBLANG_IRISH_IRELAND), SORT_DEFAULT), 0, {0}, 0x3 },
     { {'i','t',0}, {'i','t','-','I','T',0},
@@ -272,7 +273,7 @@ static const struct neutralsublang_name2_t neutralsublang_names2[] = {
     { {'u','z',0}, {'u','z','-','L','a','t','n','-','U','Z',0},
       MAKELCID(MAKELANGID(LANG_UZBEK, SUBLANG_UZBEK_LATIN), SORT_DEFAULT) },
     { {'z','h',0}, {'z','h','-','C','N',0},
-      MAKELCID(MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED), SORT_DEFAULT), 0, {0}, 0x3 },
+      MAKELCID(MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED), SORT_DEFAULT) },
     { {0} }
 };
 
@@ -2644,7 +2645,7 @@ static void test_LCMapStringEx(void)
     trace("testing LCMapStringEx\n");
 
     SetLastError(0xdeadbeef);
-    ret = pLCMapStringEx(fooW, LCMAP_LOWERCASE,
+    ret = pLCMapStringEx(invalidW, LCMAP_LOWERCASE,
                          upper_case, -1, buf, sizeof(buf)/sizeof(WCHAR), NULL, NULL, 0);
     todo_wine {
     ok(!ret, "LCMapStringEx should fail with bad locale name\n");
@@ -2674,25 +2675,26 @@ static void test_LCMapStringEx(void)
 
 struct neutralsublang_name_t {
     WCHAR name[3];
+    WCHAR sname[16];
     LCID lcid;
     int todo;
 };
 
 static const struct neutralsublang_name_t neutralsublang_names[] = {
-    { {'a','r',0}, MAKELCID(MAKELANGID(LANG_ARABIC,     SUBLANG_ARABIC_SAUDI_ARABIA), SORT_DEFAULT) },
-    { {'a','z',0}, MAKELCID(MAKELANGID(LANG_AZERI,      SUBLANG_AZERI_LATIN), SORT_DEFAULT) },
-    { {'d','e',0}, MAKELCID(MAKELANGID(LANG_GERMAN,     SUBLANG_GERMAN), SORT_DEFAULT) },
-    { {'e','n',0}, MAKELCID(MAKELANGID(LANG_ENGLISH,    SUBLANG_ENGLISH_US), SORT_DEFAULT) },
-    { {'e','s',0}, MAKELCID(MAKELANGID(LANG_SPANISH,    SUBLANG_SPANISH_MODERN), SORT_DEFAULT), 1 },
-    { {'g','a',0}, MAKELCID(MAKELANGID(LANG_IRISH,      SUBLANG_IRISH_IRELAND), SORT_DEFAULT) },
-    { {'i','t',0}, MAKELCID(MAKELANGID(LANG_ITALIAN,    SUBLANG_ITALIAN), SORT_DEFAULT) },
-    { {'m','s',0}, MAKELCID(MAKELANGID(LANG_MALAY,      SUBLANG_MALAY_MALAYSIA), SORT_DEFAULT) },
-    { {'n','l',0}, MAKELCID(MAKELANGID(LANG_DUTCH,      SUBLANG_DUTCH), SORT_DEFAULT) },
-    { {'p','t',0}, MAKELCID(MAKELANGID(LANG_PORTUGUESE, SUBLANG_PORTUGUESE_BRAZILIAN), SORT_DEFAULT) },
-    { {'s','r',0}, MAKELCID(MAKELANGID(LANG_SERBIAN,    SUBLANG_SERBIAN_SERBIA_LATIN), SORT_DEFAULT), 1 },
-    { {'s','v',0}, MAKELCID(MAKELANGID(LANG_SWEDISH,    SUBLANG_SWEDISH), SORT_DEFAULT) },
-    { {'u','z',0}, MAKELCID(MAKELANGID(LANG_UZBEK,      SUBLANG_UZBEK_LATIN), SORT_DEFAULT) },
-    { {'z','h',0}, MAKELCID(MAKELANGID(LANG_CHINESE,    SUBLANG_CHINESE_SIMPLIFIED), SORT_DEFAULT), 1 },
+    { {'a','r',0}, {'a','r','-','S','A',0}, MAKELCID(MAKELANGID(LANG_ARABIC, SUBLANG_ARABIC_SAUDI_ARABIA), SORT_DEFAULT) },
+    { {'a','z',0}, {'a','z','-','L','a','t','n','-','A','Z',0}, MAKELCID(MAKELANGID(LANG_AZERI, SUBLANG_AZERI_LATIN), SORT_DEFAULT) },
+    { {'d','e',0}, {'d','e','-','D','E',0}, MAKELCID(MAKELANGID(LANG_GERMAN, SUBLANG_GERMAN), SORT_DEFAULT) },
+    { {'e','n',0}, {'e','n','-','U','S',0}, MAKELCID(MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US), SORT_DEFAULT) },
+    { {'e','s',0}, {'e','s','-','E','S',0}, MAKELCID(MAKELANGID(LANG_SPANISH, SUBLANG_SPANISH_MODERN), SORT_DEFAULT) },
+    { {'g','a',0}, {'g','a','-','I','E',0}, MAKELCID(MAKELANGID(LANG_IRISH, SUBLANG_IRISH_IRELAND), SORT_DEFAULT) },
+    { {'i','t',0}, {'i','t','-','I','T',0}, MAKELCID(MAKELANGID(LANG_ITALIAN, SUBLANG_ITALIAN), SORT_DEFAULT) },
+    { {'m','s',0}, {'m','s','-','M','Y',0}, MAKELCID(MAKELANGID(LANG_MALAY, SUBLANG_MALAY_MALAYSIA), SORT_DEFAULT) },
+    { {'n','l',0}, {'n','l','-','N','L',0}, MAKELCID(MAKELANGID(LANG_DUTCH, SUBLANG_DUTCH), SORT_DEFAULT) },
+    { {'p','t',0}, {'p','t','-','B','R',0}, MAKELCID(MAKELANGID(LANG_PORTUGUESE, SUBLANG_PORTUGUESE_BRAZILIAN), SORT_DEFAULT) },
+    { {'s','r',0}, {'s','r','-','L','a','t','n','-','R','S',0}, MAKELCID(MAKELANGID(LANG_SERBIAN, SUBLANG_SERBIAN_SERBIA_LATIN), SORT_DEFAULT), 1 },
+    { {'s','v',0}, {'s','v','-','S','E',0}, MAKELCID(MAKELANGID(LANG_SWEDISH, SUBLANG_SWEDISH), SORT_DEFAULT) },
+    { {'u','z',0}, {'u','z','-','L','a','t','n','-','U','Z',0}, MAKELCID(MAKELANGID(LANG_UZBEK, SUBLANG_UZBEK_LATIN), SORT_DEFAULT) },
+    { {'z','h',0}, {'z','h','-','C','N',0}, MAKELCID(MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED), SORT_DEFAULT) },
     { {0} }
 };
 
@@ -2702,6 +2704,7 @@ static void test_LocaleNameToLCID(void)
     INT ret;
     WCHAR buffer[LOCALE_NAME_MAX_LENGTH];
     static const WCHAR enW[] = {'e','n',0};
+    static const WCHAR esesW[] = {'e','s','-','e','s',0};
 
     if (!pLocaleNameToLCID)
     {
@@ -2738,9 +2741,13 @@ static void test_LocaleNameToLCID(void)
 
     /* bad name */
     SetLastError(0xdeadbeef);
-    lcid = pLocaleNameToLCID(fooW, 0);
+    lcid = pLocaleNameToLCID(invalidW, 0);
     ok(!lcid && GetLastError() == ERROR_INVALID_PARAMETER,
        "Expected lcid == 0, got %08x, error %d\n", lcid, GetLastError());
+
+    /* lower-case */
+    lcid = pLocaleNameToLCID(esesW, 0);
+    ok(lcid == MAKELCID(MAKELANGID(LANG_SPANISH, SUBLANG_SPANISH_MODERN), SORT_DEFAULT), "Got wrong lcid for es-es: 0x%x\n", lcid);
 
     /* english neutral name */
     lcid = pLocaleNameToLCID(enW, 0);
@@ -2760,7 +2767,7 @@ static void test_LocaleNameToLCID(void)
             *buffer = 0;
             ret = pLCIDToLocaleName(lcid, buffer, sizeof(buffer)/sizeof(WCHAR), 0);
             ok(ret > 0, "%s: got %d\n", wine_dbgstr_w(ptr->name), ret);
-            ok(lstrcmpW(ptr->name, buffer), "%s: got wrong locale name %s\n",
+            ok(!lstrcmpW(ptr->sname, buffer), "%s: got wrong locale name %s\n",
                 wine_dbgstr_w(ptr->name), wine_dbgstr_w(buffer));
 
             ptr++;
@@ -4463,7 +4470,8 @@ static void test_IsValidLocaleName(void)
 {
     static const WCHAR enusW[] = {'e','n','-','U','S',0};
     static const WCHAR zzW[] = {'z','z',0};
-    static const WCHAR zzzzW[] = {'z','z','-','Z','Z',0};
+    static const WCHAR zz_zzW[] = {'z','z','-','Z','Z',0};
+    static const WCHAR zzzzW[] = {'z','z','z','z',0};
     BOOL ret;
 
     if (!pIsValidLocaleName)
@@ -4475,7 +4483,9 @@ static void test_IsValidLocaleName(void)
     ret = pIsValidLocaleName(enusW);
     ok(ret, "IsValidLocaleName failed\n");
     ret = pIsValidLocaleName(zzW);
-    ok(!ret, "IsValidLocaleName should have failed\n");
+    ok(!ret || broken(ret), "IsValidLocaleName should have failed\n");
+    ret = pIsValidLocaleName(zz_zzW);
+    ok(!ret || broken(ret), "IsValidLocaleName should have failed\n");
     ret = pIsValidLocaleName(zzzzW);
     ok(!ret, "IsValidLocaleName should have failed\n");
     ret = pIsValidLocaleName(LOCALE_NAME_INVARIANT);
@@ -4722,7 +4732,7 @@ static void test_EnumSystemGeoID(void)
 struct invariant_entry {
   const char *name;
   int id;
-  const char *expect;
+  const char *expect, *expect2;
 };
 
 #define X(x)  #x, x
@@ -4733,7 +4743,7 @@ static const struct invariant_entry invariant_list[] = {
     { X(LOCALE_SNATIVELANGNAME),          "Invariant Language" },
     { X(LOCALE_ICOUNTRY),                 "1" },
     { X(LOCALE_SENGCOUNTRY),              "Invariant Country" },
-    { X(LOCALE_SABBREVCTRYNAME),          "IVC" },
+    { X(LOCALE_SABBREVCTRYNAME),          "IVC", "" },
     { X(LOCALE_SNATIVECTRYNAME),          "Invariant Country" },
     { X(LOCALE_IDEFAULTLANGUAGE),         "0409" },
     { X(LOCALE_IDEFAULTCOUNTRY),          "1" },
@@ -4860,19 +4870,21 @@ static void test_invariant(void)
     else
     {
         len = strlen(ptr->expect)+1; /* include \0 */
-        ok(ret == len, "For id %d, expected ret == %d, got %d, error %d\n",
+        ok(ret == len || (ptr->expect2 && ret == strlen(ptr->expect2)+1),
+           "For id %d, expected ret == %d, got %d, error %d\n",
             ptr->id, len, ret, GetLastError());
-        ok(!strcmp(buffer, ptr->expect), "For id %d, Expected %s, got '%s'\n",
+        ok(!strcmp(buffer, ptr->expect) || (ptr->expect2 && !strcmp(buffer, ptr->expect2)),
+           "For id %d, Expected %s, got '%s'\n",
             ptr->id, ptr->expect, buffer);
     }
 
     ptr++;
   }
 
-  if ((PRIMARYLANGID(LANGIDFROMLCID(GetSystemDefaultLCID())) != LANG_ENGLISH) ||
-      (PRIMARYLANGID(LANGIDFROMLCID(GetThreadLocale())) != LANG_ENGLISH))
+ if ((LANGIDFROMLCID(GetSystemDefaultLCID()) != MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US)) ||
+     (LANGIDFROMLCID(GetThreadLocale()) != MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US)))
   {
-      skip("Non-English locale\n");
+      skip("Non US-English locale\n");
   }
   else
   {

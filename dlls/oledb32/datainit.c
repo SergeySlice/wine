@@ -401,18 +401,19 @@ static HRESULT parse_init_string(const WCHAR *initstring, struct dbprops *props)
     while (start && (eq = strchrW(start, '=')))
     {
         static const WCHAR providerW[] = {'P','r','o','v','i','d','e','r',0};
+        WCHAR *delim, quote;
         BSTR value, name;
-        WCHAR *delim;
 
         name = SysAllocStringLen(start, eq - start);
         /* skip equal sign to get value */
         eq++;
 
-        if (*eq == '"')
+        quote = (*eq == '"' || *eq == '\'') ? *eq : 0;
+        if (quote)
         {
             /* for quoted value string, skip opening mark, look for terminating one */
             eq++;
-            delim = strchrW(eq, '"');
+            delim = strchrW(eq, quote);
         }
         else
             delim = strchrW(eq, ';');
@@ -422,7 +423,7 @@ static HRESULT parse_init_string(const WCHAR *initstring, struct dbprops *props)
         /* skip semicolon if present */
         if (delim)
         {
-            if (*delim == '"')
+            if (*delim == quote)
                delim++;
             if (*delim == ';')
                delim++;
@@ -587,12 +588,10 @@ static WCHAR *strstriW(const WCHAR *str, const WCHAR *sub)
     return r;
 }
 
-static HRESULT WINAPI datainit_GetDataSource(IDataInitialize *iface, IUnknown *outer, DWORD clsctx,
-                                LPWSTR initstring, REFIID riid, IUnknown **datasource)
+HRESULT get_data_source(IUnknown *outer, DWORD clsctx, LPWSTR initstring, REFIID riid, IUnknown **datasource)
 {
     static const WCHAR providerW[] = {'P','r','o','v','i','d','e','r','=',0};
     static const WCHAR msdasqlW[] = {'M','S','D','A','S','Q','L',0};
-    datainit *This = impl_from_IDataInitialize(iface);
     BOOL datasource_created = FALSE;
     IDBProperties *dbprops;
     DBPROPSET *propset;
@@ -600,7 +599,6 @@ static HRESULT WINAPI datainit_GetDataSource(IDataInitialize *iface, IUnknown *o
     CLSID provclsid;
     HRESULT hr;
 
-    TRACE("(%p)->(%p 0x%x %s %s %p)\n", This, outer, clsctx, debugstr_w(initstring), debugstr_guid(riid), datasource);
 
     /* first get provider name */
     provclsid = IID_NULL;
@@ -725,6 +723,16 @@ static HRESULT WINAPI datainit_GetDataSource(IDataInitialize *iface, IUnknown *o
     }
 
     return hr;
+}
+
+static HRESULT WINAPI datainit_GetDataSource(IDataInitialize *iface, IUnknown *outer, DWORD clsctx,
+                                LPWSTR initstring, REFIID riid, IUnknown **datasource)
+{
+    datainit *This = impl_from_IDataInitialize(iface);
+
+    TRACE("(%p)->(%p 0x%x %s %s %p)\n", This, outer, clsctx, debugstr_w(initstring), debugstr_guid(riid), datasource);
+
+    return get_data_source(outer, clsctx, initstring, riid, datasource);
 }
 
 /* returns character length of string representation */
@@ -918,13 +926,13 @@ static HRESULT WINAPI datainit_CreateDBInstance(IDataInitialize *iface, REFCLSID
     return CoCreateInstance(provider, outer, clsctx, riid, (void**)datasource);
 }
 
-static HRESULT WINAPI datainit_RemoteCreateDBInstanceEx(IDataInitialize *iface, REFCLSID clsidProvider,
-                                IUnknown *pUnkOuter, DWORD dwClsCtx, LPWSTR pwszReserved, COSERVERINFO *pServerInfo,
-                                DWORD cmq, GUID **rgpIID, IUnknown **rgpItf, HRESULT *rghr)
+static HRESULT WINAPI datainit_CreateDBInstanceEx(IDataInitialize *iface, REFCLSID provider, IUnknown *outer,
+    DWORD clsctx, LPWSTR reserved, COSERVERINFO *server_info, DWORD cmq, MULTI_QI *results)
 {
     datainit *This = impl_from_IDataInitialize(iface);
 
-    FIXME("(%p)->()\n", This);
+    FIXME("(%p)->(%s %p %#x %s %p %u %p)\n", This, debugstr_guid(provider), outer, clsctx,
+        debugstr_w(reserved), server_info, cmq, results);
 
     return E_NOTIMPL;
 }
@@ -958,7 +966,7 @@ static const struct IDataInitializeVtbl datainit_vtbl =
     datainit_GetDataSource,
     datainit_GetInitializationString,
     datainit_CreateDBInstance,
-    datainit_RemoteCreateDBInstanceEx,
+    datainit_CreateDBInstanceEx,
     datainit_LoadStringFromStorage,
     datainit_WriteStringToStorage
 };

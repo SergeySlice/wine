@@ -417,6 +417,7 @@ static struct async_fileio *alloc_fileio( DWORD size, HANDLE handle, PIO_APC_ROU
 static NTSTATUS irp_completion( void *user, IO_STATUS_BLOCK *io, NTSTATUS status, void **apc, void **arg )
 {
     struct async_irp *async = user;
+    ULONG information = 0;
 
     if (status == STATUS_ALERTED)
     {
@@ -425,13 +426,14 @@ static NTSTATUS irp_completion( void *user, IO_STATUS_BLOCK *io, NTSTATUS status
             req->user_arg = wine_server_client_ptr( async );
             wine_server_set_reply( req, async->buffer, async->size );
             status = wine_server_call( req );
-            if (status != STATUS_PENDING) io->Information = reply->size;
+            information = reply->size;
         }
         SERVER_END_REQ;
     }
     if (status != STATUS_PENDING)
     {
         io->u.Status = status;
+        io->Information = information;
         *apc = async->io.apc;
         *arg = async->io.apc_arg;
         release_fileio( &async->io );
@@ -853,18 +855,14 @@ NTSTATUS WINAPI NtReadFile(HANDLE hFile, HANDLE hEvent,
 
     status = server_get_unix_fd( hFile, FILE_READ_DATA, &unix_handle,
                                  &needs_close, &type, &options );
+    if (status && status != STATUS_BAD_DEVICE_TYPE) return status;
+
+    if (!virtual_check_buffer_for_write( buffer, length )) return STATUS_ACCESS_VIOLATION;
+
     if (status == STATUS_BAD_DEVICE_TYPE)
         return server_read_file( hFile, hEvent, apc, apc_user, io_status, buffer, length, offset, key );
 
-    if (status) return status;
-
     async_read = !(options & (FILE_SYNCHRONOUS_IO_ALERT | FILE_SYNCHRONOUS_IO_NONALERT));
-
-    if (!virtual_check_buffer_for_write( buffer, length ))
-    {
-        status = STATUS_ACCESS_VIOLATION;
-        goto done;
-    }
 
     if (type == FD_TYPE_FILE)
     {
@@ -1231,22 +1229,22 @@ NTSTATUS WINAPI NtWriteFile(HANDLE hFile, HANDLE hEvent,
 
     status = server_get_unix_fd( hFile, FILE_WRITE_DATA, &unix_handle,
                                  &needs_close, &type, &options );
-    if (status == STATUS_BAD_DEVICE_TYPE)
-        return server_write_file( hFile, hEvent, apc, apc_user, io_status, buffer, length, offset, key );
-
     if (status == STATUS_ACCESS_DENIED)
     {
         status = server_get_unix_fd( hFile, FILE_APPEND_DATA, &unix_handle,
                                      &needs_close, &type, &options );
         append_write = TRUE;
     }
-    if (status) return status;
+    if (status && status != STATUS_BAD_DEVICE_TYPE) return status;
 
     if (!virtual_check_buffer_for_read( buffer, length ))
     {
         status = STATUS_INVALID_USER_BUFFER;
         goto done;
     }
+
+    if (status == STATUS_BAD_DEVICE_TYPE)
+        return server_write_file( hFile, hEvent, apc, apc_user, io_status, buffer, length, offset, key );
 
     async_write = !(options & (FILE_SYNCHRONOUS_IO_ALERT | FILE_SYNCHRONOUS_IO_NONALERT));
 

@@ -26,6 +26,8 @@
 
 #include "ddraw_private.h"
 
+#include "wine/exception.h"
+
 WINE_DEFAULT_DEBUG_CHANNEL(ddraw);
 
 static const struct ddraw *exclusive_ddraw;
@@ -653,6 +655,9 @@ static HRESULT ddraw_create_swapchain(struct ddraw *ddraw, HWND window, BOOL win
     wined3d_swapchain_incref(ddraw->wined3d_swapchain);
     ddraw_set_swapchain_window(ddraw, window);
 
+    if (ddraw->primary && ddraw->primary->palette)
+        wined3d_swapchain_set_palette(ddraw->wined3d_swapchain, ddraw->primary->palette->wined3d_palette);
+
     return DD_OK;
 }
 
@@ -689,6 +694,8 @@ static HRESULT WINAPI ddraw7_RestoreDisplayMode(IDirectDraw7 *iface)
 
     if (SUCCEEDED(hr = wined3d_set_adapter_display_mode(ddraw->wined3d, WINED3DADAPTER_DEFAULT, NULL)))
         ddraw->flags &= ~DDRAW_RESTORE_MODE;
+
+    InterlockedCompareExchange(&ddraw->device_state, DDRAW_DEVICE_STATE_NOT_RESTORED, DDRAW_DEVICE_STATE_OK);
 
     wined3d_mutex_unlock();
 
@@ -1122,7 +1129,21 @@ static HRESULT WINAPI ddraw7_SetDisplayMode(IDirectDraw7 *iface, DWORD width, DW
     /* TODO: The possible return values from msdn suggest that the screen mode
      * can't be changed if a surface is locked or some drawing is in progress. */
     if (SUCCEEDED(hr = wined3d_set_adapter_display_mode(ddraw->wined3d, WINED3DADAPTER_DEFAULT, &mode)))
+    {
+        if (ddraw->primary)
+        {
+            DDSURFACEDESC2 *surface_desc = &ddraw->primary->surface_desc;
+
+            if (FAILED(hr = wined3d_swapchain_resize_buffers(ddraw->wined3d_swapchain, 0,
+                    surface_desc->dwWidth, surface_desc->dwHeight, mode.format_id, WINED3D_MULTISAMPLE_NONE, 0)))
+                ERR("Failed to resize buffers, hr %#x.\n", hr);
+            else
+                ddrawformat_from_wined3dformat(&ddraw->primary->surface_desc.u4.ddpfPixelFormat, mode.format_id);
+        }
         ddraw->flags |= DDRAW_RESTORE_MODE;
+    }
+
+    InterlockedCompareExchange(&ddraw->device_state, DDRAW_DEVICE_STATE_NOT_RESTORED, DDRAW_DEVICE_STATE_OK);
 
     wined3d_mutex_unlock();
 
@@ -1883,7 +1904,7 @@ static HRESULT WINAPI ddraw1_GetVerticalBlankStatus(IDirectDraw *iface, BOOL *st
  * Returns the total and free video memory
  *
  * Params:
- *  Caps: Specifies the memory type asked for
+ *  caps: Specifies the memory type asked for
  *  total: Pointer to a DWORD to be filled with the total memory
  *  free: Pointer to a DWORD to be filled with the free memory
  *
@@ -1892,7 +1913,7 @@ static HRESULT WINAPI ddraw1_GetVerticalBlankStatus(IDirectDraw *iface, BOOL *st
  *  DDERR_INVALIDPARAMS if free and total are NULL
  *
  *****************************************************************************/
-static HRESULT WINAPI ddraw7_GetAvailableVidMem(IDirectDraw7 *iface, DDSCAPS2 *Caps, DWORD *total,
+static HRESULT WINAPI ddraw7_GetAvailableVidMem(IDirectDraw7 *iface, DDSCAPS2 *caps, DWORD *total,
         DWORD *free)
 {
     unsigned int framebuffer_size, total_vidmem, free_vidmem;
@@ -1900,12 +1921,15 @@ static HRESULT WINAPI ddraw7_GetAvailableVidMem(IDirectDraw7 *iface, DDSCAPS2 *C
     struct wined3d_display_mode mode;
     HRESULT hr = DD_OK;
 
-    TRACE("iface %p, caps %p, total %p, free %p.\n", iface, Caps, total, free);
+    TRACE("iface %p, caps %p, total %p, free %p.\n", iface, caps, total, free);
+
+    if (!total && !free)
+        return DDERR_INVALIDPARAMS;
 
     if (TRACE_ON(ddraw))
     {
         TRACE("Asked for memory with description: ");
-        DDRAW_dump_DDSCAPS2(Caps);
+        DDRAW_dump_DDSCAPS2(caps);
     }
     wined3d_mutex_lock();
 
@@ -1913,12 +1937,6 @@ static HRESULT WINAPI ddraw7_GetAvailableVidMem(IDirectDraw7 *iface, DDSCAPS2 *C
      * The MSDN also mentions differences between texture memory and other
      * resources, but that's not important
      */
-
-    if( (!total) && (!free) )
-    {
-        wined3d_mutex_unlock();
-        return DDERR_INVALIDPARAMS;
-    }
 
     /* Some applications (e.g. 3DMark 2000) assume that the reported amount of
      * video memory doesn't include the memory used by the default framebuffer.
@@ -2812,15 +2830,23 @@ static HRESULT WINAPI ddraw7_CreateSurface(IDirectDraw7 *iface, DDSURFACEDESC2 *
 
     hr = ddraw_surface_create(ddraw, surface_desc, &impl, outer_unknown, 7);
     wined3d_mutex_unlock();
-    if (FAILED(hr))
-    {
-        *surface = NULL;
-        return hr;
-    }
 
-    *surface = &impl->IDirectDrawSurface7_iface;
-    IDirectDraw7_AddRef(iface);
-    impl->ifaceToRelease = (IUnknown *)iface;
+    __TRY
+    {
+        if (FAILED(hr))
+        {
+            *surface = NULL;
+            break;
+        }
+        *surface = &impl->IDirectDrawSurface7_iface;
+        IDirectDraw7_AddRef(iface);
+        impl->ifaceToRelease = (IUnknown *)iface;
+    }
+    __EXCEPT_PAGE_FAULT
+    {
+        hr = E_INVALIDARG;
+    }
+    __ENDTRY;
 
     return hr;
 }
@@ -2866,15 +2892,23 @@ static HRESULT WINAPI ddraw4_CreateSurface(IDirectDraw4 *iface,
 
     hr = ddraw_surface_create(ddraw, surface_desc, &impl, outer_unknown, 4);
     wined3d_mutex_unlock();
-    if (FAILED(hr))
-    {
-        *surface = NULL;
-        return hr;
-    }
 
-    *surface = &impl->IDirectDrawSurface4_iface;
-    IDirectDraw4_AddRef(iface);
-    impl->ifaceToRelease = (IUnknown *)iface;
+    __TRY
+    {
+        if (FAILED(hr))
+        {
+            *surface = NULL;
+            break;
+        }
+        *surface = &impl->IDirectDrawSurface4_iface;
+        IDirectDraw4_AddRef(iface);
+        impl->ifaceToRelease = (IUnknown *)iface;
+    }
+    __EXCEPT_PAGE_FAULT
+    {
+        hr = E_INVALIDARG;
+    }
+    __ENDTRY;
 
     return hr;
 }
@@ -2922,14 +2956,22 @@ static HRESULT WINAPI ddraw2_CreateSurface(IDirectDraw2 *iface,
 
     hr = ddraw_surface_create(ddraw, &surface_desc2, &impl, outer_unknown, 2);
     wined3d_mutex_unlock();
-    if (FAILED(hr))
-    {
-        *surface = NULL;
-        return hr;
-    }
 
-    *surface = &impl->IDirectDrawSurface_iface;
-    impl->ifaceToRelease = NULL;
+    __TRY
+    {
+        if (FAILED(hr))
+        {
+            *surface = NULL;
+            break;
+        }
+        *surface = &impl->IDirectDrawSurface_iface;
+        impl->ifaceToRelease = NULL;
+    }
+    __EXCEPT_PAGE_FAULT
+    {
+        hr = E_INVALIDARG;
+    }
+    __ENDTRY;
 
     return hr;
 }
@@ -2974,14 +3016,22 @@ static HRESULT WINAPI ddraw1_CreateSurface(IDirectDraw *iface,
     DDSD_to_DDSD2(surface_desc, &surface_desc2);
     hr = ddraw_surface_create(ddraw, &surface_desc2, &impl, outer_unknown, 1);
     wined3d_mutex_unlock();
-    if (FAILED(hr))
-    {
-        *surface = NULL;
-        return hr;
-    }
 
-    *surface = &impl->IDirectDrawSurface_iface;
-    impl->ifaceToRelease = NULL;
+    __TRY
+    {
+        if (FAILED(hr))
+        {
+            *surface = NULL;
+            break;
+        }
+        *surface = &impl->IDirectDrawSurface_iface;
+        impl->ifaceToRelease = NULL;
+    }
+    __EXCEPT_PAGE_FAULT
+    {
+        hr = E_INVALIDARG;
+    }
+    __ENDTRY;
 
     return hr;
 }

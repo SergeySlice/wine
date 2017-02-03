@@ -65,6 +65,7 @@ static const char * const shader_opcode_names[] =
     /* WINED3DSIH_CMP                              */ "cmp",
     /* WINED3DSIH_CND                              */ "cnd",
     /* WINED3DSIH_CONTINUE                         */ "continue",
+    /* WINED3DSIH_COUNTBITS                        */ "countbits",
     /* WINED3DSIH_CRS                              */ "crs",
     /* WINED3DSIH_CUT                              */ "cut",
     /* WINED3DSIH_CUT_STREAM                       */ "cut_stream",
@@ -90,6 +91,7 @@ static const char * const shader_opcode_names[] =
     /* WINED3DSIH_DCL_OUTPUT_CONTROL_POINT_COUNT   */ "dcl_output_control_point_count",
     /* WINED3DSIH_DCL_OUTPUT_SIV                   */ "dcl_output_siv",
     /* WINED3DSIH_DCL_OUTPUT_TOPOLOGY              */ "dcl_outputTopology",
+    /* WINED3DSIH_DCL_RESOURCE_RAW                 */ "dcl_resource_raw",
     /* WINED3DSIH_DCL_RESOURCE_STRUCTURED          */ "dcl_resource_structured",
     /* WINED3DSIH_DCL_SAMPLER                      */ "dcl_sampler",
     /* WINED3DSIH_DCL_STREAM                       */ "dcl_stream",
@@ -130,7 +132,12 @@ static const char * const shader_opcode_names[] =
     /* WINED3DSIH_EQ                               */ "eq",
     /* WINED3DSIH_EXP                              */ "exp",
     /* WINED3DSIH_EXPP                             */ "expp",
+    /* WINED3DSIH_F16TOF32                         */ "f16tof32",
+    /* WINED3DSIH_F32TOF16                         */ "f32tof16",
     /* WINED3DSIH_FCALL                            */ "fcall",
+    /* WINED3DSIH_FIRSTBIT_HI                      */ "firstbit_hi",
+    /* WINED3DSIH_FIRSTBIT_LO                      */ "firstbit_lo",
+    /* WINED3DSIH_FIRSTBIT_SHI                     */ "firstbit_shi",
     /* WINED3DSIH_FRC                              */ "frc",
     /* WINED3DSIH_FTOI                             */ "ftoi",
     /* WINED3DSIH_FTOU                             */ "ftou",
@@ -2436,6 +2443,11 @@ static void shader_trace_init(const struct wined3d_shader_frontend *fe, void *fe
                     shader_opcode_names[ins.handler_idx], ins.declaration.fp.index,
                     ins.declaration.fp.array_size, ins.declaration.fp.body_count);
         }
+        else if (ins.handler_idx == WINED3DSIH_DCL_RESOURCE_RAW)
+        {
+            shader_addline(&buffer, "%s ", shader_opcode_names[ins.handler_idx]);
+            shader_dump_dst_param(&buffer, &ins.declaration.dst, &shader_version);
+        }
         else if (ins.handler_idx == WINED3DSIH_DCL_RESOURCE_STRUCTURED)
         {
             shader_addline(&buffer, "%s ", shader_opcode_names[ins.handler_idx]);
@@ -2653,9 +2665,8 @@ struct shader_none_priv
 };
 
 static void shader_none_handle_instruction(const struct wined3d_shader_instruction *ins) {}
-static void shader_none_select_depth_blt(void *shader_priv, const struct wined3d_gl_info *gl_info,
-        enum wined3d_gl_resource_type tex_type, const SIZE *ds_mask_size) {}
-static void shader_none_deselect_depth_blt(void *shader_priv, const struct wined3d_gl_info *gl_info) {}
+static void shader_none_select_compute(void *shader_priv, struct wined3d_context *context,
+        const struct wined3d_state *state) {}
 static void shader_none_update_float_vertex_constants(struct wined3d_device *device, UINT start, UINT count) {}
 static void shader_none_update_float_pixel_constants(struct wined3d_device *device, UINT start, UINT count) {}
 static void shader_none_load_constants(void *shader_priv, struct wined3d_context *context,
@@ -2777,9 +2788,8 @@ const struct wined3d_shader_backend_ops none_shader_backend =
 {
     shader_none_handle_instruction,
     shader_none_select,
+    shader_none_select_compute,
     shader_none_disable,
-    shader_none_select_depth_blt,
-    shader_none_deselect_depth_blt,
     shader_none_update_float_vertex_constants,
     shader_none_update_float_pixel_constants,
     shader_none_load_constants,
