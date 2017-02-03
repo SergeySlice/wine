@@ -8898,7 +8898,7 @@ fail:
 static void shader_glsl_free(struct wined3d_device *device)
 {
     struct shader_glsl_priv *priv = device->shader_priv;
-
+    const struct wined3d_gl_info *gl_info = &device->adapter->gl_info;
     wine_rb_destroy(&priv->program_lookup, NULL, NULL);
     constant_heap_free(&priv->pconst_heap);
     constant_heap_free(&priv->vconst_heap);

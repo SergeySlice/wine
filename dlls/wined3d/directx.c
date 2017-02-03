@@ -2065,7 +2065,7 @@ cards_nvidia_binary[] =
 cards_amd_binary[] =
 {
     /* by family name */
-    {"Hawaii",                      CARD_AMD_RADEON_R9    },
+    {"Hawaii",                      CARD_AMD_RADEON_R9_290},
     {"Kaveri",                      CARD_AMD_RADEON_R7    },
     {"Kabini",                      CARD_AMD_RADEON_R3    },
     {"Bonair",                      CARD_AMD_RADEON_HD8770},

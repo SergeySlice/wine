@@ -309,12 +309,12 @@ static BOOL wined3d_dll_init(HINSTANCE hInstDLL)
             wined3d_settings.strict_draw_ordering = TRUE;
         }
 
-        if (!get_config_key(hkey, appkey, "AlwaysOffscreen", buffer, size)
+/*        if (!get_config_key(hkey, appkey, "AlwaysOffscreen", buffer, size)
                 && !strcmp(buffer,"disabled"))
         {
             TRACE("Not always rendering backbuffers offscreen.\n");
             wined3d_settings.always_offscreen = FALSE;
-        }
+        } */
         //Slice
         if (!get_config_key(hkey, appkey, "OverrideVertexShaders", buffer, size) && !strcmp(buffer,"enabled"))
         {

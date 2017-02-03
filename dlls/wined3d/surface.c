@@ -2853,7 +2853,7 @@ HRESULT surface_load_location(struct wined3d_surface *surface, struct wined3d_co
     {
         FIXME("Unimplemented copy from %s to %s for depth/stencil buffers.\n",
                 wined3d_debug_location(sub_resource->locations), wined3d_debug_location(location));
-        surface_load_ds_location(surface, context, location);
+   //     surface_load_ds_location(surface, context, location);
         goto done;
     }
 
