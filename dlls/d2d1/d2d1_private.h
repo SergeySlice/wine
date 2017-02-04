@@ -40,6 +40,7 @@ enum d2d_brush_type
 
 enum d2d_shape_type
 {
+    D2D_SHAPE_TYPE_OUTLINE,
     D2D_SHAPE_TYPE_TRIANGLE,
     D2D_SHAPE_TYPE_BEZIER,
     D2D_SHAPE_TYPE_COUNT,
@@ -299,6 +300,18 @@ struct d2d_face
     UINT16 v[3];
 };
 
+struct d2d_vec4
+{
+    float x, y, z, w;
+};
+
+struct d2d_outline_vertex
+{
+    D2D1_POINT_2F position;
+    D2D1_POINT_2F prev;
+    D2D1_POINT_2F next;
+};
+
 struct d2d_geometry
 {
     ID2D1Geometry ID2D1Geometry_iface;
@@ -321,6 +334,17 @@ struct d2d_geometry
         size_t bezier_vertex_count;
     } fill;
 
+    struct
+    {
+        struct d2d_outline_vertex *vertices;
+        size_t vertices_size;
+        size_t vertex_count;
+
+        struct d2d_face *faces;
+        size_t faces_size;
+        size_t face_count;
+    } outline;
+
     union
     {
         struct
@@ -342,6 +366,7 @@ struct d2d_geometry
         struct
         {
             ID2D1Geometry *src_geometry;
+            D2D_MATRIX_3X2_F transform;
         } transformed;
     } u;
 };

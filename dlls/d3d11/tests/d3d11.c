@@ -4733,10 +4733,13 @@ static void test_occlusion_query(void)
     data_size = ID3D11Asynchronous_GetDataSize(query);
     ok(data_size == sizeof(data), "Got unexpected data size %u.\n", data_size);
 
+    memset(&data, 0xff, sizeof(data));
     hr = ID3D11DeviceContext_GetData(context, query, NULL, 0, 0);
-    todo_wine ok(hr == DXGI_ERROR_INVALID_CALL, "Got unexpected hr %#x.\n", hr);
+    ok(hr == DXGI_ERROR_INVALID_CALL, "Got unexpected hr %#x.\n", hr);
     hr = ID3D11DeviceContext_GetData(context, query, &data, sizeof(data), 0);
-    todo_wine ok(hr == DXGI_ERROR_INVALID_CALL, "Got unexpected hr %#x.\n", hr);
+    ok(hr == DXGI_ERROR_INVALID_CALL, "Got unexpected hr %#x.\n", hr);
+    ok(data.dword[0] == 0xffffffff && data.dword[1] == 0xffffffff,
+            "Data was modified 0x%08x%08x.\n", data.dword[1], data.dword[0]);
 
     ID3D11DeviceContext_End(context, query);
     ID3D11DeviceContext_Begin(context, query);
@@ -4897,8 +4900,27 @@ static void test_timestamp_query(void)
     data_size = ID3D11Asynchronous_GetDataSize(timestamp_disjoint_query);
     ok(data_size == sizeof(disjoint), "Got unexpected data size %u.\n", data_size);
 
+    disjoint.Frequency = 0xdeadbeef;
+    disjoint.Disjoint = 0xdeadbeef;
+    hr = ID3D11DeviceContext_GetData(context, timestamp_disjoint_query, NULL, 0, 0);
+    ok(hr == DXGI_ERROR_INVALID_CALL, "Got unexpected hr %#x.\n", hr);
+    hr = ID3D11DeviceContext_GetData(context, timestamp_disjoint_query, &disjoint, sizeof(disjoint), 0);
+    ok(hr == DXGI_ERROR_INVALID_CALL, "Got unexpected hr %#x.\n", hr);
+    ok(disjoint.Frequency == 0xdeadbeef, "Frequency data was modified.\n");
+    ok(disjoint.Disjoint == 0xdeadbeef, "Disjoint data was modified.\n");
+
     /* Test a TIMESTAMP_DISJOINT query. */
     ID3D11DeviceContext_Begin(context, timestamp_disjoint_query);
+
+    disjoint.Frequency = 0xdeadbeef;
+    disjoint.Disjoint = 0xdeadbeef;
+    hr = ID3D11DeviceContext_GetData(context, timestamp_disjoint_query, NULL, 0, 0);
+    todo_wine ok(hr == DXGI_ERROR_INVALID_CALL, "Got unexpected hr %#x.\n", hr);
+    hr = ID3D11DeviceContext_GetData(context, timestamp_disjoint_query, &disjoint, sizeof(disjoint), 0);
+    todo_wine ok(hr == DXGI_ERROR_INVALID_CALL, "Got unexpected hr %#x.\n", hr);
+    ok(disjoint.Frequency == 0xdeadbeef, "Frequency data was modified.\n");
+    ok(disjoint.Disjoint == 0xdeadbeef, "Disjoint data was modified.\n");
+
     ID3D11DeviceContext_End(context, timestamp_disjoint_query);
     for (i = 0; i < 500; ++i)
     {
@@ -4937,16 +4959,20 @@ static void test_timestamp_query(void)
     ok(hr == S_OK, "Got unexpected hr %#x.\n", hr);
     ok(!memcmp(&disjoint, &prev_disjoint, sizeof(disjoint)), "Disjoint data mismatch.\n");
 
+    memset(&timestamp, 0xff, sizeof(timestamp));
     hr = ID3D11DeviceContext_GetData(context, timestamp_query, NULL, 0, 0);
-    todo_wine ok(hr == DXGI_ERROR_INVALID_CALL, "Got unexpected hr %#x.\n", hr);
+    ok(hr == DXGI_ERROR_INVALID_CALL, "Got unexpected hr %#x.\n", hr);
     hr = ID3D11DeviceContext_GetData(context, timestamp_query, &timestamp, sizeof(timestamp), 0);
-    todo_wine ok(hr == DXGI_ERROR_INVALID_CALL, "Got unexpected hr %#x.\n", hr);
+    ok(hr == DXGI_ERROR_INVALID_CALL, "Got unexpected hr %#x.\n", hr);
+    ok(timestamp == ~(UINT64)0, "Timestamp data was modified.\n");
 
     /* Test a TIMESTAMP query inside a TIMESTAMP_DISJOINT query. */
     ID3D11DeviceContext_Begin(context, timestamp_disjoint_query);
 
+    memset(&timestamp, 0xff, sizeof(timestamp));
     hr = ID3D11DeviceContext_GetData(context, timestamp_query, &timestamp, sizeof(timestamp), 0);
-    todo_wine ok(hr == DXGI_ERROR_INVALID_CALL, "Got unexpected hr %#x.\n", hr);
+    ok(hr == DXGI_ERROR_INVALID_CALL, "Got unexpected hr %#x.\n", hr);
+    ok(timestamp == ~(UINT64)0, "Timestamp data was modified.\n");
 
     draw_color_quad(&test_context, &red);
 
@@ -7946,8 +7972,7 @@ static void test_resource_map(void)
 
     memset(&mapped_subresource, 0, sizeof(mapped_subresource));
     hr = ID3D11DeviceContext_Map(context, (ID3D11Resource *)texture3d, 0, D3D11_MAP_WRITE, 0, &mapped_subresource);
-    todo_wine ok(SUCCEEDED(hr), "Failed to map texture, hr %#x.\n", hr);
-    if (FAILED(hr)) goto done;
+    ok(SUCCEEDED(hr), "Failed to map texture, hr %#x.\n", hr);
     ok(mapped_subresource.RowPitch == 4 * 64, "Got unexpected row pitch %u.\n", mapped_subresource.RowPitch);
     ok(mapped_subresource.DepthPitch == 4 * 64 * 64, "Got unexpected depth pitch %u.\n",
             mapped_subresource.DepthPitch);
@@ -7964,7 +7989,6 @@ static void test_resource_map(void)
     ok(data == 0xdeadbeef, "Got unexpected data %#x.\n", data);
     ID3D11DeviceContext_Unmap(context, (ID3D11Resource *)texture3d, 0);
 
-done:
     refcount = ID3D11Texture3D_Release(texture3d);
     ok(!refcount, "3D texture has %u references left.\n", refcount);
 

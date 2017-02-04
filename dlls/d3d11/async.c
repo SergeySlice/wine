@@ -307,6 +307,8 @@ static HRESULT STDMETHODCALLTYPE d3d10_query_GetData(ID3D10Query *iface, void *d
     if (!data_size || wined3d_query_get_data_size(query->wined3d_query) == data_size)
     {
         hr = wined3d_query_get_data(query->wined3d_query, data, data_size, wined3d_flags);
+        if (hr == WINED3DERR_INVALIDCALL)
+            hr = DXGI_ERROR_INVALID_CALL;
     }
     else
     {
@@ -452,7 +454,7 @@ HRESULT d3d_query_create(struct d3d_device *device, const D3D11_QUERY_DESC *desc
         return hr;
     }
 
-    TRACE("Created predicate %p.\n", object);
+    TRACE("Created query %p.\n", object);
     *query = object;
 
     return S_OK;

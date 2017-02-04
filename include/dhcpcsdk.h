@@ -1,5 +1,5 @@
 /*
- * Copyright 2011 Stefan Leichter
+ * Copyright (C) 2017 Alistair Leslie-Hughes
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -15,35 +15,36 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
+#ifndef _DHCPCSDK_
+#define _DHCPCSDK_
 
-#include <stdarg.h>
-#include "windef.h"
-#include "winbase.h"
-#include "dhcpcsdk.h"
-#include "wine/debug.h"
-
-WINE_DEFAULT_DEBUG_CHANNEL(dhcpcsvc);
-
-BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, LPVOID reserved )
+typedef struct _DHCPAPI_PARAMS
 {
-    TRACE("%p, %u, %p\n", hinst, reason, reserved);
+    ULONG  Flags;
+    ULONG  OptionId;
+    BOOL   IsVendor;
+    BYTE   *Data;
+    DWORD  nBytesData;
+} DHCPAPI_PARAMS, *PDHCPAPI_PARAMS, *LPDHCPAPI_PARAMS;
 
-    switch (reason)
-    {
-        case DLL_WINE_PREATTACH:
-            return FALSE;    /* prefer native version */
-        case DLL_PROCESS_ATTACH:
-            DisableThreadLibraryCalls( hinst );
-            break;
-    }
-    return TRUE;
-}
+typedef struct _DHCPAPI_PARAMS DHCPCAPI_PARAMS, *PDHCPCAPI_PARAMS, *LPDHCPCAPI_PARAMS;
+
+typedef struct _DHCPCAPI_PARAMS_ARARAY
+{
+    ULONG             nParams;
+    LPDHCPCAPI_PARAMS Params;
+} DHCPCAPI_PARAMS_ARRAY, *PDHCPCAPI_PARAMS_ARRAY, *LPDHCPCAPI_PARAMS_ARRAY;
+
+typedef struct _DHCPCAPI_CLASSID
+{
+    ULONG  Flags;
+    BYTE   *Data;
+    ULONG  nBytesData;
+} DHCPCAPI_CLASSID, *PDHCPCAPI_CLASSID, *LPDHCPCAPI_CLASSID;
+
 
 DWORD WINAPI DhcpRequestParams( DWORD flags, void *reserved, WCHAR *adaptername, DHCPCAPI_CLASSID *classid,
                                 DHCPCAPI_PARAMS_ARRAY sendparams, DHCPCAPI_PARAMS_ARRAY recdparams,
-                                BYTE *buffer, DWORD *size, WCHAR *requestidstr )
-{
-    FIXME("(%08x, %p, %s, %p, %u, %u, %p, %p, %s): stub\n", flags, reserved, debugstr_w(adaptername), classid,
-            sendparams.nParams, recdparams.nParams, buffer, size, debugstr_w(requestidstr));
-    return ERROR_SUCCESS;
-}
+                                BYTE *buffer, DWORD *size, WCHAR *requestidstr );
+
+#endif

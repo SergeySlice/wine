@@ -127,6 +127,21 @@ static void d2d_bezier_vertex_set(struct d2d_bezier_vertex *b,
     b->texcoord.sign = sign;
 }
 
+static void d2d_face_set(struct d2d_face *f, UINT16 v0, UINT16 v1, UINT16 v2)
+{
+    f->v[0] = v0;
+    f->v[1] = v1;
+    f->v[2] = v2;
+}
+
+static void d2d_outline_vertex_set(struct d2d_outline_vertex *v, float x, float y,
+        float prev_x, float prev_y, float next_x, float next_y)
+{
+    d2d_point_set(&v->position, x, y);
+    d2d_point_set(&v->prev, prev_x, prev_y);
+    d2d_point_set(&v->next, next_x, next_y);
+}
+
 static void d2d_fp_two_sum(float *out, float a, float b)
 {
     float a_virt, a_round, b_virt, b_round;
@@ -341,6 +356,25 @@ static void d2d_point_subtract(D2D1_POINT_2F *out,
     out->y = a->y - b->y;
 }
 
+static void d2d_point_scale(D2D1_POINT_2F *p, float scale)
+{
+    p->x *= scale;
+    p->y *= scale;
+}
+
+static float d2d_point_dot(const D2D1_POINT_2F *p0, const D2D1_POINT_2F *p1)
+{
+    return p0->x * p1->x + p0->y * p1->y;
+}
+
+static void d2d_point_normalise(D2D1_POINT_2F *p)
+{
+    float l;
+
+    if ((l = sqrtf(d2d_point_dot(p, p))) != 0.0f)
+        d2d_point_scale(p, 1.0f / l);
+}
+
 /* This implementation is based on the paper "Adaptive Precision
  * Floating-Point Arithmetic and Fast Robust Geometric Predicates" and
  * associated (Public Domain) code by Jonathan Richard Shewchuk. */
@@ -498,6 +532,12 @@ static BOOL d2d_figure_insert_vertex(struct d2d_figure *figure, size_t idx, D2D1
 
 static BOOL d2d_figure_add_vertex(struct d2d_figure *figure, D2D1_POINT_2F vertex)
 {
+    size_t last = figure->vertex_count - 1;
+
+    if (figure->vertex_count && figure->vertex_types[last] == D2D_VERTEX_TYPE_LINE
+            && !memcmp(&figure->vertices[last], &vertex, sizeof(vertex)))
+        return TRUE;
+
     if (!d2d_array_reserve((void **)&figure->vertices, &figure->vertices_size,
             figure->vertex_count + 1, sizeof(*figure->vertices)))
     {
@@ -1181,7 +1221,7 @@ static BOOL d2d_path_geometry_point_inside(const struct d2d_geometry *geometry,
     const D2D1_POINT_2F *p0, *p1;
     D2D1_POINT_2F v_p, v_probe;
     unsigned int score;
-    size_t i, j;
+    size_t i, j, last;
 
     for (i = 0, score = 0; i < geometry->u.path.figure_count; ++i)
     {
@@ -1191,8 +1231,14 @@ static BOOL d2d_path_geometry_point_inside(const struct d2d_geometry *geometry,
                 || probe->y < figure->bounds.top || probe->y > figure->bounds.bottom)
             continue;
 
-        p0 = &figure->vertices[figure->vertex_count - 1];
-        for (j = 0; j < figure->vertex_count; ++j)
+        last = figure->vertex_count - 1;
+        if (!triangles_only)
+        {
+            while (last && figure->vertex_types[last] == D2D_VERTEX_TYPE_NONE)
+                --last;
+        }
+        p0 = &figure->vertices[last];
+        for (j = 0; j <= last; ++j)
         {
             if (!triangles_only && figure->vertex_types[j] == D2D_VERTEX_TYPE_NONE)
                 continue;
@@ -1430,6 +1476,10 @@ static BOOL d2d_cdt_insert_segments(struct d2d_cdt *cdt, struct d2d_geometry *ge
     for (i = 0; i < geometry->u.path.figure_count; ++i)
     {
         figure = &geometry->u.path.figures[i];
+
+        /* Degenerate figure. */
+        if (figure->vertex_count < 2)
+            continue;
 
         p = bsearch(&figure->vertices[figure->vertex_count - 1], cdt->vertices,
                 geometry->fill.vertex_count, sizeof(*p), d2d_cdt_compare_vertices);
@@ -1686,8 +1736,164 @@ static BOOL d2d_path_geometry_add_figure(struct d2d_geometry *geometry)
     return TRUE;
 }
 
+static BOOL d2d_geometry_outline_add_join(struct d2d_geometry *geometry,
+        const D2D1_POINT_2F *prev, const D2D1_POINT_2F *p0, const D2D1_POINT_2F *next)
+{
+    D2D1_POINT_2F q_prev, q_next;
+    struct d2d_outline_vertex *v;
+    struct d2d_face *f;
+    size_t base_idx;
+
+    if (!d2d_array_reserve((void **)&geometry->outline.vertices, &geometry->outline.vertices_size,
+            geometry->outline.vertex_count + 4, sizeof(*geometry->outline.vertices)))
+    {
+        ERR("Failed to grow outline vertices array.\n");
+        return FALSE;
+    }
+    base_idx = geometry->outline.vertex_count;
+    v = &geometry->outline.vertices[base_idx];
+
+    if (!d2d_array_reserve((void **)&geometry->outline.faces, &geometry->outline.faces_size,
+            geometry->outline.face_count + 2, sizeof(*geometry->outline.faces)))
+    {
+        ERR("Failed to grow outline faces array.\n");
+        return FALSE;
+    }
+    f = &geometry->outline.faces[geometry->outline.face_count];
+
+    d2d_point_subtract(&q_prev, p0, prev);
+    d2d_point_subtract(&q_next, next, p0);
+
+    d2d_point_normalise(&q_prev);
+    d2d_point_normalise(&q_next);
+
+    if (d2d_point_dot(&q_prev, &q_next) == -1.0f)
+    {
+        d2d_outline_vertex_set(&v[0], p0->x, p0->y,  q_prev.x,  q_prev.y,  q_prev.x,  q_prev.y);
+        d2d_outline_vertex_set(&v[1], p0->x, p0->y, -q_prev.x, -q_prev.y, -q_prev.x, -q_prev.y);
+        d2d_outline_vertex_set(&v[2], p0->x + 25.0f * q_prev.x, p0->y + 25.0f * q_prev.y,
+                -q_prev.x, -q_prev.y, -q_prev.x, -q_prev.y);
+        d2d_outline_vertex_set(&v[3], p0->x + 25.0f * q_prev.x, p0->y + 25.0f * q_prev.y,
+                 q_prev.x,  q_prev.y,  q_prev.x,  q_prev.y);
+    }
+    else
+    {
+        d2d_outline_vertex_set(&v[0], p0->x, p0->y, 0.0f, 0.0f, 0.0f, 0.0f);
+        d2d_outline_vertex_set(&v[1], p0->x, p0->y, q_prev.x, q_prev.y, q_prev.x, q_prev.y);
+        d2d_outline_vertex_set(&v[2], p0->x, p0->y, q_prev.x, q_prev.y, q_next.x, q_next.y);
+        d2d_outline_vertex_set(&v[3], p0->x, p0->y, q_next.x, q_next.y, q_next.x, q_next.y);
+    }
+    geometry->outline.vertex_count += 4;
+
+    d2d_face_set(&f[0], base_idx + 1, base_idx + 0, base_idx + 2);
+    d2d_face_set(&f[1], base_idx + 2, base_idx + 0, base_idx + 3);
+    geometry->outline.face_count += 2;
+
+    return TRUE;
+}
+
+static BOOL d2d_geometry_outline_add_line_segment(struct d2d_geometry *geometry,
+        const D2D1_POINT_2F *p0, const D2D1_POINT_2F *next)
+{
+    struct d2d_outline_vertex *v;
+    D2D1_POINT_2F q_next;
+    struct d2d_face *f;
+    size_t base_idx;
+
+    if (!d2d_array_reserve((void **)&geometry->outline.vertices, &geometry->outline.vertices_size,
+            geometry->outline.vertex_count + 4, sizeof(*geometry->outline.vertices)))
+    {
+        ERR("Failed to grow outline vertices array.\n");
+        return FALSE;
+    }
+    base_idx = geometry->outline.vertex_count;
+    v = &geometry->outline.vertices[base_idx];
+
+    if (!d2d_array_reserve((void **)&geometry->outline.faces, &geometry->outline.faces_size,
+            geometry->outline.face_count + 2, sizeof(*geometry->outline.faces)))
+    {
+        ERR("Failed to grow outline faces array.\n");
+        return FALSE;
+    }
+    f = &geometry->outline.faces[geometry->outline.face_count];
+
+    d2d_point_subtract(&q_next, next, p0);
+    d2d_point_normalise(&q_next);
+
+    d2d_outline_vertex_set(&v[0], p0->x, p0->y,  q_next.x,  q_next.y,  q_next.x,  q_next.y);
+    d2d_outline_vertex_set(&v[1], p0->x, p0->y, -q_next.x, -q_next.y, -q_next.x, -q_next.y);
+    d2d_outline_vertex_set(&v[2], next->x, next->y,  q_next.x,  q_next.y,  q_next.x,  q_next.y);
+    d2d_outline_vertex_set(&v[3], next->x, next->y, -q_next.x, -q_next.y, -q_next.x, -q_next.y);
+    geometry->outline.vertex_count += 4;
+
+    d2d_face_set(&f[0], base_idx + 0, base_idx + 1, base_idx + 2);
+    d2d_face_set(&f[1], base_idx + 2, base_idx + 1, base_idx + 3);
+    geometry->outline.face_count += 2;
+
+    return TRUE;
+}
+
+static BOOL d2d_geometry_add_figure_outline(struct d2d_geometry *geometry,
+        struct d2d_figure *figure, D2D1_FIGURE_END figure_end)
+{
+    const D2D1_POINT_2F *prev, *p0, *next;
+    enum d2d_vertex_type prev_type, type;
+    size_t bezier_idx, i;
+
+    for (i = 0, bezier_idx = 0; i < figure->vertex_count; ++i)
+    {
+        type = figure->vertex_types[i];
+        if (type == D2D_VERTEX_TYPE_NONE)
+            continue;
+
+        p0 = &figure->vertices[i];
+
+        if (!i)
+        {
+            prev_type = figure->vertex_types[figure->vertex_count - 1];
+            if (prev_type == D2D_VERTEX_TYPE_BEZIER)
+                prev = &figure->bezier_controls[figure->bezier_control_count - 1];
+            else
+                prev = &figure->vertices[figure->vertex_count - 1];
+        }
+        else
+        {
+            prev_type = figure->vertex_types[i - 1];
+            if (prev_type == D2D_VERTEX_TYPE_BEZIER)
+                prev = &figure->bezier_controls[bezier_idx - 1];
+            else
+                prev = &figure->vertices[i - 1];
+        }
+
+        if (type == D2D_VERTEX_TYPE_BEZIER)
+            next = &figure->bezier_controls[bezier_idx++];
+        else if (i == figure->vertex_count - 1)
+            next = &figure->vertices[0];
+        else
+            next = &figure->vertices[i + 1];
+
+        if ((figure_end == D2D1_FIGURE_END_CLOSED || (i && i < figure->vertex_count - 1))
+                && !d2d_geometry_outline_add_join(geometry, prev, p0, next))
+        {
+            ERR("Failed to add join.\n");
+            return FALSE;
+        }
+
+        if (type == D2D_VERTEX_TYPE_LINE && (figure_end == D2D1_FIGURE_END_CLOSED || i < figure->vertex_count - 1)
+                && !d2d_geometry_outline_add_line_segment(geometry, p0, next))
+        {
+            ERR("Failed to add line segment.\n");
+            return FALSE;
+        }
+    }
+
+    return TRUE;
+}
+
 static void d2d_geometry_cleanup(struct d2d_geometry *geometry)
 {
+    HeapFree(GetProcessHeap(), 0, geometry->outline.faces);
+    HeapFree(GetProcessHeap(), 0, geometry->outline.vertices);
     HeapFree(GetProcessHeap(), 0, geometry->fill.bezier_vertices);
     HeapFree(GetProcessHeap(), 0, geometry->fill.faces);
     HeapFree(GetProcessHeap(), 0, geometry->fill.vertices);
@@ -1880,8 +2086,16 @@ static void STDMETHODCALLTYPE d2d_geometry_sink_EndFigure(ID2D1GeometrySink *ifa
 
     figure = &geometry->u.path.figures[geometry->u.path.figure_count - 1];
     figure->vertex_types[figure->vertex_count - 1] = D2D_VERTEX_TYPE_LINE;
-    if (figure_end != D2D1_FIGURE_END_CLOSED)
-        FIXME("Ignoring figure_end %#x.\n", figure_end);
+    if (figure_end == D2D1_FIGURE_END_CLOSED && !memcmp(&figure->vertices[0],
+            &figure->vertices[figure->vertex_count - 1], sizeof(*figure->vertices)))
+        --figure->vertex_count;
+
+    if (!d2d_geometry_add_figure_outline(geometry, figure, figure_end))
+    {
+        ERR("Failed to add figure outline.\n");
+        geometry->u.path.state = D2D_GEOMETRY_STATE_ERROR;
+        return;
+    }
 
     geometry->u.path.state = D2D_GEOMETRY_STATE_OPEN;
 }
@@ -2602,45 +2816,59 @@ static const struct ID2D1RectangleGeometryVtbl d2d_rectangle_geometry_vtbl =
 
 HRESULT d2d_rectangle_geometry_init(struct d2d_geometry *geometry, ID2D1Factory *factory, const D2D1_RECT_F *rect)
 {
-    D2D1_POINT_2F *fv;
+    struct d2d_face *f;
+    D2D1_POINT_2F *v;
     float l, r, t, b;
 
     d2d_geometry_init(geometry, factory, &identity, (ID2D1GeometryVtbl *)&d2d_rectangle_geometry_vtbl);
     geometry->u.rectangle.rect = *rect;
 
     if (!(geometry->fill.vertices = HeapAlloc(GetProcessHeap(), 0, 4 * sizeof(*geometry->fill.vertices))))
-    {
-        d2d_geometry_cleanup(geometry);
-        return E_OUTOFMEMORY;
-    }
-    geometry->fill.vertex_count = 4;
+        goto fail;
     if (!d2d_array_reserve((void **)&geometry->fill.faces,
             &geometry->fill.faces_size, 2, sizeof(*geometry->fill.faces)))
-    {
-        d2d_geometry_cleanup(geometry);
-        return E_OUTOFMEMORY;
-    }
-    geometry->fill.face_count = 2;
+        goto fail;
 
     l = min(rect->left, rect->right);
     r = max(rect->left, rect->right);
     t = min(rect->top, rect->bottom);
     b = max(rect->top, rect->bottom);
 
-    fv = geometry->fill.vertices;
-    d2d_point_set(&fv[0], l, t);
-    d2d_point_set(&fv[1], l, b);
-    d2d_point_set(&fv[2], r, t);
-    d2d_point_set(&fv[3], r, b);
+    v = geometry->fill.vertices;
+    d2d_point_set(&v[0], l, t);
+    d2d_point_set(&v[1], l, b);
+    d2d_point_set(&v[2], r, b);
+    d2d_point_set(&v[3], r, t);
+    geometry->fill.vertex_count = 4;
 
-    geometry->fill.faces[0].v[0] = 0;
-    geometry->fill.faces[0].v[1] = 2;
-    geometry->fill.faces[0].v[2] = 1;
-    geometry->fill.faces[1].v[0] = 1;
-    geometry->fill.faces[1].v[1] = 2;
-    geometry->fill.faces[1].v[2] = 3;
+    f = geometry->fill.faces;
+    d2d_face_set(&f[0], 1, 2, 0);
+    d2d_face_set(&f[1], 0, 2, 3);
+    geometry->fill.face_count = 2;
+
+    if (!d2d_geometry_outline_add_line_segment(geometry, &v[0], &v[1]))
+        goto fail;
+    if (!d2d_geometry_outline_add_line_segment(geometry, &v[1], &v[2]))
+        goto fail;
+    if (!d2d_geometry_outline_add_line_segment(geometry, &v[2], &v[3]))
+        goto fail;
+    if (!d2d_geometry_outline_add_line_segment(geometry, &v[3], &v[0]))
+        goto fail;
+
+    if (!d2d_geometry_outline_add_join(geometry, &v[3], &v[0], &v[1]))
+        goto fail;
+    if (!d2d_geometry_outline_add_join(geometry, &v[0], &v[1], &v[2]))
+        goto fail;
+    if (!d2d_geometry_outline_add_join(geometry, &v[1], &v[2], &v[3]))
+        goto fail;
+    if (!d2d_geometry_outline_add_join(geometry, &v[2], &v[3], &v[0]))
+        goto fail;
 
     return S_OK;
+
+fail:
+    d2d_geometry_cleanup(geometry);
+    return E_OUTOFMEMORY;
 }
 
 static inline struct d2d_geometry *impl_from_ID2D1TransformedGeometry(ID2D1TransformedGeometry *iface)
@@ -2688,6 +2916,8 @@ static ULONG STDMETHODCALLTYPE d2d_transformed_geometry_Release(ID2D1Transformed
 
     if (!refcount)
     {
+        geometry->outline.faces = NULL;
+        geometry->outline.vertices = NULL;
         geometry->fill.bezier_vertices = NULL;
         geometry->fill.faces = NULL;
         geometry->fill.vertices = NULL;
@@ -2860,7 +3090,7 @@ static void STDMETHODCALLTYPE d2d_transformed_geometry_GetTransform(ID2D1Transfo
 
     TRACE("iface %p, transform %p.\n", iface, transform);
 
-    *transform = geometry->transform;
+    *transform = geometry->u.transformed.transform;
 }
 
 static const struct ID2D1TransformedGeometryVtbl d2d_transformed_geometry_vtbl =
@@ -2890,11 +3120,17 @@ void d2d_transformed_geometry_init(struct d2d_geometry *geometry, ID2D1Factory *
         ID2D1Geometry *src_geometry, const D2D_MATRIX_3X2_F *transform)
 {
     struct d2d_geometry *src_impl;
+    D2D_MATRIX_3X2_F g;
 
-    d2d_geometry_init(geometry, factory, transform, (ID2D1GeometryVtbl *)&d2d_transformed_geometry_vtbl);
-    ID2D1Geometry_AddRef(geometry->u.transformed.src_geometry = src_geometry);
     src_impl = unsafe_impl_from_ID2D1Geometry(src_geometry);
+
+    g = src_impl->transform;
+    d2d_matrix_multiply(&g, transform);
+    d2d_geometry_init(geometry, factory, &g, (ID2D1GeometryVtbl *)&d2d_transformed_geometry_vtbl);
+    ID2D1Geometry_AddRef(geometry->u.transformed.src_geometry = src_geometry);
+    geometry->u.transformed.transform = *transform;
     geometry->fill = src_impl->fill;
+    geometry->outline = src_impl->outline;
 }
 
 struct d2d_geometry *unsafe_impl_from_ID2D1Geometry(ID2D1Geometry *iface)
