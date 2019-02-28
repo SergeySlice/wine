@@ -23,18 +23,25 @@
 #include "wine/port.h"
 
 #include <stdarg.h>
+#include <stdio.h>
+#include <assert.h>
 #ifdef SONAME_LIBGNUTLS
 #include <gnutls/gnutls.h>
 #include <gnutls/crypto.h>
+#include <gnutls/abstract.h>
 #endif
 
 #include "windef.h"
 #include "winbase.h"
 #include "sspi.h"
 #include "schannel.h"
+#include "lmcons.h"
+#include "winreg.h"
 #include "secur32_priv.h"
+
 #include "wine/debug.h"
 #include "wine/library.h"
+#include "wine/unicode.h"
 
 #if defined(SONAME_LIBGNUTLS) && !defined(HAVE_SECURITY_SECURITY_H)
 
@@ -42,7 +49,17 @@ WINE_DEFAULT_DEBUG_CHANNEL(secur32);
 WINE_DECLARE_DEBUG_CHANNEL(winediag);
 
 /* Not present in gnutls version < 2.9.10. */
-static int (*pgnutls_cipher_get_block_size)(gnutls_cipher_algorithm_t algorithm);
+static int (*pgnutls_cipher_get_block_size)(gnutls_cipher_algorithm_t);
+
+/* Not present in gnutls version < 3.3.0. */
+static int (*pgnutls_privkey_import_rsa_raw)(gnutls_privkey_t, const gnutls_datum_t *,
+                                        const gnutls_datum_t *, const gnutls_datum_t *,
+                                        const gnutls_datum_t *, const gnutls_datum_t *,
+                                        const gnutls_datum_t *, const gnutls_datum_t *,
+                                        const gnutls_datum_t *);
+
+/* Not present in gnutls version < 3.4.0. */
+static int (*pgnutls_privkey_export_x509)(gnutls_privkey_t, gnutls_x509_privkey_t *);
 
 static void *libgnutls_handle;
 #define MAKE_FUNCPTR(f) static typeof(f) * p##f
@@ -51,6 +68,7 @@ MAKE_FUNCPTR(gnutls_alert_get_name);
 MAKE_FUNCPTR(gnutls_certificate_allocate_credentials);
 MAKE_FUNCPTR(gnutls_certificate_free_credentials);
 MAKE_FUNCPTR(gnutls_certificate_get_peers);
+MAKE_FUNCPTR(gnutls_certificate_set_x509_key);
 MAKE_FUNCPTR(gnutls_cipher_get);
 MAKE_FUNCPTR(gnutls_cipher_get_key_size);
 MAKE_FUNCPTR(gnutls_credentials_set);
@@ -67,6 +85,8 @@ MAKE_FUNCPTR(gnutls_mac_get_key_size);
 MAKE_FUNCPTR(gnutls_perror);
 MAKE_FUNCPTR(gnutls_protocol_get_version);
 MAKE_FUNCPTR(gnutls_priority_set_direct);
+MAKE_FUNCPTR(gnutls_privkey_deinit);
+MAKE_FUNCPTR(gnutls_privkey_init);
 MAKE_FUNCPTR(gnutls_record_get_max_size);
 MAKE_FUNCPTR(gnutls_record_recv);
 MAKE_FUNCPTR(gnutls_record_send);
@@ -76,12 +96,18 @@ MAKE_FUNCPTR(gnutls_transport_set_errno);
 MAKE_FUNCPTR(gnutls_transport_set_ptr);
 MAKE_FUNCPTR(gnutls_transport_set_pull_function);
 MAKE_FUNCPTR(gnutls_transport_set_push_function);
+MAKE_FUNCPTR(gnutls_x509_crt_deinit);
+MAKE_FUNCPTR(gnutls_x509_crt_import);
+MAKE_FUNCPTR(gnutls_x509_crt_init);
+MAKE_FUNCPTR(gnutls_x509_privkey_deinit);
 #undef MAKE_FUNCPTR
 
 #if GNUTLS_VERSION_MAJOR < 3
 #define GNUTLS_CIPHER_AES_192_CBC 92
 #define GNUTLS_CIPHER_AES_128_GCM 93
 #define GNUTLS_CIPHER_AES_256_GCM 94
+
+#define GNUTLS_MAC_AEAD 200
 
 #define GNUTLS_KX_ANON_ECDH     11
 #define GNUTLS_KX_ECDHE_RSA     12
@@ -110,6 +136,22 @@ static int compat_cipher_get_block_size(gnutls_cipher_algorithm_t cipher)
         FIXME("Unknown cipher %#x, returning 1\n", cipher);
         return 1;
     }
+}
+
+static int compat_gnutls_privkey_export_x509(gnutls_privkey_t privkey, gnutls_x509_privkey_t *key)
+{
+    FIXME("\n");
+    return GNUTLS_E_UNKNOWN_PK_ALGORITHM;
+}
+
+static int compat_gnutls_privkey_import_rsa_raw(gnutls_privkey_t key, const gnutls_datum_t *p1,
+                                        const gnutls_datum_t *p2, const gnutls_datum_t *p3,
+                                        const gnutls_datum_t *p4, const gnutls_datum_t *p5,
+                                        const gnutls_datum_t *p6, const gnutls_datum_t *p7,
+                                        const gnutls_datum_t *p8)
+{
+    FIXME("\n");
+    return GNUTLS_E_UNKNOWN_PK_ALGORITHM;
 }
 
 static ssize_t schan_pull_adapter(gnutls_transport_ptr_t transport,
@@ -148,6 +190,7 @@ static const struct {
     DWORD enable_flag;
     const char *gnutls_flag;
 } protocol_priority_flags[] = {
+    {SP_PROT_TLS1_3_CLIENT, "VERS-TLS1.3"},
     {SP_PROT_TLS1_2_CLIENT, "VERS-TLS1.2"},
     {SP_PROT_TLS1_1_CLIENT, "VERS-TLS1.1"},
     {SP_PROT_TLS1_0_CLIENT, "VERS-TLS1.0"},
@@ -155,16 +198,48 @@ static const struct {
     /* {SP_PROT_SSL2_CLIENT} is not supported by GnuTLS */
 };
 
+static DWORD supported_protocols;
+
+static void check_supported_protocols(void)
+{
+    gnutls_session_t session;
+    char priority[64];
+    unsigned i;
+    int err;
+
+    err = pgnutls_init(&session, GNUTLS_CLIENT);
+    if (err != GNUTLS_E_SUCCESS)
+    {
+        pgnutls_perror(err);
+        return;
+    }
+
+    for(i = 0; i < ARRAY_SIZE(protocol_priority_flags); i++)
+    {
+        sprintf(priority, "NORMAL:-%s", protocol_priority_flags[i].gnutls_flag);
+        err = pgnutls_priority_set_direct(session, priority, NULL);
+        if (err == GNUTLS_E_SUCCESS)
+        {
+            TRACE("%s is supported\n", protocol_priority_flags[i].gnutls_flag);
+            supported_protocols |= protocol_priority_flags[i].enable_flag;
+        }
+        else
+            TRACE("%s is not supported\n", protocol_priority_flags[i].gnutls_flag);
+    }
+
+    pgnutls_deinit(session);
+}
+
 DWORD schan_imp_enabled_protocols(void)
 {
-    /* NOTE: No support for SSL 2.0 */
-    return SP_PROT_SSL3_CLIENT | SP_PROT_TLS1_0_CLIENT | SP_PROT_TLS1_1_CLIENT | SP_PROT_TLS1_2_CLIENT;
+    return supported_protocols;
 }
 
 BOOL schan_imp_create_session(schan_imp_session *session, schan_credentials *cred)
 {
     gnutls_session_t *s = (gnutls_session_t*)session;
     char priority[128] = "NORMAL:%LATEST_RECORD_VERSION", *p;
+    BOOL using_vers_all = FALSE, disabled;
     unsigned i;
 
     int err = pgnutls_init(s, cred->credential_use == SECPKG_CRED_INBOUND ? GNUTLS_SERVER : GNUTLS_CLIENT);
@@ -175,9 +250,26 @@ BOOL schan_imp_create_session(schan_imp_session *session, schan_credentials *cre
     }
 
     p = priority + strlen(priority);
-    for(i=0; i < sizeof(protocol_priority_flags)/sizeof(*protocol_priority_flags); i++) {
+
+    /* VERS-ALL is nice to use for forward compatibility. It was introduced before support for TLS1.3,
+     * so if TLS1.3 is supported, we may safely use it. Otherwise explicitly disable all known
+     * disabled protocols. */
+    if (supported_protocols & SP_PROT_TLS1_3_CLIENT)
+    {
+        strcpy(p, ":-VERS-ALL");
+        p += strlen(p);
+        using_vers_all = TRUE;
+    }
+
+    for (i = 0; i < ARRAY_SIZE(protocol_priority_flags); i++)
+    {
+        if (!(supported_protocols & protocol_priority_flags[i].enable_flag)) continue;
+
+        disabled = !(cred->enabled_protocols & protocol_priority_flags[i].enable_flag);
+        if (using_vers_all && disabled) continue;
+
         *p++ = ':';
-        *p++ = (cred->enabled_protocols & protocol_priority_flags[i].enable_flag) ? '+' : '-';
+        *p++ = disabled ? '-' : '+';
         strcpy(p, protocol_priority_flags[i].gnutls_flag);
         p += strlen(p);
     }
@@ -292,7 +384,7 @@ static DWORD schannel_get_protocol(gnutls_protocol_t proto)
     }
 }
 
-static ALG_ID schannel_get_cipher_algid(int cipher)
+static ALG_ID schannel_get_cipher_algid(gnutls_cipher_algorithm_t cipher)
 {
     switch (cipher)
     {
@@ -300,8 +392,8 @@ static ALG_ID schannel_get_cipher_algid(int cipher)
     case GNUTLS_CIPHER_NULL: return 0;
     case GNUTLS_CIPHER_ARCFOUR_40:
     case GNUTLS_CIPHER_ARCFOUR_128: return CALG_RC4;
-    case GNUTLS_CIPHER_DES_CBC:
-    case GNUTLS_CIPHER_3DES_CBC: return CALG_DES;
+    case GNUTLS_CIPHER_DES_CBC: return CALG_DES;
+    case GNUTLS_CIPHER_3DES_CBC: return CALG_3DES;
     case GNUTLS_CIPHER_AES_128_CBC:
     case GNUTLS_CIPHER_AES_128_GCM: return CALG_AES_128;
     case GNUTLS_CIPHER_AES_192_CBC: return CALG_AES_192;
@@ -314,7 +406,7 @@ static ALG_ID schannel_get_cipher_algid(int cipher)
     }
 }
 
-static ALG_ID schannel_get_mac_algid(gnutls_mac_algorithm_t mac)
+static ALG_ID schannel_get_mac_algid(gnutls_mac_algorithm_t mac, gnutls_cipher_algorithm_t cipher)
 {
     switch (mac)
     {
@@ -326,8 +418,19 @@ static ALG_ID schannel_get_mac_algid(gnutls_mac_algorithm_t mac)
     case GNUTLS_MAC_SHA256: return CALG_SHA_256;
     case GNUTLS_MAC_SHA384: return CALG_SHA_384;
     case GNUTLS_MAC_SHA512: return CALG_SHA_512;
+    case GNUTLS_MAC_AEAD:
+        /* When using AEAD (such as GCM), we return PRF algorithm instead
+           which is defined in RFC 5289. */
+        switch (cipher)
+        {
+        case GNUTLS_CIPHER_AES_128_GCM: return CALG_SHA_256;
+        case GNUTLS_CIPHER_AES_256_GCM: return CALG_SHA_384;
+        default:
+            break;
+        }
+        /* fall through */
     default:
-        FIXME("unknown algorithm %d\n", mac);
+        FIXME("unknown algorithm %d, cipher %d\n", mac, cipher);
         return 0;
     }
 }
@@ -343,10 +446,9 @@ static ALG_ID schannel_get_kx_algid(int kx)
     case GNUTLS_KX_DHE_DSS:
     case GNUTLS_KX_DHE_RSA: return CALG_DH_EPHEM;
     case GNUTLS_KX_ANON_ECDH: return CALG_ECDH;
-    /* MSDN mentions CALG_ECDH_EPHEM, but doesn't appear in the Windows SDK. */
     case GNUTLS_KX_ECDHE_RSA:
-    case GNUTLS_KX_ECDHE_PSK: return CALG_ECDH;
-    case GNUTLS_KX_ECDHE_ECDSA: return CALG_ECDSA;
+    case GNUTLS_KX_ECDHE_PSK:
+    case GNUTLS_KX_ECDHE_ECDSA: return CALG_ECDH_EPHEM;
     default:
         FIXME("unknown algorithm %d\n", kx);
         return 0;
@@ -376,12 +478,33 @@ SECURITY_STATUS schan_imp_get_connection_info(schan_imp_session session,
     info->dwProtocol = schannel_get_protocol(proto);
     info->aiCipher = schannel_get_cipher_algid(alg);
     info->dwCipherStrength = pgnutls_cipher_get_key_size(alg) * 8;
-    info->aiHash = schannel_get_mac_algid(mac);
+    info->aiHash = schannel_get_mac_algid(mac, alg);
     info->dwHashStrength = pgnutls_mac_get_key_size(mac) * 8;
     info->aiExch = schannel_get_kx_algid(kx);
     /* FIXME: info->dwExchStrength? */
     info->dwExchStrength = 0;
     return SEC_E_OK;
+}
+
+ALG_ID schan_imp_get_key_signature_algorithm(schan_imp_session session)
+{
+    gnutls_session_t s = (gnutls_session_t)session;
+    gnutls_kx_algorithm_t kx = pgnutls_kx_get(s);
+
+    TRACE("(%p)\n", session);
+
+    switch (kx)
+    {
+    case GNUTLS_KX_UNKNOWN: return 0;
+    case GNUTLS_KX_RSA:
+    case GNUTLS_KX_RSA_EXPORT:
+    case GNUTLS_KX_DHE_RSA:
+    case GNUTLS_KX_ECDHE_RSA: return CALG_RSA_SIGN;
+    case GNUTLS_KX_ECDHE_ECDSA: return CALG_ECDSA;
+    default:
+        FIXME("unknown algorithm %d\n", kx);
+        return 0;
+    }
 }
 
 SECURITY_STATUS schan_imp_get_session_peer_certificate(schan_imp_session session, HCERTSTORE store,
@@ -472,12 +595,271 @@ again:
     return SEC_E_OK;
 }
 
-BOOL schan_imp_allocate_certificate_credentials(schan_credentials *c)
+static WCHAR *get_key_container_path(const CERT_CONTEXT *ctx)
 {
-    int ret = pgnutls_certificate_allocate_credentials((gnutls_certificate_credentials_t*)&c->credentials);
-    if (ret != GNUTLS_E_SUCCESS)
+    static const WCHAR rsabaseW[] =
+        {'S','o','f','t','w','a','r','e','\\','W','i','n','e','\\','C','r','y','p','t','o','\\','R','S','A','\\',0};
+    DWORD size;
+    CERT_KEY_CONTEXT keyctx;
+    CRYPT_KEY_PROV_INFO *prov;
+    WCHAR username[UNLEN + 1], *ret = NULL;
+    DWORD len = ARRAY_SIZE(username);
+
+    size = sizeof(keyctx);
+    if (CertGetCertificateContextProperty(ctx, CERT_KEY_CONTEXT_PROP_ID, &keyctx, &size))
+    {
+        char *str;
+        if (!CryptGetProvParam(keyctx.hCryptProv, PP_CONTAINER, NULL, &size, 0)) return NULL;
+        if (!(str = heap_alloc(size))) return NULL;
+        if (!CryptGetProvParam(keyctx.hCryptProv, PP_CONTAINER, (BYTE *)str, &size, 0)) return NULL;
+
+        len = MultiByteToWideChar(CP_ACP, 0, str, -1, NULL, 0);
+        if (!(ret = heap_alloc(sizeof(rsabaseW) + len * sizeof(WCHAR))))
+        {
+            heap_free(str);
+            return NULL;
+        }
+        strcpyW(ret, rsabaseW);
+        MultiByteToWideChar(CP_ACP, 0, str, -1, ret + strlenW(ret), len);
+        heap_free(str);
+    }
+    else
+    {
+        size = 0;
+        if (!CertGetCertificateContextProperty(ctx, CERT_KEY_PROV_INFO_PROP_ID, NULL, &size)) return NULL;
+        if (!(prov = heap_alloc(size))) return NULL;
+        if (!CertGetCertificateContextProperty(ctx, CERT_KEY_PROV_INFO_PROP_ID, prov, &size))
+        {
+            heap_free(prov);
+            return NULL;
+        }
+        if (!(ret = heap_alloc(sizeof(rsabaseW) + strlenW(prov->pwszContainerName) * sizeof(WCHAR))))
+        {
+            heap_free(prov);
+            return NULL;
+        }
+        strcpyW(ret, rsabaseW);
+        strcatW(ret, prov->pwszContainerName);
+        heap_free(prov);
+    }
+
+    if (!ret && GetUserNameW(username, &len) && (ret = heap_alloc(sizeof(rsabaseW) + len * sizeof(WCHAR))))
+    {
+        strcpyW(ret, rsabaseW);
+        strcatW(ret, username);
+    }
+
+    return ret;
+}
+
+#define MAX_LEAD_BYTES 8
+static BYTE *get_key_blob(const CERT_CONTEXT *ctx, ULONG *size)
+{
+    static const WCHAR keyexchangeW[] =
+        {'K','e','y','E','x','c','h','a','n','g','e','K','e','y','P','a','i','r',0};
+    static const WCHAR signatureW[] =
+        {'S','i','g','n','a','t','u','r','e','K','e','y','P','a','i','r',0};
+    BYTE *buf, *ret = NULL;
+    DATA_BLOB blob_in, blob_out;
+    DWORD spec = 0, type, len;
+    WCHAR *path;
+    HKEY hkey;
+
+    if (!(path = get_key_container_path(ctx))) return NULL;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, path, 0, KEY_READ, &hkey))
+    {
+        heap_free(path);
+        return NULL;
+    }
+
+    if (!RegQueryValueExW(hkey, keyexchangeW, 0, &type, NULL, &len)) spec = AT_KEYEXCHANGE;
+    else if (!RegQueryValueExW(hkey, signatureW, 0, &type, NULL, &len)) spec = AT_SIGNATURE;
+    else
+    {
+        RegCloseKey(hkey);
+        return NULL;
+    }
+
+    if (!(buf = heap_alloc(len + MAX_LEAD_BYTES)))
+    {
+        RegCloseKey(hkey);
+        return NULL;
+    }
+
+    if (!RegQueryValueExW(hkey, (spec == AT_KEYEXCHANGE) ? keyexchangeW : signatureW, 0, &type, buf, &len))
+    {
+        blob_in.pbData = buf;
+        blob_in.cbData = len;
+        if (CryptUnprotectData(&blob_in, NULL, NULL, NULL, NULL, 0, &blob_out))
+        {
+            assert(blob_in.cbData >= blob_out.cbData);
+            memcpy(buf, blob_out.pbData, blob_out.cbData);
+            LocalFree(blob_out.pbData);
+            *size = blob_out.cbData + MAX_LEAD_BYTES;
+            ret = buf;
+        }
+    }
+    else heap_free(buf);
+
+    RegCloseKey(hkey);
+    heap_free(path);
+    return ret;
+}
+
+static inline void reverse_bytes(BYTE *buf, ULONG len)
+{
+    BYTE tmp;
+    ULONG i;
+    for (i = 0; i < len / 2; i++)
+    {
+        tmp = buf[i];
+        buf[i] = buf[len - i - 1];
+        buf[len - i - 1] = tmp;
+    }
+}
+
+static ULONG set_component(gnutls_datum_t *comp, BYTE *data, ULONG len, ULONG *buflen)
+{
+    comp->data = data;
+    comp->size = len;
+    reverse_bytes(comp->data, comp->size);
+    if (comp->data[0] & 0x80) /* add leading 0 byte if most significant bit is set */
+    {
+        memmove(comp->data + 1, comp->data, *buflen);
+        comp->data[0] = 0;
+        comp->size++;
+    }
+    *buflen -= comp->size;
+    return comp->size;
+}
+
+static gnutls_x509_privkey_t get_x509_key(const CERT_CONTEXT *ctx)
+{
+    gnutls_privkey_t key = NULL;
+    gnutls_x509_privkey_t x509key = NULL;
+    gnutls_datum_t m, e, d, p, q, u, e1, e2;
+    BYTE *ptr, *buffer;
+    RSAPUBKEY *rsakey;
+    DWORD size;
+    int ret;
+
+    if (!(buffer = get_key_blob(ctx, &size))) return NULL;
+    if (size < sizeof(BLOBHEADER)) goto done;
+
+    rsakey = (RSAPUBKEY *)(buffer + sizeof(BLOBHEADER));
+    TRACE("RSA key bitlen %u pubexp %u\n", rsakey->bitlen, rsakey->pubexp);
+
+    size -= sizeof(BLOBHEADER) + FIELD_OFFSET(RSAPUBKEY, pubexp);
+    set_component(&e, (BYTE *)&rsakey->pubexp, sizeof(rsakey->pubexp), &size);
+
+    ptr = (BYTE *)(rsakey + 1);
+    ptr += set_component(&m, ptr, rsakey->bitlen / 8, &size);
+    ptr += set_component(&p, ptr, rsakey->bitlen / 16, &size);
+    ptr += set_component(&q, ptr, rsakey->bitlen / 16, &size);
+    ptr += set_component(&e1, ptr, rsakey->bitlen / 16, &size);
+    ptr += set_component(&e2, ptr, rsakey->bitlen / 16, &size);
+    ptr += set_component(&u, ptr, rsakey->bitlen / 16, &size);
+    ptr += set_component(&d, ptr, rsakey->bitlen / 8, &size);
+
+    if ((ret = pgnutls_privkey_init(&key)) < 0)
+    {
         pgnutls_perror(ret);
-    return (ret == GNUTLS_E_SUCCESS);
+        goto done;
+    }
+
+    if ((ret = pgnutls_privkey_import_rsa_raw(key, &m, &e, &d, &p, &q, &u, &e1, &e2)) < 0)
+    {
+        pgnutls_perror(ret);
+        goto done;
+    }
+
+    if ((ret = pgnutls_privkey_export_x509(key, &x509key)) < 0)
+    {
+        pgnutls_perror(ret);
+    }
+
+done:
+    heap_free(buffer);
+    pgnutls_privkey_deinit(key);
+    return x509key;
+}
+
+static gnutls_x509_crt_t get_x509_crt(const CERT_CONTEXT *ctx)
+{
+    gnutls_datum_t data;
+    gnutls_x509_crt_t crt;
+    int ret;
+
+    if (!ctx) return FALSE;
+    if (ctx->dwCertEncodingType != X509_ASN_ENCODING)
+    {
+        FIXME("encoding type %u not supported\n", ctx->dwCertEncodingType);
+        return NULL;
+    }
+
+    if ((ret = pgnutls_x509_crt_init(&crt)) < 0)
+    {
+        pgnutls_perror(ret);
+        return NULL;
+    }
+
+    data.data = ctx->pbCertEncoded;
+    data.size = ctx->cbCertEncoded;
+    if ((ret = pgnutls_x509_crt_import(crt, &data, GNUTLS_X509_FMT_DER)) < 0)
+    {
+        pgnutls_perror(ret);
+        pgnutls_x509_crt_deinit(crt);
+        return NULL;
+    }
+
+    return crt;
+}
+
+BOOL schan_imp_allocate_certificate_credentials(schan_credentials *c, const CERT_CONTEXT *ctx)
+{
+    gnutls_certificate_credentials_t creds;
+    gnutls_x509_crt_t crt;
+    gnutls_x509_privkey_t key;
+    int ret;
+
+    ret = pgnutls_certificate_allocate_credentials(&creds);
+    if (ret != GNUTLS_E_SUCCESS)
+    {
+        pgnutls_perror(ret);
+        return FALSE;
+    }
+
+    if (!ctx)
+    {
+        c->credentials = creds;
+        return TRUE;
+    }
+
+    if (!(crt = get_x509_crt(ctx)))
+    {
+        pgnutls_certificate_free_credentials(creds);
+        return FALSE;
+    }
+
+    if (!(key = get_x509_key(ctx)))
+    {
+        pgnutls_x509_crt_deinit(crt);
+        pgnutls_certificate_free_credentials(creds);
+        return FALSE;
+    }
+
+    ret = pgnutls_certificate_set_x509_key(creds, &crt, 1, key);
+    pgnutls_x509_privkey_deinit(key);
+    pgnutls_x509_crt_deinit(crt);
+    if (ret != GNUTLS_E_SUCCESS)
+    {
+        pgnutls_perror(ret);
+        pgnutls_certificate_free_credentials(creds);
+        return FALSE;
+    }
+
+    c->credentials = creds;
+    return TRUE;
 }
 
 void schan_imp_free_certificate_credentials(schan_credentials *c)
@@ -513,6 +895,7 @@ BOOL schan_imp_init(void)
     LOAD_FUNCPTR(gnutls_certificate_allocate_credentials)
     LOAD_FUNCPTR(gnutls_certificate_free_credentials)
     LOAD_FUNCPTR(gnutls_certificate_get_peers)
+    LOAD_FUNCPTR(gnutls_certificate_set_x509_key)
     LOAD_FUNCPTR(gnutls_cipher_get)
     LOAD_FUNCPTR(gnutls_cipher_get_key_size)
     LOAD_FUNCPTR(gnutls_credentials_set)
@@ -529,6 +912,8 @@ BOOL schan_imp_init(void)
     LOAD_FUNCPTR(gnutls_perror)
     LOAD_FUNCPTR(gnutls_protocol_get_version)
     LOAD_FUNCPTR(gnutls_priority_set_direct)
+    LOAD_FUNCPTR(gnutls_privkey_deinit)
+    LOAD_FUNCPTR(gnutls_privkey_init)
     LOAD_FUNCPTR(gnutls_record_get_max_size);
     LOAD_FUNCPTR(gnutls_record_recv);
     LOAD_FUNCPTR(gnutls_record_send);
@@ -538,12 +923,26 @@ BOOL schan_imp_init(void)
     LOAD_FUNCPTR(gnutls_transport_set_ptr)
     LOAD_FUNCPTR(gnutls_transport_set_pull_function)
     LOAD_FUNCPTR(gnutls_transport_set_push_function)
+    LOAD_FUNCPTR(gnutls_x509_crt_deinit)
+    LOAD_FUNCPTR(gnutls_x509_crt_import)
+    LOAD_FUNCPTR(gnutls_x509_crt_init)
+    LOAD_FUNCPTR(gnutls_x509_privkey_deinit)
 #undef LOAD_FUNCPTR
 
     if (!(pgnutls_cipher_get_block_size = wine_dlsym(libgnutls_handle, "gnutls_cipher_get_block_size", NULL, 0)))
     {
         WARN("gnutls_cipher_get_block_size not found\n");
         pgnutls_cipher_get_block_size = compat_cipher_get_block_size;
+    }
+    if (!(pgnutls_privkey_export_x509 = wine_dlsym(libgnutls_handle, "gnutls_privkey_export_x509", NULL, 0)))
+    {
+        WARN("gnutls_privkey_export_x509 not found\n");
+        pgnutls_privkey_export_x509 = compat_gnutls_privkey_export_x509;
+    }
+    if (!(pgnutls_privkey_import_rsa_raw = wine_dlsym(libgnutls_handle, "gnutls_privkey_import_rsa_raw", NULL, 0)))
+    {
+        WARN("gnutls_privkey_import_rsa_raw not found\n");
+        pgnutls_privkey_import_rsa_raw = compat_gnutls_privkey_import_rsa_raw;
     }
 
     ret = pgnutls_global_init();
@@ -559,6 +958,7 @@ BOOL schan_imp_init(void)
         pgnutls_global_set_log_function(schan_gnutls_log);
     }
 
+    check_supported_protocols();
     return TRUE;
 
 fail:

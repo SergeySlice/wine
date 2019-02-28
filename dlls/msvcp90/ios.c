@@ -26,7 +26,9 @@
 #include "msvcp90.h"
 #include "windef.h"
 #include "winbase.h"
+#include "winnls.h"
 #include "wine/debug.h"
+
 WINE_DEFAULT_DEBUG_CHANNEL(msvcp);
 
 #define SECSPERDAY        86400
@@ -342,9 +344,25 @@ struct space_info {
 };
 
 enum file_type {
-    status_unknown, file_not_found, regular_file, directory_file,
-    symlink_file, block_file, character_file, fifo_file, socket_file,
-    type_unknown
+#if _MSVCP_VER < 140
+    status_unknown,
+    file_not_found,
+#else
+    file_not_found = -1,
+    none_file,
+#endif
+    regular_file,
+    directory_file,
+    symlink_file,
+    block_file,
+    character_file,
+    fifo_file,
+    socket_file,
+#if _MSVCP_VER < 140
+    type_unknown,
+#else
+    status_unknown
+#endif
 };
 
 #if _MSVCP_VER >= 110
@@ -2002,18 +2020,33 @@ streamsize __thiscall basic_streambuf_char_sputn(basic_streambuf_char *this, con
 DEFINE_THISCALL_WRAPPER(basic_streambuf_char_swap, 8)
 void __thiscall basic_streambuf_char_swap(basic_streambuf_char *this, basic_streambuf_char *r)
 {
-    basic_streambuf_char tmp;
+    char *wfirst, *wnext, *wlast, *rfirst, *rnext, *rlast;
+#if _MSVCP_VER < 70
+    locale loc;
+#else
+    locale *loc;
+#endif
 
     TRACE("(%p %p)\n", this, r);
 
     if(this == r)
         return;
 
-    tmp = *this;
-    *this = *r;
-    this->vtable = tmp.vtable;
-    tmp.vtable = r->vtable;
-    *r = tmp;
+    wfirst = *this->pwbuf;
+    wnext = *this->pwpos;
+    wlast = *this->pwpos + *this->pwsize;
+    rfirst = *this->prbuf;
+    rnext = *this->prpos;
+    rlast = *this->prpos + *this->prsize;
+    loc = this->loc;
+
+    basic_streambuf_char_setp_next(this, *r->pwbuf, *r->pwpos, *r->pwpos + *r->pwsize);
+    basic_streambuf_char_setg(this, *r->prbuf, *r->prpos, *r->prpos + *r->prsize);
+    this->loc = r->loc;
+
+    basic_streambuf_char_setp_next(r, wfirst, wnext, wlast);
+    basic_streambuf_char_setg(r, rfirst, rnext, rlast);
+    r->loc = loc;
 }
 
 /* ?setp@?$basic_streambuf@_WU?$char_traits@_W@std@@@std@@IAEXPA_W00@Z */
@@ -2959,18 +2992,33 @@ streamsize __thiscall basic_streambuf_wchar_sputn(basic_streambuf_wchar *this, c
 DEFINE_THISCALL_WRAPPER(basic_streambuf_wchar_swap, 8)
 void __thiscall basic_streambuf_wchar_swap(basic_streambuf_wchar *this, basic_streambuf_wchar *r)
 {
-    basic_streambuf_wchar tmp;
+    wchar_t *wfirst, *wnext, *wlast, *rfirst, *rnext, *rlast;
+#if _MSVCP_VER < 70
+    locale loc;
+#else
+    locale *loc;
+#endif
 
     TRACE("(%p %p)\n", this, r);
 
     if(this == r)
         return;
 
-    tmp = *this;
-    *this = *r;
-    this->vtable = tmp.vtable;
-    tmp.vtable = r->vtable;
-    *r = tmp;
+    wfirst = *this->pwbuf;
+    wnext = *this->pwpos;
+    wlast = *this->pwpos + *this->pwsize;
+    rfirst = *this->prbuf;
+    rnext = *this->prpos;
+    rlast = *this->prpos + *this->prsize;
+    loc = this->loc;
+
+    basic_streambuf_wchar_setp_next(this, *r->pwbuf, *r->pwpos, *r->pwpos + *r->pwsize);
+    basic_streambuf_wchar_setg(this, *r->prbuf, *r->prpos, *r->prpos + *r->prsize);
+    this->loc = r->loc;
+
+    basic_streambuf_wchar_setp_next(r, wfirst, wnext, wlast);
+    basic_streambuf_wchar_setg(r, rfirst, rnext, rlast);
+    r->loc = loc;
 }
 
 /* ?_Stinit@?1??_Init@?$basic_filebuf@DU?$char_traits@D@std@@@std@@IAEXPAU_iobuf@@W4_Initfl@23@@Z@4HA */
@@ -3189,10 +3237,10 @@ FILE* __cdecl _Fiopen_wchar(const wchar_t *name, int mode, int prot)
 
     TRACE("(%s %d %d)\n", debugstr_w(name), mode, prot);
 
-    for(mode_idx=0; mode_idx<sizeof(str_mode)/sizeof(str_mode[0]); mode_idx++)
+    for(mode_idx=0; mode_idx<ARRAY_SIZE(str_mode); mode_idx++)
         if(str_mode[mode_idx].mode == real_mode)
             break;
-    if(mode_idx == sizeof(str_mode)/sizeof(str_mode[0]))
+    if(mode_idx == ARRAY_SIZE(str_mode))
         return NULL;
 
     if((mode & OPENMODE__Nocreate) && !(f = _wfopen(name, rW)))
@@ -3421,7 +3469,7 @@ int __thiscall basic_filebuf_char_uflow(basic_filebuf_char *this)
         return c;
 
     buf_next = buf;
-    for(i=0; i < sizeof(buf)/sizeof(buf[0]); i++) {
+    for(i=0; i < ARRAY_SIZE(buf); i++) {
         buf[i] = c;
 
         switch(codecvt_char_in(this->cvt, &this->state, buf_next,
@@ -4064,7 +4112,7 @@ unsigned short __thiscall basic_filebuf_wchar_uflow(basic_filebuf_wchar *this)
         return fgetwc(this->file);
 
     buf_next = buf;
-    for(i=0; i < sizeof(buf)/sizeof(buf[0]); i++) {
+    for(i=0; i < ARRAY_SIZE(buf); i++) {
         if((c = fgetc(this->file)) == EOF)
             return WEOF;
         buf[i] = c;
@@ -5832,7 +5880,7 @@ DEFINE_THISCALL_WRAPPER(basic_ios_char_narrow, 12)
 char __thiscall basic_ios_char_narrow(basic_ios_char *this, char ch, char def)
 {
     TRACE("(%p %c %c)\n", this, ch, def);
-    return ctype_char_narrow_ch(ctype_char_use_facet(IOS_LOCALE(this->strbuf)), ch, def);
+    return ctype_char_narrow_ch(ctype_char_use_facet(IOS_LOCALE(&this->base)), ch, def);
 }
 
 /* ?rdbuf@?$basic_ios@DU?$char_traits@D@std@@@std@@QAEPAV?$basic_streambuf@DU?$char_traits@D@std@@@2@PAV32@@Z */
@@ -5905,7 +5953,7 @@ DEFINE_THISCALL_WRAPPER(basic_ios_char_widen, 8)
 char __thiscall basic_ios_char_widen(basic_ios_char *this, char ch)
 {
     TRACE("(%p %c)\n", this, ch);
-    return ctype_char_widen_ch(ctype_char_use_facet(IOS_LOCALE(this->strbuf)), ch);
+    return ctype_char_widen_ch(ctype_char_use_facet(IOS_LOCALE(&this->base)), ch);
 }
 
 /* ?swap@?$basic_ios@DU?$char_traits@D@std@@@std@@QAEXAAV12@@Z */
@@ -6113,7 +6161,7 @@ DEFINE_THISCALL_WRAPPER(basic_ios_wchar_narrow, 12)
 char __thiscall basic_ios_wchar_narrow(basic_ios_wchar *this, wchar_t ch, char def)
 {
     TRACE("(%p %c %c)\n", this, ch, def);
-    return ctype_wchar_narrow_ch(ctype_wchar_use_facet(IOS_LOCALE(this->strbuf)), ch, def);
+    return ctype_wchar_narrow_ch(ctype_wchar_use_facet(IOS_LOCALE(&this->base)), ch, def);
 }
 
 /* ?rdbuf@?$basic_ios@_WU?$char_traits@_W@std@@@std@@QAEPAV?$basic_streambuf@_WU?$char_traits@_W@std@@@2@PAV32@@Z */
@@ -6200,7 +6248,7 @@ DEFINE_THISCALL_WRAPPER(basic_ios_wchar_widen, 8)
 wchar_t __thiscall basic_ios_wchar_widen(basic_ios_wchar *this, char ch)
 {
     TRACE("(%p %c)\n", this, ch);
-    return ctype_wchar_widen_ch(ctype_wchar_use_facet(IOS_LOCALE(this->strbuf)), ch);
+    return ctype_wchar_widen_ch(ctype_wchar_use_facet(IOS_LOCALE(&this->base)), ch);
 }
 
 /* ?swap@?$basic_ios@GU?$char_traits@G@std@@@std@@QAEXAAV12@@Z */
@@ -8366,7 +8414,7 @@ basic_istream_char* __thiscall basic_istream_char_get_str_delim(basic_istream_ch
     basic_ios_char *base = basic_istream_char_get_basic_ios(this);
     int ch = delim;
 
-    TRACE("(%p %p %s %c)\n", this, str, wine_dbgstr_longlong(count), delim);
+    TRACE("(%p %p %s %s)\n", this, str, wine_dbgstr_longlong(count), debugstr_an(&delim, 1));
 
     this->count = 0;
 
@@ -8412,7 +8460,7 @@ basic_istream_char* __thiscall basic_istream_char_get_streambuf_delim(basic_istr
     basic_ios_char *base = basic_istream_char_get_basic_ios(this);
     int ch = delim;
 
-    TRACE("(%p %p %c)\n", this, strbuf, delim);
+    TRACE("(%p %p %s)\n", this, strbuf, debugstr_an(&delim, 1));
 
     this->count = 0;
 
@@ -8456,7 +8504,7 @@ basic_istream_char* __thiscall basic_istream_char_getline_delim(basic_istream_ch
     basic_ios_char *base = basic_istream_char_get_basic_ios(this);
     int ch = (unsigned char)delim;
 
-    TRACE("(%p %p %s %c)\n", this, str, wine_dbgstr_longlong(count), delim);
+    TRACE("(%p %p %s %s)\n", this, str, wine_dbgstr_longlong(count), debugstr_an(&delim, 1));
 
     this->count = 0;
 
@@ -8535,7 +8583,7 @@ basic_istream_char* __thiscall basic_istream_char_ignore(basic_istream_char *thi
                 break;
             }
 
-            if(ch==(unsigned char)delim)
+            if(ch==delim)
                 break;
 
             this->count++;
@@ -8775,9 +8823,6 @@ fpos_mbstatet* __thiscall basic_istream_char_tellg(basic_istream_char *this, fpo
     if(basic_istream_char_sentry_create(this, TRUE)) {
         basic_streambuf_char_pubseekoff(basic_ios_char_rdbuf_get(base),
                 ret, 0, SEEKDIR_cur, OPENMODE_in);
-
-        if(ret->off==-1 && ret->pos==0 && MBSTATET_TO_INT(&ret->state)==0)
-            basic_ios_char_setstate(base, IOSTATE_failbit);
     }else {
         ret->off = -1;
         ret->pos = 0;
@@ -8794,9 +8839,6 @@ fpos_mbstatet* __thiscall basic_istream_char_tellg(basic_istream_char *this, fpo
 
     basic_streambuf_char_pubseekoff(basic_ios_char_rdbuf_get(base),
             ret, 0, SEEKDIR_cur, OPENMODE_in);
-
-    if(ret->off==-1 && ret->pos==0 && MBSTATET_TO_INT(&ret->state)==0)
-        basic_ios_char_setstate(base, IOSTATE_failbit);
 #endif
 
     return ret;
@@ -9223,7 +9265,7 @@ basic_istream_char* __cdecl basic_istream_char_getline_bstr_delim(
     IOSB_iostate state = IOSTATE_goodbit;
     int c = (unsigned char)delim;
 
-    TRACE("(%p %p %c)\n", istream, str, delim);
+    TRACE("(%p %p %s)\n", istream, str, debugstr_an(&delim, 1));
 
     if(basic_istream_char_sentry_create(istream, TRUE)) {
         basic_streambuf_char *strbuf = basic_ios_char_rdbuf_get(base);
@@ -9909,7 +9951,7 @@ basic_istream_wchar* __thiscall basic_istream_wchar_get_str_delim(basic_istream_
     basic_ios_wchar *base = basic_istream_wchar_get_basic_ios(this);
     unsigned short ch = delim;
 
-    TRACE("(%p %p %s %c)\n", this, str, wine_dbgstr_longlong(count), delim);
+    TRACE("(%p %p %s %s)\n", this, str, wine_dbgstr_longlong(count), debugstr_wn(&delim, 1));
 
     this->count = 0;
 
@@ -9959,7 +10001,7 @@ basic_istream_wchar* __thiscall basic_istream_wchar_get_streambuf_delim(basic_is
     basic_ios_wchar *base = basic_istream_wchar_get_basic_ios(this);
     unsigned short ch = delim;
 
-    TRACE("(%p %p %c)\n", this, strbuf, delim);
+    TRACE("(%p %p %s)\n", this, strbuf, debugstr_wn(&delim, 1));
 
     this->count = 0;
 
@@ -10007,7 +10049,7 @@ basic_istream_wchar* __thiscall basic_istream_wchar_getline_delim(basic_istream_
     basic_ios_wchar *base = basic_istream_wchar_get_basic_ios(this);
     unsigned short ch = delim;
 
-    TRACE("(%p %p %s %c)\n", this, str, wine_dbgstr_longlong(count), delim);
+    TRACE("(%p %p %s %s)\n", this, str, wine_dbgstr_longlong(count), debugstr_wn(&delim, 1));
 
     this->count = 0;
 
@@ -10350,9 +10392,6 @@ fpos_mbstatet* __thiscall basic_istream_wchar_tellg(basic_istream_wchar *this, f
     if(basic_istream_wchar_sentry_create(this, TRUE)) {
         basic_streambuf_wchar_pubseekoff(basic_ios_wchar_rdbuf_get(base),
                 ret, 0, SEEKDIR_cur, OPENMODE_in);
-
-        if(ret->off==-1 && ret->pos==0 && MBSTATET_TO_INT(&ret->state)==0)
-            basic_ios_wchar_setstate(base, IOSTATE_failbit);
     }else {
         ret->off = -1;
         ret->pos = 0;
@@ -10369,8 +10408,6 @@ fpos_mbstatet* __thiscall basic_istream_wchar_tellg(basic_istream_wchar *this, f
 
     basic_streambuf_wchar_pubseekoff(basic_ios_wchar_rdbuf_get(base),
             ret, 0, SEEKDIR_cur, OPENMODE_in);
-    if(ret->off==-1 && ret->pos==0 && MBSTATET_TO_INT(&ret->state)==0)
-        basic_ios_wchar_setstate(base, IOSTATE_failbit);
 #endif
     return ret;
 }
@@ -10970,7 +11007,7 @@ basic_istream_wchar* __cdecl basic_istream_wchar_getline_bstr_delim(
     IOSB_iostate state = IOSTATE_goodbit;
     int c = delim;
 
-    TRACE("(%p %p %c)\n", istream, str, delim);
+    TRACE("(%p %p %s)\n", istream, str, debugstr_wn(&delim, 1));
 
     if(basic_istream_wchar_sentry_create(istream, TRUE)) {
         basic_streambuf_wchar *strbuf = basic_ios_wchar_rdbuf_get(base);
@@ -14641,8 +14678,6 @@ ULONGLONG __cdecl tr2_sys__File_size(char const* path)
     TRACE("(%s)\n", debugstr_a(path));
     if(!GetFileAttributesExA(path, GetFileExInfoStandard, &fad))
         return 0;
-    if(fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-        return 0;
 
     return ((ULONGLONG)(fad.nFileSizeHigh) << 32) + fad.nFileSizeLow;
 }
@@ -14732,6 +14767,9 @@ int __cdecl tr2_sys__Copy_file(char const* source, char const* dest, MSVCP_bool 
 {
     TRACE("(%s %s %x)\n", debugstr_a(source), debugstr_a(dest), fail_if_exists);
 
+    if(!source || !dest)
+        return ERROR_INVALID_PARAMETER;
+
     if(CopyFileA(source, dest, fail_if_exists))
         return ERROR_SUCCESS;
     return GetLastError();
@@ -14810,14 +14848,26 @@ enum file_type __cdecl tr2_sys__Lstat(char const* path, int* err_code)
     return tr2_sys__Stat(path, err_code);
 }
 
+static __int64 get_last_write_time(HANDLE h)
+{
+    FILETIME wt;
+    __int64 ret;
+
+    if(!GetFileTime(h, 0, 0, &wt))
+        return -1;
+
+    ret = (((__int64)wt.dwHighDateTime)<< 32) + wt.dwLowDateTime;
+    ret -= TICKS_1601_TO_1970;
+    return ret;
+}
+
 /* ?_Last_write_time@sys@tr2@std@@YA_JPBD@Z */
 /* ?_Last_write_time@sys@tr2@std@@YA_JPEBD@Z */
 __int64 __cdecl tr2_sys__Last_write_time(char const* path)
 {
     HANDLE handle;
-    FILETIME lwt;
-    int ret;
-    __int64 last_write_time;
+    __int64 ret;
+
     TRACE("(%s)\n", debugstr_a(path));
 
     handle = CreateFileA(path, 0, FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -14825,15 +14875,45 @@ __int64 __cdecl tr2_sys__Last_write_time(char const* path)
     if(handle == INVALID_HANDLE_VALUE)
         return 0;
 
-    ret = GetFileTime(handle, 0, 0, &lwt);
+    ret = get_last_write_time(handle);
     CloseHandle(handle);
-    if(!ret)
-        return 0;
+    return ret / TICKSPERSEC;
+}
 
-    last_write_time = (((__int64)lwt.dwHighDateTime)<< 32) + lwt.dwLowDateTime;
-    last_write_time -= TICKS_1601_TO_1970;
-    last_write_time /= TICKSPERSEC;
-    return last_write_time;
+/* _Last_write_time */
+__int64 __cdecl _Last_write_time(const wchar_t *path)
+{
+    HANDLE handle;
+    __int64 ret;
+
+    TRACE("(%s)\n", debugstr_w(path));
+
+    handle = CreateFileW(path, 0, FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
+            NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, 0);
+    if(handle == INVALID_HANDLE_VALUE)
+        return -1;
+
+    ret = get_last_write_time(handle);
+    CloseHandle(handle);
+    return ret;
+}
+
+/* ?_Last_write_time@sys@tr2@std@@YA_JPB_W@Z */
+/* ?_Last_write_time@sys@tr2@std@@YA_JPEB_W@Z */
+__int64 __cdecl tr2_sys__Last_write_time_wchar(const wchar_t *path)
+{
+    TRACE("(%s)\n", debugstr_w(path));
+    return _Last_write_time(path) / TICKSPERSEC;
+}
+
+static int set_last_write_time(HANDLE h, __int64 time)
+{
+    FILETIME wt;
+
+    time += TICKS_1601_TO_1970;
+    wt.dwLowDateTime = (DWORD)time;
+    wt.dwHighDateTime = (DWORD)(time >> 32);
+    return SetFileTime(h, 0, 0, &wt);
 }
 
 /* ?_Last_write_time@sys@tr2@std@@YAXPBD_J@Z */
@@ -14841,7 +14921,7 @@ __int64 __cdecl tr2_sys__Last_write_time(char const* path)
 void __cdecl tr2_sys__Last_write_time_set(char const* path, __int64 newtime)
 {
     HANDLE handle;
-    FILETIME lwt;
+
     TRACE("(%s)\n", debugstr_a(path));
 
     handle = CreateFileA(path, FILE_WRITE_ATTRIBUTES,
@@ -14854,46 +14934,74 @@ void __cdecl tr2_sys__Last_write_time_set(char const* path, __int64 newtime)
      * According to the test of msvcp120,
      * msvcp120's implementation does nothing. Obviously, this is a bug of windows.
      */
-
-    newtime *= TICKSPERSEC;
-    newtime += TICKS_1601_TO_1970;
-    lwt.dwLowDateTime = (DWORD)(newtime);
-    lwt.dwHighDateTime = (DWORD)(newtime >> 32);
-    SetFileTime(handle, 0, 0, &lwt);
+    set_last_write_time(handle, newtime * TICKSPERSEC);
     CloseHandle(handle);
 }
 
-/* ?_Open_dir@sys@tr2@std@@YAPAXAAY0BAE@DPBDAAHAAW4file_type@123@@Z */
-/* ?_Open_dir@sys@tr2@std@@YAPEAXAEAY0BAE@DPEBDAEAHAEAW4file_type@123@@Z */
-void* __cdecl tr2_sys__Open_dir(char* target, char const* dest, int* err_code, enum file_type* type)
+/* _Set_last_write_time */
+int __cdecl _Set_last_write_time(const wchar_t *path, __int64 time)
 {
     HANDLE handle;
-    WIN32_FIND_DATAA data;
-    char temppath[MAX_PATH];
+    int ret;
 
-    TRACE("(%p %s %p %p)\n", target, debugstr_a(dest), err_code, type);
-    if(strlen(dest) > MAX_PATH - 3) {
+    TRACE("(%s)\n", debugstr_w(path));
+
+    handle = CreateFileW(path, FILE_WRITE_ATTRIBUTES,
+            FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
+            NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, 0);
+    if(handle == INVALID_HANDLE_VALUE)
+        return 0;
+
+    ret = set_last_write_time(handle, time);
+    CloseHandle(handle);
+    return ret;
+}
+
+/* ?_Last_write_time@sys@tr2@std@@YAXPB_W_J@Z */
+/* ?_Last_write_time@sys@tr2@std@@YAXPEB_W_J@Z */
+void __cdecl tr2_sys__Last_write_time_set_wchar(const wchar_t *path, __int64 time)
+{
+    TRACE("(%s)\n", debugstr_w(path));
+    _Set_last_write_time(path, time * TICKSPERSEC);
+}
+
+/* ??_Open_dir@sys@tr2@std@@YAPAXPA_WPB_WAAHAAW4file_type@123@@Z */
+/* ??_Open_dir@sys@tr2@std@@YAPEAXPEA_WPEB_WAEAHAEAW4file_type@123@@Z */
+void* __cdecl tr2_sys__Open_dir_wchar(wchar_t* target, wchar_t const* dest, int* err_code, enum file_type* type)
+{
+    HANDLE handle;
+    WIN32_FIND_DATAW data;
+    wchar_t temppath[MAX_PATH];
+    static const wchar_t dot[] = {'.', 0};
+    static const wchar_t dotdot[] = {'.', '.', 0};
+    static const wchar_t asterisk[] = {'\\', '*', 0};
+
+    TRACE("(%p %s %p %p)\n", target, debugstr_w(dest), err_code, type);
+    if(wcslen(dest) > MAX_PATH - 3) {
         *err_code = ERROR_BAD_PATHNAME;
+        *target = '\0';
         return NULL;
     }
-    strcpy(temppath, dest);
-    strcat(temppath, "\\*");
+    wcscpy(temppath, dest);
+    wcscat(temppath, asterisk);
 
-    handle = FindFirstFileA(temppath, &data);
+    handle = FindFirstFileW(temppath, &data);
     if(handle == INVALID_HANDLE_VALUE) {
-        *err_code = GetLastError();
+        *err_code = ERROR_BAD_PATHNAME;
+        *target = '\0';
         return NULL;
     }
-    while(!strcmp(data.cFileName, ".") || !strcmp(data.cFileName, "..")) {
-        if(!FindNextFileA(handle, &data)) {
+    while(!wcscmp(data.cFileName, dot) || !wcscmp(data.cFileName, dotdot)) {
+        if(!FindNextFileW(handle, &data)) {
             *err_code = ERROR_SUCCESS;
             *type = status_unknown;
+            *target = '\0';
             FindClose(handle);
             return NULL;
         }
     }
 
-    strcpy(target, data.cFileName);
+    wcscpy(target, data.cFileName);
     *err_code = ERROR_SUCCESS;
     if(data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
         *type = directory_file;
@@ -14902,27 +15010,65 @@ void* __cdecl tr2_sys__Open_dir(char* target, char const* dest, int* err_code, e
     return handle;
 }
 
-/* ?_Read_dir@sys@tr2@std@@YAPADAAY0BAE@DPAXAAW4file_type@123@@Z */
-/* ?_Read_dir@sys@tr2@std@@YAPEADAEAY0BAE@DPEAXAEAW4file_type@123@@Z */
-char* __cdecl tr2_sys__Read_dir(char* target, void* handle, enum file_type* type)
+/* ?_Open_dir@sys@tr2@std@@YAPAXAAY0BAE@DPBDAAHAAW4file_type@123@@Z */
+/* ?_Open_dir@sys@tr2@std@@YAPEAXAEAY0BAE@DPEBDAEAHAEAW4file_type@123@@Z */
+void* __cdecl tr2_sys__Open_dir(char* target, char const* dest, int* err_code, enum file_type* type)
 {
-    WIN32_FIND_DATAA data;
+    void *handle;
+    wchar_t target_w[MAX_PATH];
+    wchar_t dest_w[MAX_PATH];
+
+    TRACE("(%p %s %p %p)\n", target, debugstr_a(dest), err_code, type);
+
+    if (dest && !MultiByteToWideChar(CP_ACP, 0, dest, -1, dest_w, MAX_PATH))
+    {
+        WARN("Failed to convert input string.\n");
+        *err_code = ERROR_BAD_PATHNAME;
+        return NULL;
+    }
+
+    handle = tr2_sys__Open_dir_wchar(target_w, dest ? dest_w : NULL, err_code, type);
+
+    WideCharToMultiByte(CP_ACP, 0, target_w, -1, target, MAX_PATH, NULL, NULL);
+
+    return handle;
+}
+
+/* ??_Read_dir@sys@tr2@std@@YAPA_WPA_WPAXAAW4file_type@123@@Z */
+/* ??_Read_dir@sys@tr2@std@@YAPEA_WPEA_WPEAXAEAW4file_type@123@@Z */
+wchar_t* __cdecl tr2_sys__Read_dir_wchar(wchar_t* target, void* handle, enum file_type* type)
+{
+    WIN32_FIND_DATAW data;
+    static const wchar_t dot[] = {'.', 0};
+    static const wchar_t dotdot[] = {'.', '.', 0};
 
     TRACE("(%p %p %p)\n", target, handle, type);
 
     do {
-        if(!FindNextFileA(handle, &data)) {
+        if(!FindNextFileW(handle, &data)) {
             *type = status_unknown;
             *target = '\0';
             return target;
         }
-    } while(!strcmp(data.cFileName, ".") || !strcmp(data.cFileName, ".."));
+    } while(!wcscmp(data.cFileName, dot) || !wcscmp(data.cFileName, dotdot));
 
-    strcpy(target, data.cFileName);
+    wcscpy(target, data.cFileName);
     if(data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
         *type = directory_file;
     else
         *type = regular_file;
+    return target;
+}
+
+/* ?_Read_dir@sys@tr2@std@@YAPADAAY0BAE@DPAXAAW4file_type@123@@Z */
+/* ?_Read_dir@sys@tr2@std@@YAPEADAEAY0BAE@DPEAXAEAW4file_type@123@@Z */
+char* __cdecl tr2_sys__Read_dir(char* target, void* handle, enum file_type* type)
+{
+    wchar_t target_w[MAX_PATH];
+
+    tr2_sys__Read_dir_wchar(target_w, handle, type);
+    WideCharToMultiByte(CP_ACP, 0, target_w, -1, target, MAX_PATH, NULL, NULL);
+
     return target;
 }
 
@@ -14948,6 +15094,20 @@ int __cdecl tr2_sys__Link(char const* existing_path, char const* new_path)
     return GetLastError();
 }
 
+/* ?_Link@sys@tr2@std@@YAHPB_W0@Z */
+/* ?_Link@sys@tr2@std@@YAHPEB_W0@Z */
+/* _Link */
+int __cdecl tr2_sys__Link_wchar(WCHAR const* existing_path, WCHAR const* new_path)
+{
+    TRACE("(%s %s)\n", debugstr_w(existing_path), debugstr_w(new_path));
+    if(!existing_path || !new_path)
+        return ERROR_INVALID_PARAMETER;
+
+    if(CreateHardLinkW(new_path, existing_path, NULL))
+        return ERROR_SUCCESS;
+    return GetLastError();
+}
+
 /* ?_Symlink@sys@tr2@std@@YAHPBD0@Z */
 /* ?_Symlink@sys@tr2@std@@YAHPEBD0@Z */
 int __cdecl tr2_sys__Symlink(char const* existing_file_name, char const* file_name)
@@ -14961,6 +15121,20 @@ int __cdecl tr2_sys__Symlink(char const* existing_file_name, char const* file_na
     return GetLastError();
 }
 
+/* ?_Symlink@sys@tr2@std@@YAHPB_W0@Z */
+/* ?_Symlink@sys@tr2@std@@YAHPEB_W0@Z */
+/* _Symlink */
+int __cdecl tr2_sys__Symlink_wchar(WCHAR const* existing_file_name, WCHAR const* file_name)
+{
+    TRACE("(%s %s)\n", debugstr_w(existing_file_name), debugstr_w(file_name));
+    if(!existing_file_name || !file_name)
+        return ERROR_INVALID_PARAMETER;
+
+    if(CreateSymbolicLinkW(file_name, existing_file_name, 0))
+        return ERROR_SUCCESS;
+    return GetLastError();
+}
+
 /* ?_Unlink@sys@tr2@std@@YAHPBD@Z */
 /* ?_Unlink@sys@tr2@std@@YAHPEBD@Z */
 int __cdecl tr2_sys__Unlink(char const* path)
@@ -14968,6 +15142,18 @@ int __cdecl tr2_sys__Unlink(char const* path)
     TRACE("(%s)\n", debugstr_a(path));
 
     if(DeleteFileA(path))
+        return ERROR_SUCCESS;
+    return GetLastError();
+}
+
+/* ?_Unlink@sys@tr2@std@@YAHPB_W@Z */
+/* ?_Unlink@sys@tr2@std@@YAHPEB_W@Z */
+/* _Unlink */
+int __cdecl tr2_sys__Unlink_wchar(WCHAR const* path)
+{
+    TRACE("(%s)\n", debugstr_w(path));
+
+    if(DeleteFileW(path))
         return ERROR_SUCCESS;
     return GetLastError();
 }
@@ -15391,8 +15577,18 @@ ULONGLONG __cdecl tr2_sys__File_size_wchar(WCHAR const* path)
     TRACE("(%s)\n", debugstr_w(path));
     if(!GetFileAttributesExW(path, GetFileExInfoStandard, &fad))
         return 0;
-    if(fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-        return 0;
+
+    return ((ULONGLONG)(fad.nFileSizeHigh) << 32) + fad.nFileSizeLow;
+}
+
+/* _File_size, msvcp140 version. Different error handling. */
+ULONGLONG __cdecl _File_size(WCHAR const* path)
+{
+    WIN32_FILE_ATTRIBUTE_DATA fad;
+
+    TRACE("(%s)\n", debugstr_w(path));
+    if(!GetFileAttributesExW(path, GetFileExInfoStandard, &fad))
+        return ~(ULONGLONG)0;
 
     return ((ULONGLONG)(fad.nFileSizeHigh) << 32) + fad.nFileSizeLow;
 }
@@ -15444,6 +15640,16 @@ WCHAR* __cdecl tr2_sys__Current_get_wchar(WCHAR *current_path)
     return current_path;
 }
 
+/* _Current_get, msvcp140 version */
+BOOL __cdecl _Current_get(WCHAR *current_path)
+{
+    TRACE("(%s)\n", debugstr_w(current_path));
+
+    if(!GetCurrentDirectoryW(MAX_PATH, current_path))
+        return FALSE;
+    return TRUE;
+}
+
 /* ?_Current_set@sys@tr2@std@@YA_NPB_W@Z */
 /* ?_Current_set@sys@tr2@std@@YA_NPEB_W@Z */
 MSVCP_bool __cdecl tr2_sys__Current_set_wchar(WCHAR const* path)
@@ -15492,9 +15698,6 @@ int __cdecl tr2_sys__Copy_file_wchar(WCHAR const* source, WCHAR const* dest, MSV
 int __cdecl tr2_sys__Rename_wchar(WCHAR const* old_path, WCHAR const* new_path)
 {
     TRACE("(%s %s)\n", debugstr_w(old_path), debugstr_w(new_path));
-
-    if(!old_path || !new_path)
-        return ERROR_INVALID_PARAMETER;
 
     if(MoveFileExW(old_path, new_path, MOVEFILE_COPY_ALLOWED))
         return ERROR_SUCCESS;
@@ -15553,11 +15756,54 @@ enum file_type __cdecl tr2_sys__Stat_wchar(WCHAR const* path, int* err_code)
     return (attr & FILE_ATTRIBUTE_DIRECTORY)?directory_file:regular_file;
 }
 
+/* _Stat, msvcp140 version */
+enum file_type __cdecl _Stat(WCHAR const* path, int* permissions)
+{
+    DWORD attr;
+    TRACE("(%s %p)\n", debugstr_w(path), permissions);
+    if(!path) {
+        return file_not_found;
+    }
+
+    attr=GetFileAttributesW(path);
+    if(attr == INVALID_FILE_ATTRIBUTES) {
+        enum file_type ret;
+        switch(GetLastError()) {
+            case ERROR_FILE_NOT_FOUND:
+            case ERROR_BAD_NETPATH:
+            case ERROR_INVALID_NAME:
+            case ERROR_BAD_PATHNAME:
+            case ERROR_PATH_NOT_FOUND:
+                ret = file_not_found;
+                break;
+            default:
+                ret = status_unknown;
+        }
+        return ret;
+    }
+
+    if (permissions)
+        *permissions = (attr & FILE_ATTRIBUTE_READONLY) ? 0555 : 0777;
+    return (attr & FILE_ATTRIBUTE_DIRECTORY) ? directory_file : regular_file;
+}
+
 /* ?_Lstat@sys@tr2@std@@YA?AW4file_type@123@PB_WAAH@Z */
 /* ?_Lstat@sys@tr2@std@@YA?AW4file_type@123@PEB_WAEAH@Z */
 enum file_type __cdecl tr2_sys__Lstat_wchar(WCHAR const* path, int* err_code)
 {
     return tr2_sys__Stat_wchar(path, err_code);
+}
+
+/* _Lstat, msvcp140 version */
+enum file_type __cdecl _Lstat(WCHAR const* path, int* permissions)
+{
+    return _Stat(path, permissions);
+}
+
+WCHAR * __cdecl _Temp_get(WCHAR *dst)
+{
+    GetTempPathW(MAX_PATH, dst);
+    return dst;
 }
 
 /* ??1_Winit@std@@QAE@XZ */

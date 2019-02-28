@@ -82,7 +82,7 @@ static void test_preinitialization(void)
         return;
     }
 
-    for (i = 0; i < sizeof(create_device_tests)/sizeof(create_device_tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(create_device_tests); i++)
     {
         if (create_device_tests[i].pdev) pDID = (void *)0xdeadbeef;
         hr = IDirectInput8_CreateDevice(pDI, create_device_tests[i].rguid,
@@ -93,7 +93,7 @@ static void test_preinitialization(void)
             ok(pDID == NULL, "[%d] Output interface pointer is %p\n", i, pDID);
     }
 
-    for (i = 0; i < sizeof(enum_devices_tests)/sizeof(enum_devices_tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(enum_devices_tests); i++)
     {
         hr = IDirectInput8_EnumDevices(pDI, enum_devices_tests[i].dwDevType,
                                            enum_devices_tests[i].lpCallback,
@@ -186,7 +186,7 @@ static void test_DirectInput8Create(void)
     IUnknown *pUnk;
     HRESULT hr;
 
-    for (i = 0; i < sizeof(invalid_param_list)/sizeof(invalid_param_list[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(invalid_param_list); i++)
     {
         if (invalid_param_list[i].ppdi) pUnk = (void *)0xdeadbeef;
         hr = DirectInput8Create(invalid_param_list[i].hinst ? hInstance : NULL,
@@ -199,7 +199,7 @@ static void test_DirectInput8Create(void)
             ok(pUnk == NULL, "[%d] Output interface pointer is %p\n", i, pUnk);
     }
 
-    for (i = 0; i < sizeof(no_interface_list)/sizeof(no_interface_list[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(no_interface_list); i++)
     {
         pUnk = (void *)0xdeadbeef;
         hr = DirectInput8Create(hInstance, DIRECTINPUT_VERSION, no_interface_list[i], (void **)&pUnk, NULL);
@@ -207,7 +207,7 @@ static void test_DirectInput8Create(void)
         ok(pUnk == NULL, "[%d] Output interface pointer is %p\n", i, pUnk);
     }
 
-    for (i = 0; i < sizeof(iid_list)/sizeof(iid_list[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(iid_list); i++)
     {
         pUnk = NULL;
         hr = DirectInput8Create(hInstance, DIRECTINPUT_VERSION, iid_list[i], (void **)&pUnk, NULL);
@@ -268,7 +268,7 @@ static void test_QueryInterface(void)
     hr = IDirectInput8_QueryInterface(pDI, &IID_IUnknown, NULL);
     ok(hr == E_POINTER, "IDirectInput8_QueryInterface returned 0x%08x\n", hr);
 
-    for (i = 0; i < sizeof(iid_list)/sizeof(iid_list[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(iid_list); i++)
     {
         pUnk = NULL;
         hr = IDirectInput8_QueryInterface(pDI, iid_list[i], (void **)&pUnk);
@@ -277,7 +277,7 @@ static void test_QueryInterface(void)
         if (pUnk)
         {
             int j;
-            for (j = 0; j < sizeof(iid_list)/sizeof(iid_list[0]); j++)
+            for (j = 0; j < ARRAY_SIZE(iid_list); j++)
             {
                 IUnknown *pUnk1 = NULL;
                 hr = IDirectInput8_QueryInterface(pUnk, iid_list[j], (void **)&pUnk1);
@@ -289,7 +289,7 @@ static void test_QueryInterface(void)
         }
     }
 
-    for (i = 0; i < sizeof(no_interface_list)/sizeof(no_interface_list[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(no_interface_list); i++)
     {
         pUnk = (void *)0xdeadbeef;
         hr = IDirectInput8_QueryInterface(pDI, no_interface_list[i].riid, (void **)&pUnk);
@@ -377,6 +377,16 @@ static BOOL CALLBACK enum_devices_callback(const DIDEVICEINSTANCEA *instance, vo
           instance->wUsagePage,
           instance->wUsage);
 
+    if ((instance->dwDevType & 0xff) == DI8DEVTYPE_KEYBOARD ||
+           (instance->dwDevType & 0xff) == DI8DEVTYPE_MOUSE) {
+        const char *device = ((instance->dwDevType & 0xff) ==
+                                   DI8DEVTYPE_KEYBOARD) ? "Keyboard" : "Mouse";
+        ok(IsEqualGUID(&instance->guidInstance, &instance->guidProduct),
+           "%s guidInstance (%s) does not match guidProduct (%s)\n",
+           device, wine_dbgstr_guid(&instance->guidInstance),
+           wine_dbgstr_guid(&instance->guidProduct));
+    }
+
     enum_test->device_count++;
     return enum_test->return_value;
 }
@@ -445,6 +455,7 @@ static void test_EnumDevices(void)
 struct enum_semantics_test
 {
     unsigned int device_count;
+    DWORD first_remaining;
     BOOL mouse;
     BOOL keyboard;
     DIACTIONFORMATA *lpdiaf;
@@ -476,6 +487,12 @@ static BOOL CALLBACK enum_semantics_callback(const DIDEVICEINSTANCEA *lpddi, IDi
 
     if (context == NULL) return DIENUM_STOP;
 
+    if (!data->device_count) {
+        data->first_remaining = dwRemaining;
+    }
+    ok (dwRemaining == data->first_remaining - data->device_count,
+        "enum semantics remaining devices is wrong, expected %d, had %d\n",
+        data->first_remaining - data->device_count, dwRemaining);
     data->device_count++;
 
     if (IsEqualGUID(&lpddi->guidInstance, &GUID_SysKeyboard)) data->keyboard = TRUE;
@@ -507,7 +524,7 @@ static void test_EnumDevicesBySemantics(void)
     HRESULT hr;
     DIACTIONFORMATA diaf;
     const GUID ACTION_MAPPING_GUID = { 0x1, 0x2, 0x3, { 0x4, 0x5, 0x6, 0x7, 0x8, 0x9, 0xa, 0xb } };
-    struct enum_semantics_test data = { 0, FALSE, FALSE, &diaf, NULL };
+    struct enum_semantics_test data = { 0, 0, FALSE, FALSE, &diaf, NULL };
     int device_total = 0;
 
     hr = DirectInput8Create(hInstance, DIRECTINPUT_VERSION, &IID_IDirectInput8A, (void **)&pDI, NULL);
@@ -520,7 +537,7 @@ static void test_EnumDevicesBySemantics(void)
     memset (&diaf, 0, sizeof(diaf));
     diaf.dwSize = sizeof(diaf);
     diaf.dwActionSize = sizeof(DIACTIONA);
-    diaf.dwNumActions = sizeof(actionMapping) / sizeof(actionMapping[0]);
+    diaf.dwNumActions = ARRAY_SIZE(actionMapping);
     diaf.dwDataSize = 4 * diaf.dwNumActions;
     diaf.rgoAction = actionMapping;
     diaf.guidActionMap = ACTION_MAPPING_GUID;
@@ -539,6 +556,7 @@ static void test_EnumDevicesBySemantics(void)
     /* Enumerate Force feedback devices. We should get no mouse nor keyboard */
     data.keyboard = FALSE;
     data.mouse = FALSE;
+    data.device_count = 0;
     hr = IDirectInput8_EnumDevicesBySemantics(pDI, NULL, &diaf, enum_semantics_callback, &data, DIEDBSFL_FORCEFEEDBACK);
     ok (SUCCEEDED(hr), "EnumDevicesBySemantics failed hr=%08x\n", hr);
     ok (!data.keyboard, "Keyboard should not be enumerated when asking for forcefeedback\n");
@@ -554,6 +572,13 @@ static void test_EnumDevicesBySemantics(void)
     /* Keep the device total */
     device_total = data.device_count;
 
+    /* There should be no devices for any user. No device should be enumerated with DIEDBSFL_THISUSER.
+       MSDN defines that all unowned devices are also enumerated but this doesn't seem to be happening. */
+    data.device_count = 0;
+    hr = IDirectInput8_EnumDevicesBySemantics(pDI, "Sh4d0w M4g3", &diaf, enum_semantics_callback, &data, DIEDBSFL_THISUSER);
+    ok (SUCCEEDED(hr), "EnumDevicesBySemantics failed hr=%08x\n", hr);
+    ok (data.device_count == 0, "No devices should be assigned for this user assigned=%d\n", data.device_count);
+
     /* This enumeration builds and sets the action map for all devices with a NULL username */
     hr = IDirectInput8_EnumDevicesBySemantics(pDI, NULL, &diaf, set_action_map_callback, &data, DIEDBSFL_ATTACHEDONLY);
     ok (SUCCEEDED(hr), "EnumDevicesBySemantics failed: hr=%08x\n", hr);
@@ -562,7 +587,7 @@ static void test_EnumDevicesBySemantics(void)
     data.device_count = 0;
     hr = IDirectInput8_EnumDevicesBySemantics(pDI, NULL, &diaf, enum_semantics_callback, &data, DIEDBSFL_AVAILABLEDEVICES);
     ok (SUCCEEDED(hr), "EnumDevicesBySemantics failed hr=%08x\n", hr);
-    todo_wine ok (data.device_count == 0, "No device should be available after action mapping available=%d\n", data.device_count);
+    ok (data.device_count == 0, "No device should be available after action mapping available=%d\n", data.device_count);
 
     /* Now we'll give all the devices to a specific user */
     data.username = "Sh4d0w M4g3";
@@ -585,7 +610,7 @@ static void test_EnumDevicesBySemantics(void)
     data.device_count = 0;
     hr = IDirectInput8_EnumDevicesBySemantics(pDI, "Ninja Brian", &diaf, enum_semantics_callback, &data, DIEDBSFL_THISUSER);
     ok (SUCCEEDED(hr), "EnumDevicesBySemantics failed hr=%08x\n", hr);
-    todo_wine ok (data.device_count == 0, "This user should own no devices owned=%d\n", data.device_count);
+    ok (data.device_count == 0, "This user should own no devices owned=%d\n", data.device_count);
 
     /* Sh4d0w M4g3 has ownership of all devices */
     data.device_count = 0;
@@ -595,6 +620,7 @@ static void test_EnumDevicesBySemantics(void)
 
     /* The call fails with a zeroed GUID */
     memset(&diaf.guidActionMap, 0, sizeof(GUID));
+    data.device_count = 0;
     hr = IDirectInput8_EnumDevicesBySemantics(pDI, NULL, &diaf, enum_semantics_callback, NULL, 0);
     todo_wine ok(FAILED(hr), "EnumDevicesBySemantics succeeded with invalid GUID hr=%08x\n", hr);
 

@@ -20,6 +20,7 @@
  */
 
 #include "config.h"
+#include "wine/port.h"
 #include "initguid.h"
 #include "d3d8_private.h"
 #include "wine/debug.h"
@@ -41,13 +42,13 @@ IDirect3D8 * WINAPI DECLSPEC_HOTPATCH Direct3DCreate8(UINT sdk_version)
 
     TRACE("sdk_version %#x.\n", sdk_version);
 
-    if (!(object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*object))))
+    if (!(object = heap_alloc_zero(sizeof(*object))))
         return NULL;
 
     if (!d3d8_init(object))
     {
         WARN("Failed to initialize d3d8.\n");
-        HeapFree(GetProcessHeap(), 0, object);
+        heap_free(object);
         return NULL;
     }
 
@@ -56,40 +57,50 @@ IDirect3D8 * WINAPI DECLSPEC_HOTPATCH Direct3DCreate8(UINT sdk_version)
     return &object->IDirect3D8_iface;
 }
 
-/***********************************************************************
- *              ValidateVertexShader (D3D8.@)
- *
- * I've seen reserved1 and reserved2 always passed as 0's
- * bool seems always passed as 0 or 1, but other values work as well...
- * toto       result?
- */
-HRESULT WINAPI ValidateVertexShader(DWORD* vertexshader, DWORD* reserved1, DWORD* reserved2, BOOL bool, DWORD* toto)
+/* FIXME: We should probably use libvkd3d-shader for validation. */
+HRESULT WINAPI ValidateVertexShader(const DWORD *vs_code, const DWORD *declaration,
+        const D3DCAPS8 *caps, BOOL return_error, char **errors)
 {
-  HRESULT ret;
-  static BOOL warned;
+    const char *message = "";
+    SIZE_T message_size;
+    HRESULT hr = E_FAIL;
 
-  if (TRACE_ON(d3d8) || !warned) {
-      FIXME("(%p %p %p %d %p): stub\n", vertexshader, reserved1, reserved2, bool, toto);
-      warned = TRUE;
-  }
+    TRACE("vs_code %p, declaration %p, caps %p, return_error %#x, errors %p.\n",
+            vs_code, declaration, caps, return_error, errors);
 
-  if (!vertexshader)
-      return E_FAIL;
+    if (!vs_code)
+    {
+        message = "Invalid code pointer.\n";
+        goto done;
+    }
 
-  if (reserved1 || reserved2)
-      return E_FAIL;
-
-  switch(*vertexshader) {
-        case 0xFFFE0101:
-        case 0xFFFE0100:
-            ret=S_OK;
+    switch (*vs_code)
+    {
+        case D3DVS_VERSION(1, 1):
+        case D3DVS_VERSION(1, 0):
             break;
-        default:
-            WARN("Invalid shader version token %#x.\n", *vertexshader);
-            ret=E_FAIL;
-        }
 
-  return ret;
+        default:
+            message = "Unsupported shader version.\n";
+            goto done;
+    }
+
+    if (caps && *vs_code > caps->VertexShaderVersion)
+    {
+        message = "Shader version not supported by caps.\n";
+        goto done;
+    }
+
+    hr = S_OK;
+
+done:
+    if (!return_error)
+        message = "";
+    message_size = strlen(message) + 1;
+    if (errors && (*errors = heap_alloc(message_size)))
+        memcpy(*errors, message, message_size);
+
+    return hr;
 }
 
 /***********************************************************************
@@ -98,13 +109,13 @@ HRESULT WINAPI ValidateVertexShader(DWORD* vertexshader, DWORD* reserved1, DWORD
  * PARAMS
  * toto       result?
  */
-HRESULT WINAPI ValidatePixelShader(DWORD* pixelshader, DWORD* reserved1, BOOL bool, DWORD* toto)
+HRESULT WINAPI ValidatePixelShader(DWORD* pixelshader, DWORD* reserved1, BOOL boolean, DWORD* toto)
 {
   HRESULT ret;
   static BOOL warned;
 
   if (TRACE_ON(d3d8) || !warned) {
-      FIXME("(%p %p %d %p): stub\n", pixelshader, reserved1, bool, toto);
+      FIXME("(%p %p %d %p): stub\n", pixelshader, reserved1, boolean, toto);
       warned = TRUE;
   }
 

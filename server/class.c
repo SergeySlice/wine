@@ -46,6 +46,7 @@ struct window_class
     int             count;           /* reference count */
     int             local;           /* local class? */
     atom_t          atom;            /* class atom */
+    atom_t          base_atom;       /* base class atom for versioned class */
     mod_handle_t    instance;        /* module instance */
     unsigned int    style;           /* class style */
     int             win_extra;       /* number of window extra bytes */
@@ -75,6 +76,8 @@ static struct window_class *create_class( struct process *process, int extra_byt
 
 static void destroy_class( struct window_class *class )
 {
+    release_global_atom( NULL, class->atom );
+    release_global_atom( NULL, class->base_atom );
     list_remove( &class->entry );
     release_object( class->process );
     free( class );
@@ -138,7 +141,7 @@ int is_hwnd_message_class( struct window_class *class )
 
 atom_t get_class_atom( struct window_class *class )
 {
-    return class->atom;
+    return class->base_atom;
 }
 
 client_ptr_t get_class_client_ptr( struct window_class *class )
@@ -151,17 +154,35 @@ DECL_HANDLER(create_class)
 {
     struct window_class *class;
     struct unicode_str name = get_req_unicode_str();
-    atom_t atom;
+    atom_t atom, base_atom;
 
     if (name.len)
     {
         atom = add_global_atom( NULL, &name );
         if (!atom) return;
+        if (req->name_offset && req->name_offset < name.len / sizeof(WCHAR))
+        {
+            name.str += req->name_offset;
+            name.len -= req->name_offset * sizeof(WCHAR);
+
+            base_atom = add_global_atom( NULL, &name );
+            if (!base_atom)
+            {
+                release_global_atom( NULL, atom );
+                return;
+            }
+        }
+        else
+        {
+            base_atom = atom;
+            grab_global_atom( NULL, atom );
+        }
     }
     else
     {
-        atom = req->atom;
+        base_atom = atom = req->atom;
         if (!grab_global_atom( NULL, atom )) return;
+        grab_global_atom( NULL, base_atom );
     }
 
     class = find_class( current->process, atom, req->instance );
@@ -169,6 +190,7 @@ DECL_HANDLER(create_class)
     {
         set_win32_error( ERROR_CLASS_ALREADY_EXISTS );
         release_global_atom( NULL, atom );
+        release_global_atom( NULL, base_atom );
         return;
     }
     if (req->extra < 0 || req->extra > 4096 || req->win_extra < 0 || req->win_extra > 4096)
@@ -176,15 +198,18 @@ DECL_HANDLER(create_class)
         /* don't allow stupid values here */
         set_error( STATUS_INVALID_PARAMETER );
         release_global_atom( NULL, atom );
+        release_global_atom( NULL, base_atom );
         return;
     }
 
     if (!(class = create_class( current->process, req->extra, req->local )))
     {
         release_global_atom( NULL, atom );
+        release_global_atom( NULL, base_atom );
         return;
     }
     class->atom       = atom;
+    class->base_atom  = base_atom;
     class->instance   = req->instance;
     class->style      = req->style;
     class->win_extra  = req->win_extra;
@@ -253,6 +278,7 @@ DECL_HANDLER(set_class_info)
     reply->old_extra     = class->nb_extra_bytes;
     reply->old_win_extra = class->win_extra;
     reply->old_instance  = class->instance;
+    reply->base_atom     = class->base_atom;
 
     if (req->flags & SET_CLASS_ATOM)
     {

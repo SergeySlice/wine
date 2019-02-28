@@ -296,6 +296,10 @@ static inline const char *wine_dbgstr_variant( const VARIANT *v )
         return wine_dbg_sprintf( "%p {VT_CY: %s}", v, wine_dbgstr_longlong(V_CY(v).int64) );
     case VT_DATE:
         return wine_dbg_sprintf( "%p {VT_DATE: %lf}", v, V_DATE(v) );
+    case VT_LPSTR:
+        return wine_dbg_sprintf( "%p {VT_LPSTR: %s}", v, wine_dbgstr_a((const char *)V_BSTR(v)) );
+    case VT_LPWSTR:
+        return wine_dbg_sprintf( "%p {VT_LPWSTR: %s}", v, wine_dbgstr_w(V_BSTR(v)) );
     case VT_BSTR:
         return wine_dbg_sprintf( "%p {VT_BSTR: %s}", v, wine_dbgstr_w(V_BSTR(v)) );
     case VT_DISPATCH:
@@ -356,9 +360,9 @@ static inline const char *wine_dbgstr_variant( const VARIANT *v )
 #define WINE_ERR_ON(ch)            __WINE_IS_DEBUG_ON(_ERR,&__wine_dbch_##ch)
 
 #define WINE_DECLARE_DEBUG_CHANNEL(ch) \
-    static struct __wine_debug_channel __wine_dbch_##ch = { ~0, #ch }
+    static struct __wine_debug_channel __wine_dbch_##ch = { 0xff, #ch }
 #define WINE_DEFAULT_DEBUG_CHANNEL(ch) \
-    static struct __wine_debug_channel __wine_dbch_##ch = { ~0, #ch }; \
+    static struct __wine_debug_channel __wine_dbch_##ch = { 0xff, #ch }; \
     static struct __wine_debug_channel * const __wine_dbch___default = &__wine_dbch_##ch
 
 #define WINE_DPRINTF               wine_dbg_printf

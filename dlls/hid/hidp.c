@@ -81,6 +81,49 @@ static NTSTATUS get_report_data(BYTE *report, INT reportLength, INT startBit, IN
     return HIDP_STATUS_SUCCESS;
 }
 
+static NTSTATUS set_report_data(BYTE *report, INT reportLength, INT startBit, INT valueSize, ULONG value)
+{
+    if ((startBit + valueSize) / 8  > reportLength)
+        return HIDP_STATUS_INVALID_REPORT_LENGTH;
+
+    if (valueSize == 1)
+    {
+        ULONG byte_index = startBit / 8;
+        ULONG bit_index = startBit - (byte_index * 8);
+        if (value)
+            report[byte_index] |= (1 << bit_index);
+        else
+            report[byte_index] &= ~(1 << bit_index);
+    }
+    else
+    {
+        ULONG byte_index = (startBit + valueSize - 1) / 8;
+        ULONG data = value;
+        ULONG remainingBits = valueSize;
+        while (remainingBits)
+        {
+            BYTE subvalue = data & 0xff;
+
+            data >>= 8;
+
+            if (remainingBits >= 8)
+            {
+                report[byte_index] = subvalue;
+                byte_index --;
+                remainingBits -= 8;
+            }
+            else if (remainingBits > 0)
+            {
+                BYTE mask = (0xff << (8-remainingBits)) & subvalue;
+                report[byte_index] |= mask;
+                remainingBits = 0;
+            }
+        }
+    }
+    return HIDP_STATUS_SUCCESS;
+}
+
+
 NTSTATUS WINAPI HidP_GetButtonCaps(HIDP_REPORT_TYPE ReportType, PHIDP_BUTTON_CAPS ButtonCaps,
                                    PUSHORT ButtonCapsLength, PHIDP_PREPARSED_DATA PreparsedData)
 {
@@ -216,6 +259,31 @@ static NTSTATUS find_value(HIDP_REPORT_TYPE ReportType, USAGE UsagePage, USHORT 
     return HIDP_STATUS_USAGE_NOT_FOUND;
 }
 
+static LONG sign_extend(ULONG value, const WINE_HID_ELEMENT *element)
+{
+    UINT bit_count = element->bitCount;
+
+    if ((value & (1 << (bit_count - 1)))
+            && element->ElementType == ValueElement
+            && element->caps.value.LogicalMin < 0)
+    {
+        value -= (1 << bit_count);
+    }
+    return value;
+}
+
+static LONG logical_to_physical(LONG value, const WINE_HID_ELEMENT *element)
+{
+    if (element->caps.value.PhysicalMin || element->caps.value.PhysicalMax)
+    {
+        value = (((ULONGLONG)(value - element->caps.value.LogicalMin)
+                * (element->caps.value.PhysicalMax - element->caps.value.PhysicalMin))
+                / (element->caps.value.LogicalMax - element->caps.value.LogicalMin))
+                + element->caps.value.PhysicalMin;
+    }
+    return value;
+}
+
 NTSTATUS WINAPI HidP_GetScaledUsageValue(HIDP_REPORT_TYPE ReportType, USAGE UsagePage,
                                          USHORT LinkCollection, USAGE Usage, PLONG UsageValue,
                                          PHIDP_PREPARSED_DATA PreparsedData, PCHAR Report, ULONG ReportLength)
@@ -234,9 +302,7 @@ NTSTATUS WINAPI HidP_GetScaledUsageValue(HIDP_REPORT_TYPE ReportType, USAGE Usag
                              element->valueStartBit, element->bitCount, &rawValue);
         if (rc != HIDP_STATUS_SUCCESS)
             return rc;
-        if (element->caps.value.BitSize == 16)
-            rawValue = (short)rawValue;
-        *UsageValue = rawValue;
+        *UsageValue = logical_to_physical(sign_extend(rawValue, element), element);
     }
 
     return rc;
@@ -527,6 +593,28 @@ ULONG WINAPI HidP_MaxUsageListLength(HIDP_REPORT_TYPE ReportType, USAGE UsagePag
     }
     return count;
 }
+
+NTSTATUS WINAPI HidP_SetUsageValue(HIDP_REPORT_TYPE ReportType, USAGE UsagePage, USHORT LinkCollection,
+                                   USAGE Usage, ULONG UsageValue, PHIDP_PREPARSED_DATA PreparsedData,
+                                   CHAR *Report, ULONG ReportLength)
+{
+    WINE_HID_ELEMENT *element;
+    NTSTATUS rc;
+
+    TRACE("(%i, %x, %i, %i, %i, %p, %p, %i)\n", ReportType, UsagePage, LinkCollection, Usage, UsageValue,
+          PreparsedData, Report, ReportLength);
+
+    rc = find_value(ReportType, UsagePage, LinkCollection, Usage, PreparsedData, Report, &element);
+
+    if (rc == HIDP_STATUS_SUCCESS)
+    {
+        return set_report_data((BYTE*)Report, ReportLength,
+                               element->valueStartBit, element->bitCount, UsageValue);
+    }
+
+    return rc;
+}
+
 
 NTSTATUS WINAPI HidP_TranslateUsagesToI8042ScanCodes(USAGE *ChangedUsageList,
     ULONG UsageListLength, HIDP_KEYBOARD_DIRECTION KeyAction,
@@ -860,8 +948,6 @@ NTSTATUS WINAPI HidP_GetData(HIDP_REPORT_TYPE ReportType, HIDP_DATA *DataList, U
                                      element->valueStartBit, element->bitCount, &v);
                 if (rc != HIDP_STATUS_SUCCESS)
                     return rc;
-                if (element->caps.value.BitSize == 16)
-                    v = (short)v;
                 DataList[uCount].DataIndex = element->caps.value.u.NotRange.DataIndex;
                 DataList[uCount].u.RawValue = v;
             }

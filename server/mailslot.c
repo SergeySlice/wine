@@ -94,7 +94,7 @@ static const struct object_ops mailslot_ops =
 };
 
 static enum server_fd_type mailslot_get_fd_type( struct fd *fd );
-static void mailslot_queue_async( struct fd *fd, const async_data_t *data, int type, int count );
+static void mailslot_queue_async( struct fd *fd, struct async *async, int type, int count );
 
 static const struct fd_ops mailslot_fd_ops =
 {
@@ -104,6 +104,8 @@ static const struct fd_ops mailslot_fd_ops =
     no_fd_read,                 /* read */
     no_fd_write,                /* write */
     no_fd_flush,                /* flush */
+    default_fd_get_file_info,   /* get_file_info */
+    no_fd_get_volume_info,      /* get_volume_info */
     default_fd_ioctl,           /* ioctl */
     mailslot_queue_async,       /* queue_async */
     default_fd_reselect_async   /* reselect_async */
@@ -157,6 +159,8 @@ static const struct fd_ops mail_writer_fd_ops =
     no_fd_read,                  /* read */
     no_fd_write,                 /* write */
     no_fd_flush,                 /* flush */
+    default_fd_get_file_info,    /* get_file_info */
+    no_fd_get_volume_info,       /* get_volume_info */
     default_fd_ioctl,            /* ioctl */
     default_fd_queue_async,      /* queue_async */
     default_fd_reselect_async    /* reselect_async */
@@ -210,6 +214,8 @@ static const struct fd_ops mailslot_device_fd_ops =
     no_fd_read,                     /* read */
     no_fd_write,                    /* write */
     no_fd_flush,                    /* flush */
+    default_fd_get_file_info,       /* get_file_info */
+    no_fd_get_volume_info,          /* get_volume_info */
     default_fd_ioctl,               /* ioctl */
     default_fd_queue_async,         /* queue_async */
     default_fd_reselect_async       /* reselect_async */
@@ -325,20 +331,16 @@ static struct object *mailslot_open_file( struct object *obj, unsigned int acces
     return &writer->obj;
 }
 
-static void mailslot_queue_async( struct fd *fd, const async_data_t *data, int type, int count )
+static void mailslot_queue_async( struct fd *fd, struct async *async, int type, int count )
 {
     struct mailslot *mailslot = get_fd_user( fd );
-    struct async *async;
 
     assert(mailslot->obj.ops == &mailslot_ops);
 
-    if ((async = fd_queue_async( fd, data, NULL, type )))
-    {
-        async_set_timeout( async, mailslot->read_timeout ? mailslot->read_timeout : -1,
-                           STATUS_IO_TIMEOUT );
-        release_object( async );
-        set_error( STATUS_PENDING );
-    }
+    fd_queue_async( fd, async, type );
+    async_set_timeout( async, mailslot->read_timeout ? mailslot->read_timeout : -1,
+                       STATUS_IO_TIMEOUT );
+    set_error( STATUS_PENDING );
 }
 
 static void mailslot_device_dump( struct object *obj, int verbose )

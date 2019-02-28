@@ -66,7 +66,7 @@ static void test_Connect(void)
     /* Win7 doesn't support UNC \\ prefix, but according to a user
      * comment on MSDN Win8 supports both ways.
      */
-    len = sizeof(comp_name)/sizeof(comp_name[0]);
+    len = ARRAY_SIZE(comp_name);
     GetComputerNameW(comp_name, &len);
 
     V_VT(&v_null) = VT_NULL;
@@ -486,7 +486,7 @@ static void test_FolderCollection(void)
     hr = ITaskFolderCollection_get_Item(folders, idx, NULL);
     ok (hr == E_POINTER, "expected E_POINTER, got %#x\n", hr);
 
-    for (i = 0; i < sizeof(vt)/sizeof(vt[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(vt); i++)
     {
         set_var(vt[i], &idx, 1);
         hr = ITaskFolderCollection_get_Item(folders, idx, &subfolder);
@@ -544,6 +544,7 @@ static void test_FolderCollection(void)
             ok(!lstrcmpW(bstr, Folder1), "expected Folder1, got %s\n", wine_dbgstr_w(bstr));
         else
             ok(!lstrcmpW(bstr, Folder2), "expected Folder2, got %s\n", wine_dbgstr_w(bstr));
+        SysFreeString(bstr);
 
         ITaskFolder_Release(subfolder);
     }
@@ -571,6 +572,7 @@ static void test_FolderCollection(void)
 
     hr = IUnknown_QueryInterface(unknown, &IID_IUnknown, (void **)&enumvar);
     ok(hr == S_OK, "QueryInterface error %#x\n", hr);
+    IUnknown_Release(unknown);
 
     hr = IEnumVARIANT_Skip(enumvar, 0);
     ok(hr == S_OK, "expected S_OK, got %#x\n", hr);
@@ -605,6 +607,7 @@ static void test_FolderCollection(void)
         ok(!lstrcmpW(bstr, Folder1), "expected Folder1, got %s\n", wine_dbgstr_w(bstr));
     else
         ok(!lstrcmpW(bstr, Folder2), "expected Folder2, got %s\n", wine_dbgstr_w(bstr));
+    SysFreeString(bstr);
     IDispatch_Release(V_DISPATCH(&var[0]));
 
     memset(var, 0, sizeof(var));
@@ -650,6 +653,7 @@ static void test_FolderCollection(void)
             ok(!lstrcmpW(bstr, Folder1), "expected Folder1, got %s\n", wine_dbgstr_w(bstr));
         else
             ok(!lstrcmpW(bstr, Folder2), "expected Folder2, got %s\n", wine_dbgstr_w(bstr));
+        SysFreeString(bstr);
 
         ITaskFolder_Release(subfolder);
     }
@@ -774,9 +778,9 @@ static void test_GetTask(void)
     ok(hr == HRESULT_FROM_WIN32(ERROR_PATH_NOT_FOUND) || hr == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND) /* win7 */,
        "expected ERROR_PATH_NOT_FOUND, got %#x\n", hr);
 
-    MultiByteToWideChar(CP_ACP, 0, xml1, -1, xmlW, sizeof(xmlW)/sizeof(xmlW[0]));
+    MultiByteToWideChar(CP_ACP, 0, xml1, -1, xmlW, ARRAY_SIZE(xmlW));
 
-    for (i = 0; i < sizeof(create_new_task)/sizeof(create_new_task[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(create_new_task); i++)
     {
         hr = ITaskFolder_RegisterTask(root, Wine_Task1, xmlW, create_new_task[i].flags, v_null, v_null, TASK_LOGON_NONE, v_null, &task1);
         ok(hr == create_new_task[i].hr, "%d: expected %#x, got %#x\n", i, create_new_task[i].hr, hr);
@@ -810,7 +814,7 @@ todo_wine
     hr = ITaskFolder_RegisterTask(root, Wine_Task1, xmlW, TASK_CREATE_OR_UPDATE, v_null, v_null, TASK_LOGON_NONE, v_null, &task1);
     ok(hr == S_OK, "RegisterTask error %#x\n", hr);
 
-    for (i = 0; i < sizeof(open_existing_task)/sizeof(open_existing_task[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(open_existing_task); i++)
     {
         hr = ITaskFolder_RegisterTask(root, Wine_Task1, xmlW, open_existing_task[i].flags, v_null, v_null, TASK_LOGON_NONE, v_null, &task2);
         ok(hr == open_existing_task[i].hr, "%d: expected %#x, got %#x\n", i, open_existing_task[i].hr, hr);
@@ -841,7 +845,7 @@ todo_wine
     hr = ITaskFolder_RegisterTask(folder, Task1, xmlW, TASK_CREATE, v_null, v_null, TASK_LOGON_NONE, v_null, &task2);
     ok(hr == HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS), "expected ERROR_ALREADY_EXISTS, got %#x\n", hr);
 
-    MultiByteToWideChar(CP_ACP, 0, xml2, -1, xmlW, sizeof(xmlW)/sizeof(xmlW[0]));
+    MultiByteToWideChar(CP_ACP, 0, xml2, -1, xmlW, ARRAY_SIZE(xmlW));
 
     hr = ITaskFolder_RegisterTask(folder, Task2, xmlW, TASK_CREATE, v_null, v_null, TASK_LOGON_NONE, v_null, &task2);
     ok(hr == S_OK, "RegisterTask error %#x\n", hr);
@@ -890,7 +894,6 @@ todo_wine
     ok(vbool == VARIANT_FALSE, "expected VARIANT_FALSE, got %d\n", vbool);
 
     hr = IRegisteredTask_put_Enabled(task1, VARIANT_TRUE);
-todo_wine
     ok(hr == S_OK, "put_Enabled error %#x\n", hr);
     hr = IRegisteredTask_get_State(task1, &state);
     ok(hr == S_OK, "get_State error %#x\n", hr);
@@ -1050,7 +1053,10 @@ static void test_settings_v1(ITaskDefinition *taskdef, struct settings *test, st
     if (!test->execution_time_limit[0])
         ok(bstr == NULL, "expected NULL, got %s\n", wine_dbgstr_w(bstr));
     else
+    {
         ok(!lstrcmpW(bstr, test->execution_time_limit), "expected %s, got %s\n", wine_dbgstr_w(test->execution_time_limit), wine_dbgstr_w(bstr));
+        SysFreeString(bstr);
+    }
 
     hr = ITaskSettings_get_Enabled(set, &vbool);
     ok(hr == S_OK, "expected S_OK, got %#x\n", hr);
@@ -1095,6 +1101,9 @@ static void change_settings(ITaskDefinition *taskdef, struct settings *test)
 {
     HRESULT hr;
     ITaskSettings *set;
+    ITriggerCollection *triggers;
+    IPrincipal *principal;
+    IActionCollection *actions;
 
     hr = ITaskDefinition_get_Settings(taskdef, &set);
     ok(hr == S_OK, "get_Settings error %#x\n", hr);
@@ -1103,14 +1112,7 @@ static void change_settings(ITaskDefinition *taskdef, struct settings *test)
         hr = ITaskSettings_put_RestartInterval(set, NULL);
     else
         hr = ITaskSettings_put_RestartInterval(set, test->restart_interval);
-todo_wine
     ok(hr == S_OK, "expected S_OK, got %#x\n", hr);
-    /* FIXME: Remove once implemented */
-    if (hr != S_OK)
-    {
-        ITaskSettings_Release(set);
-        return;
-    }
 
     hr = ITaskSettings_put_RestartCount(set, test->restart_count);
     ok(hr == S_OK, "expected S_OK, got %#x\n", hr);
@@ -1166,6 +1168,33 @@ todo_wine
     hr = ITaskSettings_put_AllowDemandStart(set, test->allow_on_demand_start);
     ok(hr == S_OK, "expected S_OK, got %#x\n", hr);
 
+    triggers = NULL;
+    hr = ITaskDefinition_get_Triggers(taskdef, &triggers);
+    ok(hr == S_OK, "expected S_OK, got %#x\n", hr);
+    ok(triggers != NULL, "triggers not set\n");
+
+    hr = ITaskDefinition_put_Triggers(taskdef, triggers);
+    ok(hr == S_OK, "expected S_OK, got %#x\n", hr);
+    if (triggers) ITriggerCollection_Release(triggers);
+
+    principal = NULL;
+    hr = ITaskDefinition_get_Principal(taskdef, &principal);
+    ok(hr == S_OK, "expected S_OK, got %#x\n", hr);
+    ok(principal != NULL, "principal not set\n");
+
+    hr = ITaskDefinition_put_Principal(taskdef, principal);
+    ok(hr == S_OK, "expected S_OK, got %#x\n", hr);
+    if (principal) IPrincipal_Release(principal);
+
+    actions = NULL;
+    hr = ITaskDefinition_get_Actions(taskdef, &actions);
+    ok(hr == S_OK, "expected S_OK, got %#x\n", hr);
+    ok(actions != NULL, "actions not set\n");
+
+    hr = ITaskDefinition_put_Actions(taskdef, actions);
+    ok(hr == S_OK, "expected S_OK, got %#x\n", hr);
+    if (actions) IActionCollection_Release(actions);
+
     /* FIXME: set IIdleSettings and INetworkSettings */
 
     ITaskSettings_Release(set);
@@ -1173,9 +1202,38 @@ todo_wine
 
 static void test_daily_trigger(ITrigger *trigger)
 {
+    static const WCHAR startW[] =
+        {'2','0','0','4','-','0','1','-','0','1','T','0','0',':','0','0',':','0','0',0};
+    static const WCHAR start2W[] =
+        {'2','0','0','4','-','0','1','-','0','1','T','0','0',':','0','0',':','0','0','Z',0};
+    static const WCHAR start3W[] =
+        {'2','0','0','4','-','0','1','-','0','1','T','0','0',':','0','0',':','0','0','+','0','1',':','0','0',0};
+    static const WCHAR start4W[] =
+        {'2','0','0','4','.','0','1','.','0','1','T','0','0','.','0','0','.','0','0',0};
+    static const WCHAR start5W[] =
+        {'9','9','9','9','-','9','9','-','9','9','T','9','9',':','9','9',':','9','9',0};
+    static const WCHAR start6W[] =
+        {'i','n','v','a','l','i','d',0};
+    static const struct
+    {
+        const WCHAR *str;
+        HRESULT      hr;
+    }
+    start_test[] =
+    {
+        {startW, S_OK},
+        {start2W, S_OK},
+        {start3W, S_OK},
+        {start4W, S_OK},
+        {start5W, S_OK},
+        {start6W, S_OK},
+    };
     IDailyTrigger *daily_trigger;
+    BSTR start_boundary;
+    VARIANT_BOOL enabled;
     short interval;
     HRESULT hr;
+    ULONG i;
 
     hr = ITrigger_QueryInterface(trigger, &IID_IDailyTrigger, (void**)&daily_trigger);
     ok(hr == S_OK, "Could not get IDailyTrigger iface: %08x\n", hr);
@@ -1203,22 +1261,71 @@ static void test_daily_trigger(ITrigger *trigger)
     ok(hr == S_OK, "get_DaysInterval failed: %08x\n", hr);
     ok(interval == 2, "interval = %d\n", interval);
 
+    hr = IDailyTrigger_get_StartBoundary(daily_trigger, NULL);
+    ok(hr == E_POINTER, "get_StartBoundary failed: %08x\n", hr);
+
+    start_boundary = (BSTR)0xdeadbeef;
+    hr = IDailyTrigger_get_StartBoundary(daily_trigger, &start_boundary);
+    ok(hr == S_OK, "get_StartBoundary failed: %08x\n", hr);
+    ok(start_boundary == NULL, "start_boundary not set\n");
+
+    for (i = 0; i < ARRAY_SIZE(start_test); i++)
+    {
+        start_boundary = SysAllocString(start_test[i].str);
+        hr = IDailyTrigger_put_StartBoundary(daily_trigger, start_boundary);
+        ok(hr == start_test[i].hr, "%u: got %08x expected %08x\n", i, hr, start_test[i].hr);
+        SysFreeString(start_boundary);
+        if (hr == S_OK)
+        {
+            start_boundary = NULL;
+            hr = IDailyTrigger_get_StartBoundary(daily_trigger, &start_boundary);
+            ok(hr == S_OK, "%u: got %08x\n", i, hr);
+            ok(start_boundary != NULL, "start_boundary not set\n");
+            ok(!lstrcmpW(start_boundary, start_test[i].str), "%u: got %s\n", i, wine_dbgstr_w(start_boundary));
+            SysFreeString(start_boundary);
+        }
+    }
+
+    hr = IDailyTrigger_put_StartBoundary(daily_trigger, NULL);
+    ok(hr == S_OK, "put_StartBoundary failed: %08x\n", hr);
+
+    hr = IDailyTrigger_get_Enabled(daily_trigger, NULL);
+    ok(hr == E_POINTER, "get_Enabled failed: %08x\n", hr);
+
+    enabled = VARIANT_FALSE;
+    hr = IDailyTrigger_get_Enabled(daily_trigger, &enabled);
+    ok(hr == S_OK, "get_Enabled failed: %08x\n", hr);
+    ok(enabled == VARIANT_TRUE, "got %d\n", enabled);
+
+    hr = IDailyTrigger_put_Enabled(daily_trigger, VARIANT_FALSE);
+    ok(hr == S_OK, "put_Enabled failed: %08x\n", hr);
+
+    enabled = VARIANT_TRUE;
+    hr = IDailyTrigger_get_Enabled(daily_trigger, &enabled);
+    ok(hr == S_OK, "get_Enabled failed: %08x\n", hr);
+    ok(enabled == VARIANT_FALSE, "got %d\n", enabled);
+
     IDailyTrigger_Release(daily_trigger);
 }
 
 static void create_action(ITaskDefinition *taskdef)
 {
     static WCHAR task1_exe[] = { 't','a','s','k','1','.','e','x','e',0 };
+    static WCHAR workdir[] = { 'w','o','r','k','d','i','r',0 };
+    static WCHAR args[] = { 'a','r','g','u','m','e','n','s',0 };
+    static WCHAR comment[] = { 'c','o','m','m','e','n','t',0 };
     HRESULT hr;
     IActionCollection *actions;
     IAction *action;
     IExecAction *exec_action;
+    TASK_ACTION_TYPE type;
+    BSTR path, str;
+
+    hr = ITaskDefinition_get_Actions(taskdef, NULL);
+    ok(hr == E_POINTER, "got %#x\n", hr);
 
     hr = ITaskDefinition_get_Actions(taskdef, &actions);
-todo_wine
     ok(hr == S_OK, "get_Actions error %#x\n", hr);
-    /* FIXME: Remove once implemented */
-    if (hr != S_OK) return;
 
     hr = IActionCollection_Create(actions, TASK_ACTION_EXEC, &action);
     ok(hr == S_OK, "Create action error %#x\n", hr);
@@ -1226,8 +1333,92 @@ todo_wine
     hr = IAction_QueryInterface(action, &IID_IExecAction, (void **)&exec_action);
     ok(hr == S_OK, "QueryInterface error %#x\n", hr);
 
+    type = 0xdeadbeef;
+    hr = IExecAction_get_Type(exec_action, &type);
+    ok(hr == S_OK, "get_Type error %#x\n", hr);
+    ok(type == TASK_ACTION_EXEC, "got %u\n", type );
+
+    hr = IExecAction_get_Path(exec_action, NULL);
+    ok(hr == E_POINTER, "got %#x\n", hr);
+
+    path = (BSTR)0xdeadbeef;
+    hr = IExecAction_get_Path(exec_action, &path);
+    ok(hr == S_OK, "get_Path error %#x\n", hr);
+    ok(path == NULL, "path not set\n");
+
+    hr = IExecAction_put_Path(exec_action, NULL);
+    ok(hr == S_OK, "put_Path error %#x\n", hr);
+
     hr = IExecAction_put_Path(exec_action, task1_exe);
     ok(hr == S_OK, "put_Path error %#x\n", hr);
+
+    path = NULL;
+    hr = IExecAction_get_Path(exec_action, &path);
+    ok(hr == S_OK, "get_Path error %#x\n", hr);
+    ok(path != NULL, "path not set\n");
+    ok(!lstrcmpW(path, task1_exe), "got %s\n", wine_dbgstr_w(path));
+    SysFreeString(path);
+
+    hr = IExecAction_get_WorkingDirectory(exec_action, NULL);
+    ok(hr == E_POINTER, "got %#x\n", hr);
+
+    path = (BSTR)0xdeadbeef;
+    hr = IExecAction_get_WorkingDirectory(exec_action, &path);
+    ok(hr == S_OK, "get_WorkingDirectory error %#x\n", hr);
+    ok(path == NULL, "workdir not set\n");
+
+    hr = IExecAction_put_WorkingDirectory(exec_action, NULL);
+    ok(hr == S_OK, "put_WorkingDirectory error %#x\n", hr);
+
+    hr = IExecAction_put_WorkingDirectory(exec_action, workdir);
+    ok(hr == S_OK, "put_WorkingDirectory error %#x\n", hr);
+
+    path = NULL;
+    hr = IExecAction_get_WorkingDirectory(exec_action, &path);
+    ok(hr == S_OK, "get_WorkingDirectory error %#x\n", hr);
+    ok(path != NULL, "workdir not set\n");
+    ok(!lstrcmpW(path, workdir), "got %s\n", wine_dbgstr_w(path));
+    SysFreeString(path);
+
+    hr = IExecAction_get_Arguments(exec_action, NULL);
+    ok(hr == E_POINTER, "got %#x\n", hr);
+
+    path = (BSTR)0xdeadbeef;
+    hr = IExecAction_get_Arguments(exec_action, &path);
+    ok(hr == S_OK, "get_Arguments error %#x\n", hr);
+    ok(path == NULL, "args not set\n");
+
+    hr = IExecAction_put_Arguments(exec_action, NULL);
+    ok(hr == S_OK, "put_Arguments error %#x\n", hr);
+
+    hr = IExecAction_put_Arguments(exec_action, args);
+    ok(hr == S_OK, "put_Arguments error %#x\n", hr);
+
+    path = NULL;
+    hr = IExecAction_get_Arguments(exec_action, &path);
+    ok(hr == S_OK, "get_Arguments error %#x\n", hr);
+    ok(path != NULL, "args not set\n");
+    ok(!lstrcmpW(path, args), "got %s\n", wine_dbgstr_w(path));
+    SysFreeString(path);
+
+
+    str = (BSTR)0xdeadbeef;
+    hr = IExecAction_get_Id(exec_action, &str);
+    ok(hr == S_OK, "get_Id error %#x\n", hr);
+    ok(str == NULL, "id should be NULL\n");
+
+    hr = IExecAction_put_Id(exec_action, NULL);
+    ok(hr == S_OK, "put_Id error %#x\n", hr);
+
+    hr = IExecAction_put_Id(exec_action, comment);
+    ok(hr == S_OK, "put_Id error %#x\n", hr);
+
+    str = NULL;
+    hr = IExecAction_get_Id(exec_action, &str);
+    ok(hr == S_OK, "get_Id error %#x\n", hr);
+    ok(str != NULL, "should not be NULL\n");
+    ok(!lstrcmpW(str, comment), "got %s\n", wine_dbgstr_w(str));
+    SysFreeString(str);
 
     IExecAction_Release(exec_action);
     IAction_Release(action);
@@ -1240,6 +1431,12 @@ static void test_TaskDefinition(void)
         "<Task xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\n"
         "  <RegistrationInfo>\n"
         "    <Description>\"Task1\"</Description>\n"
+        "    <Author>author</Author>\n"
+        "    <Version>1.0</Version>\n"
+        "    <Date>2018-04-02T11:22:33</Date>\n"
+        "    <Documentation>doc</Documentation>\n"
+        "    <URI>uri</URI>\n"
+        "    <Source>source</Source>\n"
         "  </RegistrationInfo>\n"
         "  <Settings>\n"
         "    <Enabled>false</Enabled>\n"
@@ -1319,6 +1516,12 @@ static void test_TaskDefinition(void)
         "    </Exec>\n"
         "  </Actions>\n"
         "</Task>\n";
+    static const WCHAR authorW[] = { 'a','u','t','h','o','r',0 };
+    static const WCHAR versionW[] = { '1','.','0',0 };
+    static const WCHAR dateW[] = { '2','0','1','8','-','0','4','-','0','2','T','1','1',':','2','2',':','3','3',0 };
+    static const WCHAR docW[] = { 'd','o','c',0 };
+    static const WCHAR uriW[] = { 'u','r','i',0 };
+    static const WCHAR sourceW[] = { 's','o','u','r','c','e',0 };
     static WCHAR Task1[] = { '"','T','a','s','k','1','"',0 };
     static struct settings def_settings = { { 0 }, { 'P','T','7','2','H',0 }, { 0 },
         0, 7, TASK_INSTANCES_IGNORE_NEW, TASK_COMPATIBILITY_V2, VARIANT_TRUE, VARIANT_TRUE,
@@ -1373,33 +1576,33 @@ static void test_TaskDefinition(void)
     hr = ITaskDefinition_put_XmlText(taskdef, NULL);
     ok(hr == E_INVALIDARG, "expected E_INVALIDARG, got %#x\n", hr);
 
-    MultiByteToWideChar(CP_ACP, 0, xml1, -1, xmlW, sizeof(xmlW)/sizeof(xmlW[0]));
+    MultiByteToWideChar(CP_ACP, 0, xml1, -1, xmlW, ARRAY_SIZE(xmlW));
     hr = ITaskDefinition_put_XmlText(taskdef, xmlW);
     ok(hr == S_OK, "put_XmlText error %#x\n", hr);
 
-    MultiByteToWideChar(CP_ACP, 0, xml2, -1, xmlW, sizeof(xmlW)/sizeof(xmlW[0]));
+    MultiByteToWideChar(CP_ACP, 0, xml2, -1, xmlW, ARRAY_SIZE(xmlW));
     hr = ITaskDefinition_put_XmlText(taskdef, xmlW);
     ok(hr == SCHED_E_NAMESPACE, "expected SCHED_E_NAMESPACE, got %#x\n", hr);
 
-    MultiByteToWideChar(CP_ACP, 0, xml3, -1, xmlW, sizeof(xmlW)/sizeof(xmlW[0]));
+    MultiByteToWideChar(CP_ACP, 0, xml3, -1, xmlW, ARRAY_SIZE(xmlW));
     hr = ITaskDefinition_put_XmlText(taskdef, xmlW);
 todo_wine
     ok(hr == SCHED_E_UNEXPECTEDNODE, "expected SCHED_E_UNEXPECTEDNODE, got %#x\n", hr);
 
-    MultiByteToWideChar(CP_ACP, 0, xml4, -1, xmlW, sizeof(xmlW)/sizeof(xmlW[0]));
+    MultiByteToWideChar(CP_ACP, 0, xml4, -1, xmlW, ARRAY_SIZE(xmlW));
     hr = ITaskDefinition_put_XmlText(taskdef, xmlW);
     ok(hr == S_OK, "put_XmlText error %#x\n", hr);
 
-    MultiByteToWideChar(CP_ACP, 0, xml5, -1, xmlW, sizeof(xmlW)/sizeof(xmlW[0]));
+    MultiByteToWideChar(CP_ACP, 0, xml5, -1, xmlW, ARRAY_SIZE(xmlW));
     hr = ITaskDefinition_put_XmlText(taskdef, xmlW);
 todo_wine
     ok(hr == SCHED_E_MISSINGNODE, "expected SCHED_E_MISSINGNODE, got %#x\n", hr);
 
-    MultiByteToWideChar(CP_ACP, 0, xml6, -1, xmlW, sizeof(xmlW)/sizeof(xmlW[0]));
+    MultiByteToWideChar(CP_ACP, 0, xml6, -1, xmlW, ARRAY_SIZE(xmlW));
     hr = ITaskDefinition_put_XmlText(taskdef, xmlW);
     ok(hr == SCHED_E_MALFORMEDXML, "expected SCHED_E_MALFORMEDXML, got %#x\n", hr);
 
-    MultiByteToWideChar(CP_ACP, 0, xml7, -1, xmlW, sizeof(xmlW)/sizeof(xmlW[0]));
+    MultiByteToWideChar(CP_ACP, 0, xml7, -1, xmlW, ARRAY_SIZE(xmlW));
     hr = ITaskDefinition_put_XmlText(taskdef, xmlW);
     ok(hr == SCHED_E_INVALIDVALUE, "expected SCHED_E_INVALIDVALUE, got %#x\n", hr);
 
@@ -1408,7 +1611,7 @@ todo_wine
     ok(hr == SCHED_E_MALFORMEDXML, "expected SCHED_E_MALFORMEDXML, got %#x\n", hr);
 
     /* test registration info */
-    MultiByteToWideChar(CP_ACP, 0, xml1, -1, xmlW, sizeof(xmlW)/sizeof(xmlW[0]));
+    MultiByteToWideChar(CP_ACP, 0, xml1, -1, xmlW, ARRAY_SIZE(xmlW));
     hr = ITaskDefinition_put_XmlText(taskdef, xmlW);
     ok(hr == S_OK, "put_XmlText error %#x\n", hr);
     hr = ITaskDefinition_get_RegistrationInfo(taskdef, &reginfo);
@@ -1418,24 +1621,79 @@ todo_wine
     ok(hr == S_OK, "get_Description error %#x\n", hr);
     ok(!lstrcmpW(bstr, Task1), "expected Task1, got %s\n", wine_dbgstr_w(bstr));
     SysFreeString(bstr);
+    hr = IRegistrationInfo_put_Description(reginfo, NULL);
+    ok(hr == S_OK, "put_Description error %#x\n", hr);
+    bstr = (BSTR)0xdeadbeef;
+    hr = IRegistrationInfo_get_Description(reginfo, &bstr);
+    ok(hr == S_OK, "get_Description error %#x\n", hr);
+    ok(!bstr, "expected NULL, got %s\n", wine_dbgstr_w(bstr));
+
+    hr = IRegistrationInfo_get_Author(reginfo, &bstr);
+    ok(hr == S_OK, "get_Author error %#x\n", hr);
+    ok(!lstrcmpW(bstr, authorW), "expected %s, got %s\n", wine_dbgstr_w(authorW), wine_dbgstr_w(bstr));
+    SysFreeString(bstr);
+    hr = IRegistrationInfo_put_Author(reginfo, NULL);
+    ok(hr == S_OK, "put_Author error %#x\n", hr);
+    bstr = (BSTR)0xdeadbeef;
     hr = IRegistrationInfo_get_Author(reginfo, &bstr);
     ok(hr == S_OK, "get_Author error %#x\n", hr);
     ok(!bstr, "expected NULL, got %s\n", wine_dbgstr_w(bstr));
+
+    hr = IRegistrationInfo_get_Version(reginfo, &bstr);
+    ok(hr == S_OK, "get_Version error %#x\n", hr);
+    ok(!lstrcmpW(bstr, versionW), "expected %s, got %s\n", wine_dbgstr_w(versionW), wine_dbgstr_w(bstr));
+    SysFreeString(bstr);
+    hr = IRegistrationInfo_put_Version(reginfo, NULL);
+    ok(hr == S_OK, "put_Version error %#x\n", hr);
+    bstr = (BSTR)0xdeadbeef;
     hr = IRegistrationInfo_get_Version(reginfo, &bstr);
     ok(hr == S_OK, "get_Version error %#x\n", hr);
     ok(!bstr, "expected NULL, got %s\n", wine_dbgstr_w(bstr));
+
+    hr = IRegistrationInfo_get_Date(reginfo, &bstr);
+    ok(hr == S_OK, "get_Date error %#x\n", hr);
+    ok(!lstrcmpW(bstr, dateW), "expected %s, got %s\n", wine_dbgstr_w(dateW), wine_dbgstr_w(bstr));
+    SysFreeString(bstr);
+    hr = IRegistrationInfo_put_Date(reginfo, NULL);
+    ok(hr == S_OK, "put_Date error %#x\n", hr);
+    bstr = (BSTR)0xdeadbeef;
     hr = IRegistrationInfo_get_Date(reginfo, &bstr);
     ok(hr == S_OK, "get_Date error %#x\n", hr);
     ok(!bstr, "expected NULL, got %s\n", wine_dbgstr_w(bstr));
+
+    hr = IRegistrationInfo_get_Documentation(reginfo, &bstr);
+    ok(hr == S_OK, "get_Documentation error %#x\n", hr);
+    ok(!lstrcmpW(bstr, docW), "expected %s, got %s\n", wine_dbgstr_w(docW), wine_dbgstr_w(bstr));
+    SysFreeString(bstr);
+    hr = IRegistrationInfo_put_Documentation(reginfo, NULL);
+    ok(hr == S_OK, "put_Documentation error %#x\n", hr);
+    bstr = (BSTR)0xdeadbeef;
     hr = IRegistrationInfo_get_Documentation(reginfo, &bstr);
     ok(hr == S_OK, "get_Documentation error %#x\n", hr);
     ok(!bstr, "expected NULL, got %s\n", wine_dbgstr_w(bstr));
+
+    hr = IRegistrationInfo_get_URI(reginfo, &bstr);
+    ok(hr == S_OK, "get_URI error %#x\n", hr);
+    ok(!lstrcmpW(bstr, uriW), "expected %s, got %s\n", wine_dbgstr_w(uriW), wine_dbgstr_w(bstr));
+    SysFreeString(bstr);
+    hr = IRegistrationInfo_put_URI(reginfo, NULL);
+    ok(hr == S_OK, "put_URI error %#x\n", hr);
+    bstr = (BSTR)0xdeadbeef;
     hr = IRegistrationInfo_get_URI(reginfo, &bstr);
     ok(hr == S_OK, "get_URI error %#x\n", hr);
     ok(!bstr, "expected NULL, got %s\n", wine_dbgstr_w(bstr));
+
+    hr = IRegistrationInfo_get_Source(reginfo, &bstr);
+    ok(hr == S_OK, "get_Source error %#x\n", hr);
+    ok(!lstrcmpW(bstr, sourceW), "expected %s, got %s\n", wine_dbgstr_w(sourceW), wine_dbgstr_w(bstr));
+    SysFreeString(bstr);
+    hr = IRegistrationInfo_put_Source(reginfo, NULL);
+    ok(hr == S_OK, "put_Source error %#x\n", hr);
+    bstr = (BSTR)0xdeadbeef;
     hr = IRegistrationInfo_get_Source(reginfo, &bstr);
     ok(hr == S_OK, "get_Source error %#x\n", hr);
     ok(!bstr, "expected NULL, got %s\n", wine_dbgstr_w(bstr));
+
     V_VT(&var) = VT_BSTR;
     V_BSTR(&var) = NULL;
     hr = IRegistrationInfo_get_SecurityDescriptor(reginfo, &var);
@@ -1446,7 +1704,7 @@ if (hr == S_OK)
 
     IRegistrationInfo_Release(reginfo);
 
-    MultiByteToWideChar(CP_ACP, 0, xml4, -1, xmlW, sizeof(xmlW)/sizeof(xmlW[0]));
+    MultiByteToWideChar(CP_ACP, 0, xml4, -1, xmlW, ARRAY_SIZE(xmlW));
     hr = ITaskDefinition_put_XmlText(taskdef, xmlW);
     ok(hr == S_OK, "put_XmlText error %#x\n", hr);
     hr = ITaskDefinition_get_RegistrationInfo(taskdef, &reginfo);
@@ -1454,7 +1712,6 @@ if (hr == S_OK)
 
     hr = IRegistrationInfo_get_Description(reginfo, &bstr);
     ok(hr == S_OK, "get_Description error %#x\n", hr);
-if (hr == S_OK)
     ok(!bstr, "expected NULL, got %s\n", wine_dbgstr_w(bstr));
 
     hr = ITaskDefinition_get_Triggers(taskdef, &trigger_col);

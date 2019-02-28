@@ -216,9 +216,11 @@ static COLORREF get_back_color( ME_Context *c, ME_Style *style, BOOL highlight )
     return color;
 }
 
-static void get_underline_pen( ME_Style *style, COLORREF color, HPEN *pen )
+static HPEN get_underline_pen( ME_Style *style, COLORREF color )
 {
-    *pen = NULL;
+    if (style->fmt.dwEffects & CFE_LINK)
+        return CreatePen( PS_SOLID, 1, color );
+
     /* Choose the pen type for underlining the text. */
     if (style->fmt.dwEffects & CFE_UNDERLINE)
     {
@@ -227,11 +229,9 @@ static void get_underline_pen( ME_Style *style, COLORREF color, HPEN *pen )
         case CFU_UNDERLINE:
         case CFU_UNDERLINEWORD: /* native seems to map it to simple underline (MSDN) */
         case CFU_UNDERLINEDOUBLE: /* native seems to map it to simple underline (MSDN) */
-            *pen = CreatePen( PS_SOLID, 1, color );
-            break;
+            return CreatePen( PS_SOLID, 1, color );
         case CFU_UNDERLINEDOTTED:
-            *pen = CreatePen( PS_DOT, 1, color );
-            break;
+            return CreatePen( PS_DOT, 1, color );
         default:
             FIXME( "Unknown underline type (%u)\n", style->fmt.bUnderlineType );
             /* fall through */
@@ -240,14 +240,14 @@ static void get_underline_pen( ME_Style *style, COLORREF color, HPEN *pen )
             break;
         }
     }
-    return;
+    return NULL;
 }
 
 static void draw_underline( ME_Context *c, ME_Run *run, int x, int y, COLORREF color )
 {
     HPEN pen;
 
-    get_underline_pen( run->style, color, &pen );
+    pen = get_underline_pen( run->style, color );
     if (pen)
     {
         HPEN old_pen = SelectObject( c->hDC, pen );
@@ -481,7 +481,7 @@ static void ME_DrawRun(ME_Context *c, int x, int y, ME_DisplayItem *rundi, ME_Pa
   }
 
   if (run->nFlags & MERF_GRAPHICS)
-    ME_DrawOLE(c, x, y, run, para, (runofs >= nSelFrom) && (runofs < nSelTo));
+    ME_DrawOLE(c, x, y, run, (runofs >= nSelFrom) && (runofs < nSelTo));
   else
   {
     ME_DrawTextWithStyle(c, run, x, y, nSelFrom - runofs, nSelTo - runofs,
@@ -536,7 +536,7 @@ int ME_GetParaBorderWidth(const ME_Context* c, int flags)
   int idx = (flags >> 8) & 0xF;
   int width;
 
-  if (idx >= sizeof(border_details) / sizeof(border_details[0]))
+  if (idx >= ARRAY_SIZE(border_details))
   {
       FIXME("Unsupported border value %d\n", idx);
       return 0;
@@ -989,7 +989,7 @@ static void ME_DrawParagraph(ME_Context *c, ME_DisplayItem *paragraph)
         }
         if (me_debug)
         {
-          const WCHAR wszRowDebug[] = {'r','o','w','[','%','d',']',0};
+          static const WCHAR wszRowDebug[] = {'r','o','w','[','%','d',']',0};
           WCHAR buf[128];
           POINT pt = c->pt;
           wsprintfW(buf, wszRowDebug, no);
@@ -1017,7 +1017,7 @@ static void ME_DrawParagraph(ME_Context *c, ME_DisplayItem *paragraph)
                      c->pt.y + para->pt.y + run->pt.y + baseline, p, para);
         if (me_debug)
         {
-          const WCHAR wszRunDebug[] = {'[','%','d',':','%','x',']',' ','%','l','s',0};
+          static const WCHAR wszRunDebug[] = {'[','%','d',':','%','x',']',' ','%','l','s',0};
           WCHAR buf[2560];
           POINT pt;
           pt.x = c->pt.x + run->pt.x;

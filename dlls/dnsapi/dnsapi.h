@@ -22,20 +22,7 @@
 # error You must include config.h to use this header
 #endif
 
-static inline void *heap_alloc( SIZE_T size )
-{
-    return HeapAlloc( GetProcessHeap(), 0, size );
-}
-
-static inline void *heap_alloc_zero( SIZE_T size )
-{
-    return HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, size );
-}
-
-static inline BOOL heap_free( LPVOID mem )
-{
-    return HeapFree( GetProcessHeap(), 0, mem );
-}
+#include "wine/heap.h"
 
 static inline LPSTR dns_strdup_a( LPCSTR src )
 {

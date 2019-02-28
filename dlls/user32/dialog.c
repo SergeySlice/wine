@@ -131,8 +131,8 @@ static const WORD *DIALOG_GetControl32( const WORD *p, DLG_CONTROL_INFO *info,
 
     if (dialogEx)
     {
-        /* id is a DWORD for DIALOGEX */
-        info->id = GET_DWORD(p);
+        /* id is 4 bytes for DIALOGEX */
+        info->id = GET_LONG(p);
         p += 2;
     }
     else
@@ -197,7 +197,7 @@ static const WORD *DIALOG_GetControl32( const WORD *p, DLG_CONTROL_INFO *info,
             TRACE("\n");
             TRACE("  END\n" );
         }
-        info->data = p + 1;
+        info->data = p;
         p += GET_WORD(p) / sizeof(WORD);
     }
     else info->data = NULL;
@@ -283,6 +283,7 @@ static BOOL DIALOG_CreateControls32( HWND hwnd, LPCSTR template, const DLG_TEMPL
             WARN("control %s %s creation failed\n", debugstr_w(info.className),
                  debugstr_w(info.windowName));
             if (dlgTemplate->style & DS_NOFAILCREATE) continue;
+            SetLastError(0);
             return FALSE;
         }
 
@@ -690,6 +691,11 @@ static HWND DIALOG_CreateIndirect( HINSTANCE hInst, LPCVOID dlgTemplate,
                         SendMessageW( focus, EM_SETSEL, 0, MAXLONG );
                     SetFocus( focus );
                 }
+                else
+                {
+                    if (!(template.style & WS_CHILD))
+                        SetFocus( hwnd );
+                }
             }
         }
 
@@ -835,11 +841,12 @@ INT_PTR WINAPI DialogBoxParamA( HINSTANCE hInst, LPCSTR name,
     HRSRC hrsrc;
     LPCDLGTEMPLATEA ptr;
 
+    if (owner && !IsWindow(owner)) return 0;
+
     if (!(hrsrc = FindResourceA( hInst, name, (LPSTR)RT_DIALOG ))) return -1;
     if (!(ptr = LoadResource(hInst, hrsrc))) return -1;
-    hwnd = DIALOG_CreateIndirect( hInst, ptr, owner, dlgProc, param, FALSE, &owner );
-    if (hwnd) return DIALOG_DoDialogBox( hwnd, owner );
-    return 0;
+    if (!(hwnd = DIALOG_CreateIndirect( hInst, ptr, owner, dlgProc, param, FALSE, &owner ))) return -1;
+    return DIALOG_DoDialogBox( hwnd, owner );
 }
 
 
@@ -853,11 +860,12 @@ INT_PTR WINAPI DialogBoxParamW( HINSTANCE hInst, LPCWSTR name,
     HRSRC hrsrc;
     LPCDLGTEMPLATEW ptr;
 
+    if (owner && !IsWindow(owner)) return 0;
+
     if (!(hrsrc = FindResourceW( hInst, name, (LPWSTR)RT_DIALOG ))) return -1;
     if (!(ptr = LoadResource(hInst, hrsrc))) return -1;
-    hwnd = DIALOG_CreateIndirect( hInst, ptr, owner, dlgProc, param, TRUE, &owner );
-    if (hwnd) return DIALOG_DoDialogBox( hwnd, owner );
-    return 0;
+    if (!(hwnd = DIALOG_CreateIndirect( hInst, ptr, owner, dlgProc, param, TRUE, &owner ))) return -1;
+    return DIALOG_DoDialogBox( hwnd, owner );
 }
 
 
@@ -957,7 +965,7 @@ static BOOL DIALOG_IsAccelerator( HWND hwnd, HWND hwndDlg, WPARAM wParam )
         {
             dlgCode = SendMessageW( hwndControl, WM_GETDLGCODE, 0, 0 );
             if ( (dlgCode & (DLGC_BUTTON | DLGC_STATIC)) &&
-                 GetWindowTextW( hwndControl, buffer, sizeof(buffer)/sizeof(WCHAR) ))
+                 GetWindowTextW( hwndControl, buffer, ARRAY_SIZE( buffer )))
             {
                 /* find the accelerator key */
                 LPWSTR p = buffer - 2;
@@ -1234,8 +1242,16 @@ BOOL WINAPI IsDialogMessageW( HWND hwndDlg, LPMSG msg )
             if (!(dlgCode & DLGC_WANTARROWS))
             {
                 BOOL fPrevious = (msg->wParam == VK_LEFT || msg->wParam == VK_UP);
-                HWND hwndNext = GetNextDlgGroupItem (hwndDlg, GetFocus(), fPrevious );
-                SendMessageW( hwndDlg, WM_NEXTDLGCTL, (WPARAM)hwndNext, 1 );
+                HWND hwndNext = GetNextDlgGroupItem( hwndDlg, msg->hwnd, fPrevious );
+                if (hwndNext && SendMessageW( hwndNext, WM_GETDLGCODE, msg->wParam, (LPARAM)msg ) == (DLGC_BUTTON | DLGC_RADIOBUTTON))
+                {
+                    SetFocus( hwndNext );
+                    if ((GetWindowLongW( hwndNext, GWL_STYLE ) & BS_TYPEMASK) == BS_AUTORADIOBUTTON &&
+                        SendMessageW( hwndNext, BM_GETCHECK, 0, 0 ) != BST_CHECKED)
+                        SendMessageW( hwndNext, BM_CLICK, 1, 0 );
+                }
+                else
+                    SendMessageW( hwndDlg, WM_NEXTDLGCTL, (WPARAM)hwndNext, 1 );
                 return TRUE;
             }
             break;
@@ -1249,10 +1265,11 @@ BOOL WINAPI IsDialogMessageW( HWND hwndDlg, LPMSG msg )
         case VK_RETURN:
             {
                 DWORD dw;
-                if ((GetFocus() == msg->hwnd) &&
-                    (SendMessageW (msg->hwnd, WM_GETDLGCODE, 0, 0) & DLGC_DEFPUSHBUTTON))
+                HWND hwndFocus = GetFocus();
+                if (IsChild( hwndDlg, hwndFocus ) &&
+                    (SendMessageW( hwndFocus, WM_GETDLGCODE, 0, 0 ) & DLGC_DEFPUSHBUTTON))
                 {
-                    SendMessageW (hwndDlg, WM_COMMAND, MAKEWPARAM (GetDlgCtrlID(msg->hwnd),BN_CLICKED), (LPARAM)msg->hwnd); 
+                    SendMessageW( hwndDlg, WM_COMMAND, MAKEWPARAM( GetDlgCtrlID( hwndFocus ), BN_CLICKED ), (LPARAM)hwndFocus );
                 }
                 else if (DC_HASDEFID == HIWORD(dw = SendMessageW (hwndDlg, DM_GETDEFID, 0, 0)))
                 {
@@ -1263,7 +1280,6 @@ BOOL WINAPI IsDialogMessageW( HWND hwndDlg, LPMSG msg )
                 else
                 {
                     SendMessageW( hwndDlg, WM_COMMAND, IDOK, (LPARAM)GetDlgItem( hwndDlg, IDOK ) );
-
                 }
             }
             return TRUE;
@@ -1502,22 +1518,22 @@ BOOL WINAPI CheckRadioButton( HWND hwndDlg, int firstID,
  */
 DWORD WINAPI GetDialogBaseUnits(void)
 {
-    static DWORD units;
+    static LONG cx, cy;
 
-    if (!units)
+    if (!cx)
     {
         HDC hdc;
-        SIZE size;
 
         if ((hdc = GetDC(0)))
         {
-            size.cx = GdiGetCharDimensions( hdc, NULL, &size.cy );
-            if (size.cx) units = MAKELONG( size.cx, size.cy );
+            cx = GdiGetCharDimensions( hdc, NULL, &cy );
             ReleaseDC( 0, hdc );
         }
-        TRACE("base units = %d,%d\n", LOWORD(units), HIWORD(units) );
+        TRACE( "base units = %d,%d\n", cx, cy );
     }
-    return units;
+
+    return MAKELONG( MulDiv( cx, GetDpiForSystem(), USER_DEFAULT_SCREEN_DPI ),
+                     MulDiv( cy, GetDpiForSystem(), USER_DEFAULT_SCREEN_DPI ));
 }
 
 
@@ -1579,9 +1595,9 @@ HWND WINAPI GetNextDlgGroupItem( HWND hwndDlg, HWND hwndCtrl, BOOL fPrevious )
      */
     retvalue = hwndCtrl;
     hwnd = hwndCtrl;
-    while (hwndNext = GetWindow (hwnd, GW_HWNDNEXT),
-           1)
+    while (1)
     {
+        hwndNext = GetWindow (hwnd, GW_HWNDNEXT);
         while (!hwndNext)
         {
             /* Climb out until there is a next sibling of the ancestor or we
@@ -1865,7 +1881,7 @@ static INT DIALOG_DlgDirListW( HWND hDlg, LPWSTR spec, INT idLBox,
     if (idStatic && ((hwnd = GetDlgItem( hDlg, idStatic )) != 0))
     {
         WCHAR temp[MAX_PATH];
-        GetCurrentDirectoryW( sizeof(temp)/sizeof(WCHAR), temp );
+        GetCurrentDirectoryW( ARRAY_SIZE( temp ), temp );
         CharLowerW( temp );
         /* Can't use PostMessage() here, because the string is on the stack */
         SetDlgItemTextW( hDlg, idStatic, temp );

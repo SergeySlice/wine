@@ -618,8 +618,7 @@ HFONT WINAPI CreateFontW( INT height, INT width, INT esc,
     logfont.lfPitchAndFamily = pitch;
 
     if (name)
-	lstrcpynW(logfont.lfFaceName, name,
-		  sizeof(logfont.lfFaceName) / sizeof(WCHAR));
+        lstrcpynW(logfont.lfFaceName, name, ARRAY_SIZE(logfont.lfFaceName));
     else
 	logfont.lfFaceName[0] = '\0';
 
@@ -730,6 +729,47 @@ static void update_font_code_page( DC *dc, HANDLE font )
     TRACE("charset %d => cp %d\n", charset, dc->font_code_page);
 }
 
+static struct font_gamma_ramp *get_font_gamma_ramp( void )
+{
+    static const WCHAR desktopW[] = { 'C','o','n','t','r','o','l',' ','P','a','n','e','l','\\',
+                                      'D','e','s','k','t','o','p',0 };
+    static const WCHAR smoothing_gamma[] = { 'F','o','n','t','S','m','o','o','t','h','i','n','g',
+                                             'G','a','m','m','a',0 };
+    const DWORD gamma_default = 1400;
+    struct font_gamma_ramp *ramp;
+    DWORD  i, gamma;
+    HKEY key;
+
+    ramp = HeapAlloc( GetProcessHeap(), 0, sizeof(*ramp) );
+    if ( ramp == NULL) return NULL;
+
+    gamma = gamma_default;
+    if (RegOpenKeyW( HKEY_CURRENT_USER, desktopW, &key ) == ERROR_SUCCESS)
+    {
+        if (get_key_value( key, smoothing_gamma, &gamma ) || gamma == 0)
+            gamma = gamma_default;
+        RegCloseKey( key );
+
+        gamma = min( max( gamma, 1000 ), 2200 );
+    }
+
+    /* Calibrating the difference between the registry value and the Wine gamma value.
+       This looks roughly similar to Windows Native with the same registry value.
+       MS GDI seems to be rasterizing the outline at a different rate than FreeType. */
+    gamma = 1000 * gamma / 1400;
+
+    for (i = 0; i < 256; i++)
+    {
+        ramp->encode[i] = pow( i / 255., 1000. / gamma ) * 255. + .5;
+        ramp->decode[i] = pow( i / 255., gamma / 1000. ) * 255. + .5;
+    }
+
+    ramp->gamma = gamma;
+    TRACE("gamma %d\n", ramp->gamma);
+
+    return ramp;
+}
+
 /***********************************************************************
  *           FONT_SelectObject
  */
@@ -755,6 +795,8 @@ static HGDIOBJ FONT_SelectObject( HGDIOBJ handle, HDC hdc )
         dc->hFont = handle;
         dc->aa_flags = aa_flags ? aa_flags : GGO_BITMAP;
         update_font_code_page( dc, handle );
+        if (dc->font_gamma_ramp == NULL)
+            dc->font_gamma_ramp = get_font_gamma_ramp();
         GDI_dec_ref_count( ret );
     }
     else GDI_dec_ref_count( handle );
@@ -811,7 +853,8 @@ static BOOL FONT_DeleteObject( HGDIOBJ handle )
     FONTOBJ *obj;
 
     if (!(obj = free_gdi_handle( handle ))) return FALSE;
-    return HeapFree( GetProcessHeap(), 0, obj );
+    HeapFree( GetProcessHeap(), 0, obj );
+    return TRUE;
 }
 
 
@@ -1664,16 +1707,16 @@ UINT WINAPI GetOutlineTextMetricsW(
         output->otmTextMetrics.tmOverhang         = width_to_LP( dc, output->otmTextMetrics.tmOverhang );
         output->otmAscent                = height_to_LP( dc, output->otmAscent);
         output->otmDescent               = height_to_LP( dc, output->otmDescent);
-        output->otmLineGap               = abs(INTERNAL_YDSTOWS(dc,output->otmLineGap));
-        output->otmsCapEmHeight          = abs(INTERNAL_YDSTOWS(dc,output->otmsCapEmHeight));
-        output->otmsXHeight              = abs(INTERNAL_YDSTOWS(dc,output->otmsXHeight));
+        output->otmLineGap               = INTERNAL_YDSTOWS(dc, output->otmLineGap);
+        output->otmsCapEmHeight          = INTERNAL_YDSTOWS(dc, output->otmsCapEmHeight);
+        output->otmsXHeight              = INTERNAL_YDSTOWS(dc, output->otmsXHeight);
         output->otmrcFontBox.top         = height_to_LP( dc, output->otmrcFontBox.top);
         output->otmrcFontBox.bottom      = height_to_LP( dc, output->otmrcFontBox.bottom);
         output->otmrcFontBox.left        = width_to_LP( dc, output->otmrcFontBox.left);
         output->otmrcFontBox.right       = width_to_LP( dc, output->otmrcFontBox.right);
         output->otmMacAscent             = height_to_LP( dc, output->otmMacAscent);
         output->otmMacDescent            = height_to_LP( dc, output->otmMacDescent);
-        output->otmMacLineGap            = abs(INTERNAL_YDSTOWS(dc,output->otmMacLineGap));
+        output->otmMacLineGap            = INTERNAL_YDSTOWS(dc, output->otmMacLineGap);
         output->otmptSubscriptSize.x     = width_to_LP( dc, output->otmptSubscriptSize.x);
         output->otmptSubscriptSize.y     = height_to_LP( dc, output->otmptSubscriptSize.y);
         output->otmptSubscriptOffset.x   = width_to_LP( dc, output->otmptSubscriptOffset.x);
@@ -1682,7 +1725,7 @@ UINT WINAPI GetOutlineTextMetricsW(
         output->otmptSuperscriptSize.y   = height_to_LP( dc, output->otmptSuperscriptSize.y);
         output->otmptSuperscriptOffset.x = width_to_LP( dc, output->otmptSuperscriptOffset.x);
         output->otmptSuperscriptOffset.y = height_to_LP( dc, output->otmptSuperscriptOffset.y);
-        output->otmsStrikeoutSize        = abs(INTERNAL_YDSTOWS(dc,output->otmsStrikeoutSize));
+        output->otmsStrikeoutSize        = INTERNAL_YDSTOWS(dc, output->otmsStrikeoutSize);
         output->otmsStrikeoutPosition    = height_to_LP( dc, output->otmsStrikeoutPosition);
         output->otmsUnderscoreSize       = height_to_LP( dc, output->otmsUnderscoreSize);
         output->otmsUnderscorePosition   = height_to_LP( dc, output->otmsUnderscorePosition);
@@ -1828,7 +1871,7 @@ static DWORD get_glyph_bitmap( HDC hdc, UINT index, UINT flags, UINT aa_flags,
     indices[0] = index;
     if (flags & ETO_GLYPH_INDEX) aa_flags |= GGO_GLYPH_INDEX;
 
-    for (i = 0; i < sizeof(indices) / sizeof(indices[0]); i++)
+    for (i = 0; i < ARRAY_SIZE( indices ); i++)
     {
         index = indices[i];
         ret = GetGlyphOutlineW( hdc, index, aa_flags, metrics, 0, NULL, &identity );
@@ -2004,6 +2047,7 @@ BOOL nulldrv_ExtTextOut( PHYSDEV dev, INT x, INT y, UINT flags, const RECT *rect
             info->bmiHeader.biSize   = sizeof(info->bmiHeader);
             info->bmiHeader.biWidth  = src.width;
             info->bmiHeader.biHeight = -src.height;
+            info->bmiHeader.biSizeImage = get_dib_image_size( info );
             err = dst_dev->funcs->pPutImage( dst_dev, 0, info, NULL, NULL, NULL, 0 );
             if (!err || err == ERROR_BAD_FORMAT)
             {
@@ -2013,7 +2057,7 @@ BOOL nulldrv_ExtTextOut( PHYSDEV dev, INT x, INT y, UINT flags, const RECT *rect
                 src.visrect.right = src.width;
                 src.visrect.bottom = src.height;
 
-                bits.ptr = HeapAlloc( GetProcessHeap(), 0, get_dib_image_size( info ));
+                bits.ptr = HeapAlloc( GetProcessHeap(), 0, info->bmiHeader.biSizeImage );
                 if (!bits.ptr) return ERROR_OUTOFMEMORY;
                 bits.is_copy = TRUE;
                 bits.free = free_heap_bits;
@@ -2026,13 +2070,13 @@ BOOL nulldrv_ExtTextOut( PHYSDEV dev, INT x, INT y, UINT flags, const RECT *rect
             err = src_dev->funcs->pGetImage( src_dev, info, &bits, &src );
             if (!err && !bits.is_copy)
             {
-                void *ptr = HeapAlloc( GetProcessHeap(), 0, get_dib_image_size( info ));
+                void *ptr = HeapAlloc( GetProcessHeap(), 0, info->bmiHeader.biSizeImage );
                 if (!ptr)
                 {
                     if (bits.free) bits.free( &bits );
                     return ERROR_OUTOFMEMORY;
                 }
-                memcpy( ptr, bits.ptr, get_dib_image_size( info ));
+                memcpy( ptr, bits.ptr, info->bmiHeader.biSizeImage );
                 if (bits.free) bits.free( &bits );
                 bits.ptr = ptr;
                 bits.is_copy = TRUE;
@@ -2821,6 +2865,7 @@ DWORD WINAPI GetGlyphOutlineA( HDC hdc, UINT uChar, UINT fuFormat,
         UINT cp;
         int len;
         char mbchs[2];
+        WCHAR wChar;
 
         cp = GdiGetCodePage(hdc);
         if (IsDBCSLeadByteEx(cp, uChar >> 8)) {
@@ -2831,8 +2876,9 @@ DWORD WINAPI GetGlyphOutlineA( HDC hdc, UINT uChar, UINT fuFormat,
             len = 1;
             mbchs[0] = (uChar & 0xff);
         }
-        uChar = 0;
-        MultiByteToWideChar(cp, 0, mbchs, len, (LPWSTR)&uChar, 1);
+        wChar = 0;
+        MultiByteToWideChar(cp, 0, mbchs, len, &wChar, 1);
+        uChar = wChar;
     }
 
     return GetGlyphOutlineW(hdc, uChar, fuFormat, lpgm, cbBuffer, lpBuffer,
@@ -3200,10 +3246,18 @@ GetCharacterPlacementA(HDC hdc, LPCSTR lpString, INT uCount,
     TRACE("%s, %d, %d, 0x%08x\n",
           debugstr_an(lpString, uCount), uCount, nMaxExtent, dwFlags);
 
+    lpStringW = FONT_mbtowc(hdc, lpString, uCount, &uCountW, &font_cp);
+
+    if (!lpResults)
+    {
+        ret = GetCharacterPlacementW(hdc, lpStringW, uCountW, nMaxExtent, NULL, dwFlags);
+        HeapFree(GetProcessHeap(), 0, lpStringW);
+        return ret;
+    }
+
     /* both structs are equal in size */
     memcpy(&resultsW, lpResults, sizeof(resultsW));
 
-    lpStringW = FONT_mbtowc(hdc, lpString, uCount, &uCountW, &font_cp);
     if(lpResults->lpOutString)
         resultsW.lpOutString = HeapAlloc(GetProcessHeap(), 0, sizeof(WCHAR)*uCountW);
 
@@ -3257,6 +3311,9 @@ GetCharacterPlacementW(
 
     TRACE("%s, %d, %d, 0x%08x\n",
           debugstr_wn(lpString, uCount), uCount, nMaxExtent, dwFlags);
+
+    if (!lpResults)
+        return GetTextExtentPoint32W(hdc, lpString, uCount, &size) ? MAKELONG(size.cx, size.cy) : 0;
 
     TRACE("lStructSize=%d, lpOutString=%p, lpOrder=%p, lpDx=%p, lpCaretPos=%p\n"
           "lpClass=%p, lpGlyphs=%p, nGlyphs=%u, nMaxFit=%d\n",
@@ -3808,7 +3865,7 @@ BOOL WINAPI GetCharWidthI(HDC hdc, UINT first, UINT count, LPWORD glyphs, LPINT 
     }
 
     for (i = 0; i < count; i++)
-        buffer[i] = abc->abcA + abc->abcB + abc->abcC;
+        buffer[i] = abc[i].abcA + abc[i].abcB + abc[i].abcC;
 
     HeapFree(GetProcessHeap(), 0, abc);
     return TRUE;

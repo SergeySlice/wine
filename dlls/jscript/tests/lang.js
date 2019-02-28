@@ -48,6 +48,9 @@ tmp = 07777777777777777777777;
 ok(typeof(tmp) === "number" && tmp > 0xffffffff, "tmp = " + tmp);
 tmp = 07777777779777777777777;
 ok(typeof(tmp) === "number" && tmp > 0xffffffff, "tmp = " + tmp);
+ok(0xffffffff === 4294967295, "0xffffffff = " + 0xffffffff);
+tmp = 0x10000000000000000000000000000000000000000000000000000000000000000;
+ok(tmp === Math.pow(2, 256), "0x1000...00 != 2^256");
 
 ok(1 !== 2, "1 !== 2 is false");
 ok(null !== undefined, "null !== undefined is false");
@@ -264,6 +267,8 @@ ok(tmp === 3, "tmp = " + tmp);
 eval("testRes(); testRes()");
 tmp = eval("3; if(false) {4;} else {};;;")
 ok(tmp === 3, "tmp = " + tmp);
+tmp = eval("try { 1; } finally { 2; }")
+ok(tmp === 2, "tmp = " + tmp);
 
 testNoRes();
 testRes() && testRes();
@@ -475,6 +480,20 @@ ok(obj3.prop1 === 1, "obj3.prop1 is not 1");
 ok(obj3.prop2 === "boolean", "obj3.prop2 is not \"boolean\"");
 ok(obj3.constructor === Object, "unexpected obj3.constructor");
 
+if(invokeVersion >= 2) {
+    eval("tmp = {prop: 'value',}");
+    ok(tmp.prop === "value", "tmp.prop = " + tmp.prop);
+    eval("tmp = {prop: 'value',second:2,}");
+    ok(tmp.prop === "value", "tmp.prop = " + tmp.prop);
+}else {
+    try {
+        eval("tmp = {prop: 'value',}");
+    }catch(e) {
+        tmp = true;
+    }
+    ok(tmp === true, "exception not fired");
+}
+
 {
     var blockVar = 1;
     blockVar = 2;
@@ -629,6 +648,12 @@ ok(tmp === 0, "0 | NaN = " + tmp);
 tmp = 10;
 ok((tmp |= 0x10) === 26, "tmp(10) |= 0x10 !== 26");
 ok(getVT(tmp) === "VT_I4", "getVT(tmp |= 10) = " + getVT(tmp));
+
+tmp = (123 * Math.pow(2,32) + 2) | 0;
+ok(tmp === 2, "123*2^32+2 | 0 = " + tmp);
+
+tmp = (-123 * Math.pow(2,32) + 2) | 0;
+ok(tmp === 2, "123*2^32+2 | 0 = " + tmp);
 
 tmp = 3 & 5;
 ok(tmp === 1, "3 & 5 !== 1");
@@ -979,6 +1004,185 @@ case 3:
     return i;
 })();
 
+(function() {
+    var ret, x;
+
+    function unreachable() {
+        ok(false, "unreachable");
+    }
+
+    function expect(value, expect_value) {
+        ok(value === expect_value, "got " + value + " expected " + expect_value);
+    }
+
+    ret = (function() {
+        try {
+            return "try";
+            unreachable();
+        }catch(e) {
+            unreachable();
+        }finally {
+            return "finally";
+            unreachable();
+        }
+        unreachable();
+    })();
+    expect(ret, "finally");
+
+    x = "";
+    ret = (function() {
+        try {
+            x += "try,";
+            return x;
+            unreachable();
+        }catch(e) {
+            unreachable();
+        }finally {
+            x += "finally,";
+        }
+        unreachable();
+    })();
+    expect(ret, "try,");
+    expect(x, "try,finally,");
+
+    x = "";
+    ret = (function() {
+        try {
+            x += "try,"
+            throw 1;
+            unreachable();
+        }catch(e) {
+            x += "catch,";
+            return "catch";
+            unreachable();
+        }finally {
+            x += "finally,";
+            return "finally";
+            unreachable();
+        }
+        unreachable();
+    })();
+    expect(ret, "finally");
+    expect(x, "try,catch,finally,");
+
+    x = "";
+    ret = (function() {
+        try {
+            x += "try,"
+            throw 1;
+            unreachable();
+        }catch(e) {
+            x += "catch,";
+            return "catch";
+            unreachable();
+        }finally {
+            x += "finally,";
+        }
+        unreachable();
+    })();
+    expect(ret, "catch");
+    expect(x, "try,catch,finally,");
+
+    x = "";
+    ret = (function() {
+        try {
+            x += "try,"
+            try {
+                x += "try2,";
+                return "try2";
+            }catch(e) {
+                unreachable();
+            }finally {
+                x += "finally2,";
+            }
+            unreachable();
+        }catch(e) {
+            unreachable();
+        }finally {
+            x += "finally,";
+        }
+        unreachable();
+    })();
+    expect(ret, "try2");
+    expect(x, "try,try2,finally2,finally,");
+
+    x = "";
+    ret = (function() {
+        while(true) {
+            try {
+                x += "try,"
+                try {
+                    x += "try2,";
+                    break;
+                }catch(e) {
+                    unreachable();
+                }finally {
+                    x += "finally2,";
+                }
+                unreachable();
+            }catch(e) {
+                unreachable();
+            }finally {
+                x += "finally,";
+            }
+            unreachable();
+        }
+        x += "ret";
+        return "ret";
+    })();
+    expect(ret, "ret");
+    expect(x, "try,try2,finally2,finally,ret");
+
+    x = "";
+    ret = (function() {
+        while(true) {
+            try {
+                x += "try,"
+                try {
+                    x += "try2,";
+                    continue;
+                }catch(e) {
+                    unreachable();
+                }finally {
+                    x += "finally2,";
+                }
+                unreachable();
+            }catch(e) {
+                unreachable();
+            }finally {
+                x += "finally,";
+                break;
+            }
+            unreachable();
+        }
+        x += "ret";
+        return "ret";
+    })();
+    expect(ret, "ret");
+    expect(x, "try,try2,finally2,finally,ret");
+
+    ret = (function() {
+        try {
+            return "try";
+            unreachable();
+        }catch(e) {
+            unreachable();
+        }finally {
+            new Object();
+            var tmp = (function() {
+                var s = new String();
+                try {
+                    s.length;
+                }finally {
+                    return 1;
+                }
+            })();
+        }
+        unreachable();
+    })();
+    expect(ret, "try");
+})();
+
 tmp = eval("1");
 ok(tmp === 1, "eval(\"1\") !== 1");
 eval("{ ok(tmp === 1, 'eval: tmp !== 1'); } tmp = 2;");
@@ -1011,6 +1215,10 @@ ok(tmp["0"] === undefined, "tmp[0] is not undefined");
 ok(tmp["3"] === 2, "tmp[3] !== 2");
 ok(tmp["6"] === true, "tmp[6] !== true");
 ok(tmp[2] === 1, "tmp[2] !== 1");
+ok(!("0" in tmp), "0 found in array");
+ok(!("1" in tmp), "1 found in array");
+ok("2" in tmp, "2 not found in array");
+ok(!("2" in [1,,,,]), "2 found in [1,,,,]");
 
 ok([1,].length === 2, "[1,].length !== 2");
 ok([,,].length === 3, "[,,].length !== 3");
@@ -1597,6 +1805,15 @@ tmp = (function() {
 })();
 ok(tmp, "tmp = " + tmp);
 
+tmp = (function() {
+    for(var iter in [1,2,3,4]) {
+        var ret = false;
+        with({ret: true})
+            return ret;
+    }
+})();
+ok(tmp, "tmp = " + tmp);
+
 (function() {
     ok(typeof(func) === "function", "typeof(func)  = " + typeof(func));
     with(new Object()) {
@@ -1614,6 +1831,8 @@ ok(tmp, "tmp = " + tmp);
     }
     ok(x === undefined, "x = " + x);
 })();
+
+var get, set;
 
 /* NoNewline rule parser tests */
 while(true) {

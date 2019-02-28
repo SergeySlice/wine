@@ -66,8 +66,8 @@
 @ stdcall CoRegisterMallocSpy (ptr)
 @ stdcall CoRegisterMessageFilter(ptr ptr)
 @ stdcall CoRegisterPSClsid(ptr ptr)
-@ stub CoRegisterSurrogate
-@ stub CoRegisterSurrogateEx
+@ stdcall CoRegisterSurrogate(ptr)
+@ stdcall CoRegisterSurrogateEx(ptr ptr)
 @ stdcall CoReleaseMarshalData(ptr)
 @ stdcall CoReleaseServerProcess()
 @ stdcall CoResumeClassObjects()
@@ -207,7 +207,7 @@
 @ stdcall OleGetAutoConvert(ptr ptr)
 @ stdcall OleGetClipboard(ptr)
 @ stdcall OleGetIconOfClass(ptr ptr long)
-@ stub OleGetIconOfFile
+@ stdcall OleGetIconOfFile(wstr long)
 @ stdcall OleInitialize(ptr)
 @ stdcall OleInitializeWOW(long long)
 @ stdcall OleIsCurrentClipboard(ptr)

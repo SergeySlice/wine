@@ -20,6 +20,7 @@
 
 #include "config.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -29,6 +30,9 @@
 #if !defined(PI)
 # define PI M_PI
 #endif
+#include "windef.h"
+#include "winbase.h"
+#include "winuser.h"
 #include "psdrv.h"
 #include "wine/debug.h"
 
@@ -103,21 +107,20 @@ BOOL PSDRV_Rectangle( PHYSDEV dev, INT left, INT top, INT right, INT bottom )
 
     TRACE("%d %d - %d %d\n", left, top, right, bottom);
 
-    rect.left = left;
-    rect.top = top;
-    rect.right = right;
-    rect.bottom = bottom;
+    SetRect(&rect, left, top, right, bottom);
     LPtoDP( dev->hdc, (POINT *)&rect, 2 );
 
     /* Windows does something truly hacky here.  If we're in passthrough mode
        and our rop is R2_NOP, then we output the string below.  This is used in
        Office 2k when inserting eps files */
-    if(physDev->job.in_passthrough && !physDev->job.had_passthrough_rect && GetROP2(dev->hdc) == R2_NOP) {
-      char buf[256];
-      sprintf(buf, "N %d %d %d %d B\n", rect.right - rect.left, rect.bottom - rect.top, rect.left, rect.top);
-      write_spool(dev, buf, strlen(buf));
-      physDev->job.had_passthrough_rect = TRUE;
-      return TRUE;
+    if (physDev->job.passthrough_state == passthrough_active && GetROP2(dev->hdc) == R2_NOP)
+    {
+        char buf[256];
+
+        sprintf(buf, "N %d %d %d %d B\n", rect.right - rect.left, rect.bottom - rect.top, rect.left, rect.top);
+        write_spool(dev, buf, strlen(buf));
+        physDev->job.passthrough_state = passthrough_had_rect;
+        return TRUE;
     }
 
     PSDRV_SetPen(dev);
@@ -140,14 +143,8 @@ BOOL PSDRV_RoundRect( PHYSDEV dev, INT left, INT top, INT right,
 {
     RECT rect[2];
 
-    rect[0].left   = left;
-    rect[0].top    = top;
-    rect[0].right  = right;
-    rect[0].bottom = bottom;
-    rect[1].left   = 0;
-    rect[1].top    = 0;
-    rect[1].right  = ell_width;
-    rect[1].bottom = ell_height;
+    SetRect(&rect[0], left, top, right, bottom);
+    SetRect(&rect[1], 0, 0, ell_width, ell_height);
     LPtoDP( dev->hdc, (POINT *)rect, 4 );
 
     left   = rect[0].left;
@@ -200,10 +197,7 @@ static BOOL PSDRV_DrawArc( PHYSDEV dev, INT left, INT top,
     RECT rect;
     POINT start, end;
 
-    rect.left = left;
-    rect.top = top;
-    rect.right = right;
-    rect.bottom = bottom;
+    SetRect(&rect, left, top, right, bottom);
     LPtoDP( dev->hdc, (POINT *)&rect, 2 );
     start.x = xstart;
     start.y = ystart;
@@ -290,10 +284,7 @@ BOOL PSDRV_Ellipse( PHYSDEV dev, INT left, INT top, INT right, INT bottom)
 
     TRACE("%d %d - %d %d\n", left, top, right, bottom);
 
-    rect.left   = left;
-    rect.top    = top;
-    rect.right  = right;
-    rect.bottom = bottom;
+    SetRect(&rect, left, top, right, bottom);
     LPtoDP( dev->hdc, (POINT *)&rect, 2 );
 
     x = (rect.left + rect.right) / 2;

@@ -160,7 +160,7 @@ static WCHAR BSCBHolder[] = { '_','B','S','C','B','_','H','o','l','d','e','r','_
 static const WCHAR wszWineHQSite[] =
     {'w','w','w','.','w','i','n','e','h','q','.','o','r','g',0};
 static const WCHAR wszWineHQIP[] =
-    {'2','0','9','.','3','2','.','1','4','1','.','3',0};
+    {'4','.','1','5','.','1','8','4','.','7','7',0};
 static const CHAR wszIndexHtmlA[] = "index.html";
 static const WCHAR cache_fileW[] = {'c',':','\\','c','a','c','h','e','.','h','t','m',0};
 static const CHAR dwl_htmlA[] = "dwl.html";
@@ -182,6 +182,7 @@ static HRESULT abort_hres;
 static BOOL have_IHttpNegotiate2, use_bscex, is_async_prot;
 static BOOL test_redirect, use_cache_file, callback_read, no_callback, test_abort;
 static WCHAR cache_file_name[MAX_PATH];
+static WCHAR http_cache_file[MAX_PATH];
 static BOOL only_check_prot_args = FALSE;
 static BOOL invalid_cn_accepted = FALSE;
 static BOOL abort_start = FALSE;
@@ -1927,6 +1928,14 @@ static HRESULT WINAPI statusclb_OnStopBinding(IBindStatusCallbackEx *iface, HRES
             ok( WaitForSingleObject(complete_event2, 90000) == WAIT_OBJECT_0, "wait timed out\n" );
     }
 
+    if(test_protocol == HTTP_TEST && !emulate_protocol && http_cache_file[0]) {
+        HANDLE file = CreateFileW(http_cache_file, DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                  NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        ok(file == INVALID_HANDLE_VALUE, "expected INVALID_HANDLE_VALUE, got %p\n", file);
+        ok(GetLastError() == ERROR_SHARING_VIOLATION, "expected ERROR_SHARING_VIOLATION, got %u\n", GetLastError());
+        http_cache_file[0] = 0;
+    }
+
     return S_OK;
 }
 
@@ -2083,6 +2092,8 @@ static HRESULT WINAPI statusclb_OnDataAvailable(IBindStatusCallbackEx *iface, DW
         else if(emulate_protocol)
             ok(!lstrcmpW(pstgmed->u.lpszFileName, cache_fileW),
                "unexpected file name %s\n", wine_dbgstr_w(pstgmed->u.lpszFileName));
+        else if(test_protocol == HTTP_TEST)
+            lstrcpyW(http_cache_file, pstgmed->u.lpszFileName);
         else
             ok(pstgmed->u.lpszFileName != NULL, "lpszFileName == NULL\n");
     }
@@ -2402,8 +2413,8 @@ static HRESULT WINAPI ProtocolCF_CreateInstance(IClassFactory *iface, IUnknown *
     if(IsEqualGUID(&IID_IInternetProtocolInfo, riid))
         return E_NOINTERFACE;
 
-    todo_wine ok(outer != NULL, "outer == NULL\n");
-    todo_wine ok(IsEqualGUID(&IID_IUnknown, riid), "unexpected riid %s\n", wine_dbgstr_guid(riid));
+    ok(outer != NULL, "outer == NULL\n");
+    ok(IsEqualGUID(&IID_IUnknown, riid), "unexpected riid %s\n", wine_dbgstr_guid(riid));
     *ppv = &Protocol;
     return S_OK;
 }
@@ -2891,7 +2902,7 @@ static void init_bind_test(int protocol, DWORD flags, DWORD t)
         url_a = "its:test.chm::/blank.html";
         break;
     case HTTPS_TEST:
-        url_a = (flags & BINDTEST_INVALID_CN) ? "https://209.46.25.134/favicon.ico" : "https://test.winehq.org/tests/hello.html";
+        url_a = (flags & BINDTEST_INVALID_CN) ? "https://4.15.184.77/favicon.ico" : "https://test.winehq.org/tests/hello.html";
         break;
     case FTP_TEST:
         url_a = "ftp://ftp.winehq.org/welcome.msg";
@@ -2901,7 +2912,7 @@ static void init_bind_test(int protocol, DWORD flags, DWORD t)
     }
 
     if(url_a)
-        MultiByteToWideChar(CP_ACP, 0, url_a, -1, current_url, sizeof(current_url)/sizeof(*current_url));
+        MultiByteToWideChar(CP_ACP, 0, url_a, -1, current_url, ARRAY_SIZE(current_url));
 
     test_redirect = (flags & BINDTEST_REDIRECT) != 0;
     use_cache_file = (flags & BINDTEST_USE_CACHE) != 0;

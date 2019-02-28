@@ -17,13 +17,12 @@
  */
 
 #include "wine/debug.h"
+#include "wine/heap.h"
 #include "wine/list.h"
 #include "wine/unicode.h"
 
 IClientSecurity client_security DECLSPEC_HIDDEN;
 struct list *table_list DECLSPEC_HIDDEN;
-
-#define SIZEOF(array) (sizeof(array)/sizeof((array)[0]))
 
 enum param_direction
 {
@@ -217,6 +216,7 @@ HRESULT EnumWbemClassObject_create(struct query *, LPVOID *) DECLSPEC_HIDDEN;
 HRESULT WbemQualifierSet_create(const WCHAR *, const WCHAR *, LPVOID *) DECLSPEC_HIDDEN;
 
 HRESULT process_get_owner(IWbemClassObject *, IWbemClassObject *, IWbemClassObject **) DECLSPEC_HIDDEN;
+HRESULT reg_create_key(IWbemClassObject *, IWbemClassObject *, IWbemClassObject **) DECLSPEC_HIDDEN;
 HRESULT reg_enum_key(IWbemClassObject *, IWbemClassObject *, IWbemClassObject **) DECLSPEC_HIDDEN;
 HRESULT reg_enum_values(IWbemClassObject *, IWbemClassObject *, IWbemClassObject **) DECLSPEC_HIDDEN;
 HRESULT reg_get_stringvalue(IWbemClassObject *, IWbemClassObject *, IWbemClassObject **) DECLSPEC_HIDDEN;
@@ -226,29 +226,6 @@ HRESULT service_start_service(IWbemClassObject *, IWbemClassObject *, IWbemClass
 HRESULT service_stop_service(IWbemClassObject *, IWbemClassObject *, IWbemClassObject **) DECLSPEC_HIDDEN;
 HRESULT security_get_sd(IWbemClassObject *, IWbemClassObject *, IWbemClassObject **) DECLSPEC_HIDDEN;
 HRESULT security_set_sd(IWbemClassObject *, IWbemClassObject *, IWbemClassObject **) DECLSPEC_HIDDEN;
-
-static void *heap_alloc( size_t len ) __WINE_ALLOC_SIZE(1);
-static inline void *heap_alloc( size_t len )
-{
-    return HeapAlloc( GetProcessHeap(), 0, len );
-}
-
-static void *heap_realloc( void *mem, size_t len ) __WINE_ALLOC_SIZE(2);
-static inline void *heap_realloc( void *mem, size_t len )
-{
-    return HeapReAlloc( GetProcessHeap(), 0, mem, len );
-}
-
-static void *heap_alloc_zero( size_t len ) __WINE_ALLOC_SIZE(1);
-static inline void *heap_alloc_zero( size_t len )
-{
-    return HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, len );
-}
-
-static inline BOOL heap_free( void *mem )
-{
-    return HeapFree( GetProcessHeap(), 0, mem );
-}
 
 static inline WCHAR *heap_strdupW( const WCHAR *src )
 {
@@ -265,6 +242,7 @@ static const WCHAR class_systemsecurityW[] = {'_','_','S','y','s','t','e','m','S
 
 static const WCHAR prop_nameW[] = {'N','a','m','e',0};
 
+static const WCHAR method_createkeyW[] = {'C','r','e','a','t','e','K','e','y',0};
 static const WCHAR method_enumkeyW[] = {'E','n','u','m','K','e','y',0};
 static const WCHAR method_enumvaluesW[] = {'E','n','u','m','V','a','l','u','e','s',0};
 static const WCHAR method_getownerW[] = {'G','e','t','O','w','n','e','r',0};

@@ -23,10 +23,13 @@
 #include "initguid.h"
 #include "objidl.h"
 #include "wbemdisp.h"
+#include "wbemcli.h"
 #include "wine/test.h"
 
 DEFINE_GUID(CLSID_WINMGMTS,0x172bddf8,0xceea,0x11d1,0x8b,0x05,0x00,0x60,0x08,0x06,0xd9,0xb6);
 DEFINE_GUID(GUID_NULL,0,0,0,0,0,0,0,0,0,0,0);
+
+static const LCID english = MAKELCID(MAKELANGID(LANG_ENGLISH,SUBLANG_ENGLISH_US),SORT_DEFAULT);
 
 static void test_ParseDisplayName(void)
 {
@@ -45,6 +48,11 @@ static void test_ParseDisplayName(void)
     static const WCHAR name4[] =
         {'w','i','n','m','g','m','t','s',':','\\','\\','.','\\','r','o','o','t','\\','c','i','m','v','2',':',
          'W','i','n','3','2','_','S','e','r','v','i','c','e',0};
+    static const WCHAR stdregprovW[] =
+        {'w','i','n','m','g','m','t','s',':','\\','\\','.','\\','r','o','o','t','\\','d','e','f','a','u','l','t',':',
+         'S','t','d','R','e','g','P','r','o','v',0};
+    static const WCHAR getstringvalueW[] =
+        {'G','e','t','S','t','r','i','n','g','V','a','l','u','e',0};
     static const struct
     {
         const WCHAR *name;
@@ -53,12 +61,11 @@ static void test_ParseDisplayName(void)
         ULONG        eaten;
     } tests[] =
     {
-        { name1, S_OK, &IID_ISWbemServices, sizeof(name1)/sizeof(name1[0]) - 1 },
-        { name2, S_OK, &IID_ISWbemServices, sizeof(name2)/sizeof(name2[0]) - 1 },
-        { name3, S_OK, &IID_ISWbemObject, sizeof(name3)/sizeof(name3[0]) - 1 },
-        { name4, S_OK, &IID_ISWbemObject, sizeof(name4)/sizeof(name4[0]) - 1 }
+        { name1, S_OK, &IID_ISWbemServices, ARRAY_SIZE( name1 ) - 1 },
+        { name2, S_OK, &IID_ISWbemServices, ARRAY_SIZE( name2 ) - 1 },
+        { name3, S_OK, &IID_ISWbemObject, ARRAY_SIZE( name3 ) - 1 },
+        { name4, S_OK, &IID_ISWbemObject, ARRAY_SIZE( name4 ) - 1 }
     };
-    LCID english = MAKELCID(MAKELANGID(LANG_ENGLISH,SUBLANG_ENGLISH_US),SORT_DEFAULT);
     IParseDisplayName *displayname;
     IBindCtx *ctx;
     IMoniker *moniker;
@@ -77,7 +84,7 @@ static void test_ParseDisplayName(void)
     hr = CreateBindCtx( 0, &ctx );
     ok( hr == S_OK, "got %x\n", hr );
 
-    for (i =0; i < sizeof(tests)/sizeof(tests[0]); i++)
+    for (i =0; i < ARRAY_SIZE( tests ); i++)
     {
         str = SysAllocString( tests[i].name );
         eaten = 0xdeadbeef;
@@ -240,18 +247,168 @@ static void test_ParseDisplayName(void)
     }
 
     IBindCtx_Release( ctx );
+
+    hr = CreateBindCtx( 0, &ctx );
+    ok( hr == S_OK, "got %x\n", hr );
+
+    str = SysAllocString( stdregprovW );
+    hr = IParseDisplayName_ParseDisplayName( displayname, NULL, str, &eaten, &moniker );
+    ok( hr == S_OK, "got %x\n", hr );
+    SysFreeString( str );
+
+    if (moniker)
+    {
+        ISWbemObject *sobj = NULL;
+        hr = IMoniker_BindToObject( moniker, ctx, NULL, &IID_ISWbemObject, (void **)&sobj );
+        ok( hr == S_OK, "got %x\n",hr );
+        if (sobj)
+        {
+            DISPID dispid = 0xdeadbeef;
+
+            str = SysAllocString( getstringvalueW );
+            hr = ISWbemObject_GetIDsOfNames( sobj, &IID_NULL, &str, 1, english, &dispid );
+            ok( hr == S_OK, "got %x\n", hr );
+            ok( dispid == 0x1000001, "got %x\n", dispid );
+
+            ISWbemObject_Release( sobj );
+            SysFreeString( str );
+        }
+        IMoniker_Release( moniker );
+    }
+
+    IBindCtx_Release(ctx);
     IParseDisplayName_Release( displayname );
 }
 
+static const WCHAR localhost[] = {'l','o','c','a','l','h','o','s','t',0};
+static const WCHAR root[] = {'r','o','o','t','\\','C','I','M','V','2',0};
+static const WCHAR query[] = {'S','e','l','e','c','t',' ','P','r','o','c','e','s','s','o','r','I','d',' ','f','r','o','m',
+                              ' ','W','i','n','3','2','_','P','r','o','c','e','s','s','o','r',0};
+static const WCHAR lang[] = {'W','Q','L',0};
+static const WCHAR props[] = {'P','r','o','p','e','r','t','i','e','s','_',0};
+static const WCHAR procid[] = {'P','r','o','c','e','s','s','o','r','I','d',0};
+
 static void test_locator(void)
 {
-    IUnknown *locator;
     HRESULT hr;
+    DISPID id;
+    BSTR host_bstr, root_bstr, query_bstr, lang_bstr, props_bstr, procid_bstr;
+    ISWbemLocator *locator;
+    ISWbemServices *services;
+    ISWbemObjectSet *object_set;
+    IEnumVARIANT *enum_var;
+    ISWbemObject *object;
+    ISWbemPropertySet *prop_set;
+    ISWbemProperty *prop;
+    ISWbemSecurity *security;
+    VARIANT var;
+    LONG count;
+    WbemImpersonationLevelEnum imp_level;
+    WbemAuthenticationLevelEnum auth_level;
 
-    hr = CoCreateInstance( &CLSID_SWbemLocator, NULL, CLSCTX_INPROC_SERVER, &IID_IUnknown, (void **)&locator );
+    hr = CoCreateInstance( &CLSID_SWbemLocator, NULL, CLSCTX_INPROC_SERVER, &IID_ISWbemLocator, (void **)&locator );
     ok( hr == S_OK, "got %x\n", hr );
 
-    IUnknown_Release( locator );
+    host_bstr = SysAllocString(localhost);
+    root_bstr = SysAllocString(root);
+    hr = ISWbemLocator_ConnectServer( locator, host_bstr, root_bstr, NULL, NULL, NULL, NULL, 0, NULL, &services);
+    ok( hr == S_OK, "got %x\n", hr );
+    SysFreeString( root_bstr );
+    SysFreeString( host_bstr );
+
+    query_bstr = SysAllocString(query);
+    lang_bstr = SysAllocString(lang);
+    hr = ISWbemServices_ExecQuery( services, query_bstr, lang_bstr, wbemFlagForwardOnly, NULL, &object_set);
+    ok( hr == S_OK, "got %x\n", hr );
+    SysFreeString( lang_bstr );
+    SysFreeString( query_bstr );
+
+    hr = ISWbemLocator_get_Security_( locator, &security );
+    ok( hr == S_OK, "got %x\n", hr );
+    imp_level = 0xdeadbeef;
+    hr = ISWbemSecurity_get_ImpersonationLevel( security, &imp_level );
+    ok( hr == S_OK, "got %x\n", hr );
+    ok( imp_level == wbemImpersonationLevelImpersonate, "got %u\n", imp_level );
+    hr = ISWbemSecurity_put_ImpersonationLevel( security, wbemImpersonationLevelAnonymous );
+    ok( hr == S_OK, "got %x\n", hr );
+    imp_level = 0xdeadbeef;
+    hr = ISWbemSecurity_get_ImpersonationLevel( security, &imp_level );
+    ok( hr == S_OK, "got %x\n", hr );
+    ok( imp_level == wbemImpersonationLevelAnonymous, "got %u\n", imp_level );
+
+    auth_level = 0xdeadbeef;
+    hr = ISWbemSecurity_get_AuthenticationLevel( security, &auth_level );
+    todo_wine {
+    ok( hr == WBEM_E_FAILED, "got %x\n", hr );
+    ok( auth_level == 0xdeadbeef, "got %u\n", auth_level );
+    }
+    hr = ISWbemSecurity_put_AuthenticationLevel( security, wbemAuthenticationLevelNone );
+    ok( hr == S_OK, "got %x\n", hr );
+    auth_level = 0xdeadbeef;
+    hr = ISWbemSecurity_get_AuthenticationLevel( security, &auth_level );
+    ok( hr == S_OK, "got %x\n", hr );
+    ok( auth_level == wbemAuthenticationLevelNone, "got %u\n", auth_level );
+    ISWbemSecurity_Release( security );
+    security = NULL;
+
+    hr = ISWbemObjectSet_get__NewEnum( object_set, (IUnknown**)&enum_var );
+    ok( hr == S_OK, "got %x\n", hr );
+
+    VariantInit( &var );
+    hr = IEnumVARIANT_Next( enum_var, 1, &var, NULL );
+    ok( hr == S_OK, "got %x\n", hr );
+    ok( V_VT(&var) == VT_DISPATCH, "got %x\n", V_VT(&var));
+
+    props_bstr = SysAllocString( props );
+    hr = IDispatch_GetIDsOfNames( V_DISPATCH(&var), &IID_NULL, &props_bstr, 1, english, &id );
+    ok( hr == S_OK, "got %x\n", hr );
+    ok( id == 21, "got %d\n", id );
+
+    hr = IDispatch_QueryInterface( V_DISPATCH(&var), &IID_ISWbemObject, (void**)&object );
+    ok( hr == S_OK, "got %x\n", hr );
+    VariantClear( &var );
+
+    hr = ISWbemObject_get_Properties_( object, &prop_set );
+    ok( hr == S_OK, "got %x\n", hr );
+
+    hr = ISWbemPropertySet_Item( prop_set, props_bstr, 0, &prop );
+    ok( hr == WBEM_E_NOT_FOUND, "got %x\n", hr );
+    SysFreeString( props_bstr );
+
+    procid_bstr = SysAllocString( procid );
+    hr = ISWbemPropertySet_Item( prop_set, procid_bstr, 0, &prop );
+    ok( hr == S_OK, "got %x\n", hr );
+    SysFreeString( procid_bstr );
+
+    count = 0;
+    hr = ISWbemPropertySet_get_Count( prop_set, &count );
+    ok( hr == S_OK, "got %x\n", hr );
+    ok( count > 0, "got %d\n", count );
+
+    hr = ISWbemProperty_get_Value( prop, &var );
+    ok( hr == S_OK, "got %x\n", hr );
+    ok( V_VT(&var) == VT_BSTR, "got %x\n", V_VT(&var) );
+    VariantClear( &var );
+
+    hr = ISWbemServices_get_Security_( services, &security );
+    ok( hr == S_OK, "got %x\n", hr );
+    imp_level = 0xdeadbeef;
+    hr = ISWbemSecurity_get_ImpersonationLevel( security, &imp_level );
+    ok( hr == S_OK, "got %x\n", hr );
+    ok( imp_level == wbemImpersonationLevelImpersonate, "got %u\n", imp_level );
+    auth_level = 0xdeadbeef;
+    hr = ISWbemSecurity_get_AuthenticationLevel( security, &auth_level );
+    ok( hr == S_OK, "got %x\n", hr );
+    ok( auth_level == wbemAuthenticationLevelPktPrivacy, "got %u\n", auth_level );
+
+    ISWbemSecurity_Release(security);
+    ISWbemProperty_Release( prop );
+    ISWbemPropertySet_Release( prop_set );
+    ISWbemObject_Release( object );
+    IEnumVARIANT_Release( enum_var );
+    ISWbemObjectSet_Release( object_set );
+    ISWbemServices_Release( services );
+    ISWbemLocator_Release( locator );
 }
 
 START_TEST(wbemdisp)

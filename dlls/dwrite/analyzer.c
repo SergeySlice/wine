@@ -31,10 +31,12 @@ WINE_DEFAULT_DEBUG_CHANNEL(dwrite);
 extern const unsigned short wine_linebreak_table[] DECLSPEC_HIDDEN;
 extern const unsigned short wine_scripts_table[] DECLSPEC_HIDDEN;
 
+/* Number of characters needed for LOCALE_SNATIVEDIGITS */
+#define NATIVE_DIGITS_LEN 11
+
 struct dwritescript_properties {
     DWRITE_SCRIPT_PROPERTIES props;
-    UINT32 scripttag;    /* OpenType script tag */
-    UINT32 scriptalttag; /* Version 2 tag, 0 if not defined */
+    UINT32 scripttags[3]; /* Maximum 2 script tags, 0-terminated. */
     BOOL is_complex;
     const struct scriptshaping_ops *ops;
 };
@@ -46,169 +48,201 @@ static const struct dwritescript_properties dwritescripts_properties[Script_Last
     { /* Zzzz */ { 0x7a7a7a5a, 999, 15, 0x0020, 0, 0, 0, 0, 0, 0, 0 } },
     { /* Zyyy */ { 0x7979795a, 998,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 } },
     { /* Zinh */ { 0x686e695a, 994, 15, 0x0020, 1, 0, 0, 0, 0, 0, 0 } },
-    { /* Arab */ { 0x62617241, 160,  8, 0x0640, 0, 1, 0, 0, 0, 1, 1 }, _OT('a','r','a','b'), 0, TRUE },
-    { /* Armn */ { 0x6e6d7241, 230,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('a','r','m','n') },
-    { /* Avst */ { 0x74737641, 134,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('a','v','s','t') },
-    { /* Bali */ { 0x696c6142, 360, 15, 0x0020, 1, 0, 1, 0, 0, 0, 0 }, _OT('b','a','l','i') },
-    { /* Bamu */ { 0x756d6142, 435,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('b','a','m','u') },
-    { /* Batk */ { 0x6b746142, 365,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('b','a','t','k') },
-    { /* Beng */ { 0x676e6542, 325, 15, 0x0020, 1, 1, 0, 0, 0, 1, 0 }, _OT('b','e','n','g'), _OT('b','n','g','2'), TRUE },
-    { /* Bopo */ { 0x6f706f42, 285,  1, 0x0020, 0, 0, 1, 1, 0, 0, 0 }, _OT('b','o','p','o') },
-    { /* Brah */ { 0x68617242, 300,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('b','r','a','h') },
-    { /* Brai */ { 0x69617242, 570,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('b','r','a','i'), 0, TRUE },
-    { /* Bugi */ { 0x69677542, 367,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('b','u','g','i') },
-    { /* Buhd */ { 0x64687542, 372,  8, 0x0020, 0, 0, 1, 0, 0, 0, 0 }, _OT('b','u','h','d') },
-    { /* Cans */ { 0x736e6143, 440,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('c','a','n','s'), 0, TRUE },
-    { /* Cari */ { 0x69726143, 201,  1, 0x0020, 0, 0, 1, 0, 0, 0, 0 }, _OT('c','a','r','i') },
-    { /* Cham */ { 0x6d616843, 358,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('c','h','a','m') },
-    { /* Cher */ { 0x72656843, 445,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('c','h','e','r'), 0, TRUE },
-    { /* Copt */ { 0x74706f43, 204,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('c','o','p','t') },
-    { /* Xsux */ { 0x78757358,  20,  1, 0x0020, 0, 0, 1, 1, 0, 0, 0 }, _OT('x','s','u','x') },
-    { /* Cprt */ { 0x74727043, 403,  1, 0x0020, 0, 0, 1, 0, 0, 0, 0 }, _OT('c','p','r','t') },
-    { /* Cyrl */ { 0x6c727943, 220,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('c','y','r','l') },
-    { /* Dsrt */ { 0x74727344, 250,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('d','s','r','t'), 0, TRUE },
-    { /* Deva */ { 0x61766544, 315, 15, 0x0020, 1, 1, 0, 0, 0, 1, 0 }, _OT('d','e','v','a'), _OT('d','e','v','2'), TRUE },
-    { /* Egyp */ { 0x70796745,  50,  1, 0x0020, 0, 0, 1, 1, 0, 0, 0 }, _OT('e','g','y','p') },
-    { /* Ethi */ { 0x69687445, 430,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('e','t','h','i'), 0, TRUE },
-    { /* Geor */ { 0x726f6547, 240,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('g','e','o','r') },
-    { /* Glag */ { 0x67616c47, 225,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('g','l','a','g') },
-    { /* Goth */ { 0x68746f47, 206,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('g','o','t','h') },
-    { /* Grek */ { 0x6b657247, 200,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('g','r','e','k') },
-    { /* Gujr */ { 0x726a7547, 320, 15, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('g','u','j','r'), _OT('g','j','r','2'), TRUE },
-    { /* Guru */ { 0x75727547, 310, 15, 0x0020, 1, 1, 0, 0, 0, 1, 0 }, _OT('g','u','r','u'), _OT('g','u','r','2'), TRUE },
-    { /* Hani */ { 0x696e6148, 500,  8, 0x0020, 0, 0, 1, 1, 0, 0, 0 }, _OT('h','a','n','i') },
-    { /* Hang */ { 0x676e6148, 286,  8, 0x0020, 1, 1, 1, 1, 0, 0, 0 }, _OT('h','a','n','g'), 0, TRUE },
-    { /* Hano */ { 0x6f6e6148, 371,  8, 0x0020, 0, 0, 1, 0, 0, 0, 0 }, _OT('h','a','n','o') },
-    { /* Hebr */ { 0x72626548, 125,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('h','e','b','r'), 0, TRUE },
-    { /* Hira */ { 0x61726948, 410,  8, 0x0020, 0, 0, 1, 1, 0, 0, 0 }, _OT('k','a','n','a') },
-    { /* Armi */ { 0x696d7241, 124,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('a','r','m','i') },
-    { /* Phli */ { 0x696c6850, 131,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('p','h','l','i') },
-    { /* Prti */ { 0x69747250, 130,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('p','r','t','i') },
-    { /* Java */ { 0x6176614a, 361, 15, 0x0020, 1, 0, 1, 0, 0, 0, 0 }, _OT('j','a','v','a') },
-    { /* Kthi */ { 0x6968744b, 317, 15, 0x0020, 1, 1, 0, 0, 0, 1, 0 }, _OT('k','t','h','i') },
-    { /* Knda */ { 0x61646e4b, 345, 15, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('k','n','d','a'), _OT('k','n','d','2'), TRUE },
-    { /* Kana */ { 0x616e614b, 411,  8, 0x0020, 0, 0, 1, 1, 0, 0, 0 }, _OT('k','a','n','a') },
-    { /* Kali */ { 0x696c614b, 357,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('k','a','l','i') },
-    { /* Khar */ { 0x7261684b, 305, 15, 0x0020, 1, 0, 1, 0, 0, 0, 0 }, _OT('k','h','a','r') },
-    { /* Khmr */ { 0x726d684b, 355,  8, 0x0020, 1, 0, 1, 0, 1, 0, 0 }, _OT('k','h','m','r'), 0, TRUE },
-    { /* Laoo */ { 0x6f6f614c, 356,  8, 0x0020, 1, 0, 1, 0, 1, 0, 0 }, _OT('l','a','o',' '), 0, TRUE },
-    { /* Latn */ { 0x6e74614c, 215,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('l','a','t','n'), 0, FALSE, &latn_shaping_ops },
-    { /* Lepc */ { 0x6370654c, 335,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('l','e','p','c') },
-    { /* Limb */ { 0x626d694c, 336,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('l','i','m','b') },
-    { /* Linb */ { 0x626e694c, 401,  1, 0x0020, 0, 0, 1, 1, 0, 0, 0 }, _OT('l','i','n','b') },
-    { /* Lisu */ { 0x7573694c, 399,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('l','i','s','u') },
-    { /* Lyci */ { 0x6963794c, 202,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('l','y','c','i') },
-    { /* Lydi */ { 0x6964794c, 116,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('l','y','d','i') },
-    { /* Mlym */ { 0x6d796c4d, 347, 15, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('m','l','y','m'), _OT('m','l','m','2'), TRUE },
-    { /* Mand */ { 0x646e614d, 140,  8, 0x0640, 0, 1, 0, 0, 0, 1, 1 }, _OT('m','a','n','d') },
-    { /* Mtei */ { 0x6965744d, 337,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('m','t','e','i') },
-    { /* Mong */ { 0x676e6f4d, 145,  8, 0x0020, 0, 1, 0, 0, 0, 1, 1 }, _OT('m','o','n','g'), 0, TRUE },
-    { /* Mymr */ { 0x726d794d, 350, 15, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('m','y','m','r'), 0, TRUE },
-    { /* Talu */ { 0x756c6154, 354,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('t','a','l','u'), 0, TRUE },
-    { /* Nkoo */ { 0x6f6f6b4e, 165,  8, 0x0020, 0, 1, 0, 0, 0, 1, 1 }, _OT('n','k','o',' '), 0, TRUE },
-    { /* Ogam */ { 0x6d61674f, 212,  1, 0x1680, 0, 1, 0, 0, 0, 1, 0 }, _OT('o','g','a','m'), 0, TRUE },
-    { /* Olck */ { 0x6b636c4f, 261,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('o','l','c','k') },
-    { /* Ital */ { 0x6c617449, 210,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('i','t','a','l') },
-    { /* Xpeo */ { 0x6f657058,  30,  1, 0x0020, 0, 1, 1, 1, 0, 0, 0 }, _OT('x','p','e','o'), 0, TRUE },
-    { /* Sarb */ { 0x62726153, 105,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('s','a','r','b') },
-    { /* Orkh */ { 0x686b724f, 175,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('o','r','k','h') },
-    { /* Orya */ { 0x6179724f, 327, 15, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('o','r','y','a'), _OT('o','r','y','2'), TRUE },
-    { /* Osma */ { 0x616d734f, 260,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('o','s','m','a'), 0, TRUE },
-    { /* Phag */ { 0x67616850, 331,  8, 0x0020, 0, 1, 0, 0, 0, 1, 1 }, _OT('p','h','a','g'), 0, TRUE },
-    { /* Phnx */ { 0x786e6850, 115,  1, 0x0020, 0, 0, 1, 0, 0, 0, 0 }, _OT('p','h','n','x') },
-    { /* Rjng */ { 0x676e6a52, 363,  8, 0x0020, 1, 0, 1, 0, 0, 0, 0 }, _OT('r','j','n','g') },
-    { /* Runr */ { 0x726e7552, 211,  1, 0x0020, 0, 0, 1, 0, 0, 0, 0 }, _OT('r','u','n','r'), 0, TRUE },
-    { /* Samr */ { 0x726d6153, 123,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('s','a','m','r') },
-    { /* Saur */ { 0x72756153, 344,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('s','a','u','r') },
-    { /* Shaw */ { 0x77616853, 281,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('s','h','a','w') },
-    { /* Sinh */ { 0x686e6953, 348,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('s','i','n','h'), 0, TRUE },
-    { /* Sund */ { 0x646e7553, 362,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('s','u','n','d') },
-    { /* Sylo */ { 0x6f6c7953, 316,  8, 0x0020, 1, 1, 0, 0, 0, 1, 0 }, _OT('s','y','l','o') },
-    { /* Syrc */ { 0x63727953, 135,  8, 0x0640, 0, 1, 0, 0, 0, 1, 1 }, _OT('s','y','r','c'), 0, TRUE },
-    { /* Tglg */ { 0x676c6754, 370,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('t','g','l','g') },
-    { /* Tagb */ { 0x62676154, 373,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('t','a','g','b') },
-    { /* Tale */ { 0x656c6154, 353,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('t','a','l','e'), 0, TRUE },
-    { /* Lana */ { 0x616e614c, 351,  8, 0x0020, 1, 0, 1, 0, 0, 0, 0 }, _OT('l','a','n','a') },
-    { /* Tavt */ { 0x74766154, 359,  8, 0x0020, 1, 0, 1, 0, 1, 0, 0 }, _OT('t','a','v','t') },
-    { /* Taml */ { 0x6c6d6154, 346, 15, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('t','a','m','l'), _OT('t','m','l','2'), TRUE },
-    { /* Telu */ { 0x756c6554, 340, 15, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('t','e','l','u'), _OT('t','e','l','2'), TRUE },
-    { /* Thaa */ { 0x61616854, 170,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('t','h','a','a'), 0, TRUE },
-    { /* Thai */ { 0x69616854, 352,  8, 0x0020, 1, 0, 1, 0, 1, 0, 0 }, _OT('t','h','a','i'), 0, TRUE },
-    { /* Tibt */ { 0x74626954, 330,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('t','i','b','t'), 0, TRUE },
-    { /* Tfng */ { 0x676e6654, 120,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('t','f','n','g'), 0, TRUE },
-    { /* Ugar */ { 0x72616755,  40,  1, 0x0020, 0, 0, 1, 1, 0, 0, 0 }, _OT('u','g','a','r') },
-    { /* Vaii */ { 0x69696156, 470,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('v','a','i',' '), 0, TRUE },
-    { /* Yiii */ { 0x69696959, 460,  1, 0x0020, 0, 0, 1, 1, 0, 0, 0 }, _OT('y','i',' ',' '), 0, TRUE },
-    { /* Cakm */ { 0x6d6b6143, 349,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('c','a','k','m') },
-    { /* Merc */ { 0x6372654d, 101,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('m','e','r','c') },
-    { /* Mero */ { 0x6f72654d, 100,  1, 0x0020, 0, 1, 1, 1, 0, 0, 0 }, _OT('m','e','r','o') },
-    { /* Plrd */ { 0x64726c50, 282,  8, 0x0020, 1, 0, 1, 0, 0, 0, 0 }, _OT('p','l','r','d') },
-    { /* Shrd */ { 0x64726853, 319,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('s','h','r','d') },
-    { /* Sora */ { 0x61726f53, 398,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('s','o','r','a') },
-    { /* Takr */ { 0x726b6154, 321,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('t','a','k','r') },
-    { /* Bass */ { 0x73736142, 259,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('b','a','s','s') },
-    { /* Aghb */ { 0x62686741, 239,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('a','g','h','b') },
-    { /* Dupl */ { 0x6c707544, 755,  8, 0x0020, 0, 1, 0, 0, 0, 1, 1 }, _OT('d','u','p','l') },
-    { /* Elba */ { 0x61626c45, 226,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('e','l','b','a') },
-    { /* Gran */ { 0x6e617247, 343, 15, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('g','r','a','n') },
-    { /* Khoj */ { 0x6a6f684b, 322, 15, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('k','h','o','j') },
-    { /* Sind */ { 0x646e6953, 318,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('s','i','n','d') },
-    { /* Lina */ { 0x616e694c, 400,  1, 0x0020, 0, 0, 1, 1, 0, 0, 0 }, _OT('l','i','n','a') },
-    { /* Mahj */ { 0x6a68614d, 314,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('m','a','h','j') },
-    { /* Mani */ { 0x696e614d, 139,  8, 0x0640, 0, 1, 0, 0, 0, 1, 1 }, _OT('m','a','n','i') },
-    { /* Mend */ { 0x646e654d, 438,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('m','e','n','d') },
-    { /* Modi */ { 0x69646f4d, 324, 15, 0x0020, 1, 1, 0, 0, 0, 1, 0 }, _OT('m','o','d','i') },
-    { /* Mroo */ { 0x6f6f724d, 199,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('m','r','o','o') },
-    { /* Nbat */ { 0x7461624e, 159,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('n','b','a','t') },
-    { /* Narb */ { 0x6272614e, 106,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('n','a','r','b') },
-    { /* Perm */ { 0x6d726550, 227,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('p','e','r','m') },
-    { /* Hmng */ { 0x676e6d48, 450,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('h','m','n','g') },
-    { /* Palm */ { 0x6d6c6150, 126,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, _OT('p','a','l','m') },
-    { /* Pauc */ { 0x63756150, 263,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('p','a','u','c') },
-    { /* Phlp */ { 0x706c6850, 132,  8, 0x0640, 0, 1, 0, 0, 0, 1, 1 }, _OT('p','h','l','p') },
-    { /* Sidd */ { 0x64646953, 302,  8, 0x0020, 1, 0, 1, 1, 0, 0, 0 }, _OT('s','i','d','d') },
-    { /* Tirh */ { 0x68726954, 326, 15, 0x0020, 1, 1, 0, 0, 0, 1, 0 }, _OT('t','i','r','h') },
-    { /* Wara */ { 0x61726157, 262,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('w','a','r','a') },
-    { /* Adlm */ { 0x6d6c6441, 166,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('a','d','l','m') },
-    { /* Ahom */ { 0x6d6f6841, 338,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('a','h','o','m') },
-    { /* Hluw */ { 0x77756c48,  80,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('h','l','u','w') },
-    { /* Bhks */ { 0x736b6842, 334,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('b','h','k','s') },
-    { /* Hatr */ { 0x72746148, 127,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('h','a','t','r') },
-    { /* Marc */ { 0x6372614d, 332,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('m','a','r','c') },
-    { /* Mult */ { 0x746c754d, 323,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('m','u','l','t') },
-    { /* Newa */ { 0x6177654e, 333,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('n','e','w','a') },
-    { /* Hung */ { 0x676e7548, 176,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('h','u','n','g') },
-    { /* Osge */ { 0x6567734f, 219,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('o','s','g','e') },
-    { /* Sgnw */ { 0x776e6753,  95,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('s','g','n','w') },
-    { /* Tang */ { 0x676e6154, 520,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, _OT('t','a','n','g') },
+    { /* Arab */ { 0x62617241, 160,  8, 0x0640, 0, 1, 0, 0, 0, 1, 1 }, { _OT('a','r','a','b') }, TRUE },
+    { /* Armn */ { 0x6e6d7241, 230,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('a','r','m','n') } },
+    { /* Avst */ { 0x74737641, 134,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('a','v','s','t') } },
+    { /* Bali */ { 0x696c6142, 360, 15, 0x0020, 1, 0, 1, 0, 0, 0, 0 }, { _OT('b','a','l','i') } },
+    { /* Bamu */ { 0x756d6142, 435,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('b','a','m','u') } },
+    { /* Batk */ { 0x6b746142, 365,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('b','a','t','k') } },
+    { /* Beng */ { 0x676e6542, 325, 15, 0x0020, 1, 1, 0, 0, 0, 1, 0 }, { _OT('b','n','g','2'), _OT('b','e','n','g') }, TRUE },
+    { /* Bopo */ { 0x6f706f42, 285,  1, 0x0020, 0, 0, 1, 1, 0, 0, 0 }, { _OT('b','o','p','o') } },
+    { /* Brah */ { 0x68617242, 300,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('b','r','a','h') } },
+    { /* Brai */ { 0x69617242, 570,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('b','r','a','i') }, TRUE },
+    { /* Bugi */ { 0x69677542, 367,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('b','u','g','i') } },
+    { /* Buhd */ { 0x64687542, 372,  8, 0x0020, 0, 0, 1, 0, 0, 0, 0 }, { _OT('b','u','h','d') } },
+    { /* Cans */ { 0x736e6143, 440,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('c','a','n','s') }, TRUE },
+    { /* Cari */ { 0x69726143, 201,  1, 0x0020, 0, 0, 1, 0, 0, 0, 0 }, { _OT('c','a','r','i') } },
+    { /* Cham */ { 0x6d616843, 358,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('c','h','a','m') } },
+    { /* Cher */ { 0x72656843, 445,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('c','h','e','r') }, TRUE },
+    { /* Copt */ { 0x74706f43, 204,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('c','o','p','t') } },
+    { /* Xsux */ { 0x78757358,  20,  1, 0x0020, 0, 0, 1, 1, 0, 0, 0 }, { _OT('x','s','u','x') } },
+    { /* Cprt */ { 0x74727043, 403,  1, 0x0020, 0, 0, 1, 0, 0, 0, 0 }, { _OT('c','p','r','t') } },
+    { /* Cyrl */ { 0x6c727943, 220,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('c','y','r','l') } },
+    { /* Dsrt */ { 0x74727344, 250,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('d','s','r','t') }, TRUE },
+    { /* Deva */ { 0x61766544, 315, 15, 0x0020, 1, 1, 0, 0, 0, 1, 0 }, { _OT('d','e','v','2'), _OT('d','e','v','a') }, TRUE },
+    { /* Egyp */ { 0x70796745,  50,  1, 0x0020, 0, 0, 1, 1, 0, 0, 0 }, { _OT('e','g','y','p') } },
+    { /* Ethi */ { 0x69687445, 430,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('e','t','h','i') }, TRUE },
+    { /* Geor */ { 0x726f6547, 240,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('g','e','o','r') } },
+    { /* Glag */ { 0x67616c47, 225,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('g','l','a','g') } },
+    { /* Goth */ { 0x68746f47, 206,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('g','o','t','h') } },
+    { /* Grek */ { 0x6b657247, 200,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('g','r','e','k') } },
+    { /* Gujr */ { 0x726a7547, 320, 15, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('g','j','r','2'), _OT('g','u','j','r') }, TRUE },
+    { /* Guru */ { 0x75727547, 310, 15, 0x0020, 1, 1, 0, 0, 0, 1, 0 }, { _OT('g','u','r','2'), _OT('g','u','r','u') }, TRUE },
+    { /* Hani */ { 0x696e6148, 500,  8, 0x0020, 0, 0, 1, 1, 0, 0, 0 }, { _OT('h','a','n','i') } },
+    { /* Hang */ { 0x676e6148, 286,  8, 0x0020, 1, 1, 1, 1, 0, 0, 0 }, { _OT('h','a','n','g') }, TRUE },
+    { /* Hano */ { 0x6f6e6148, 371,  8, 0x0020, 0, 0, 1, 0, 0, 0, 0 }, { _OT('h','a','n','o') } },
+    { /* Hebr */ { 0x72626548, 125,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('h','e','b','r') }, TRUE },
+    { /* Hira */ { 0x61726948, 410,  8, 0x0020, 0, 0, 1, 1, 0, 0, 0 }, { _OT('k','a','n','a') } },
+    { /* Armi */ { 0x696d7241, 124,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('a','r','m','i') } },
+    { /* Phli */ { 0x696c6850, 131,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('p','h','l','i') } },
+    { /* Prti */ { 0x69747250, 130,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('p','r','t','i') } },
+    { /* Java */ { 0x6176614a, 361, 15, 0x0020, 1, 0, 1, 0, 0, 0, 0 }, { _OT('j','a','v','a') } },
+    { /* Kthi */ { 0x6968744b, 317, 15, 0x0020, 1, 1, 0, 0, 0, 1, 0 }, { _OT('k','t','h','i') } },
+    { /* Knda */ { 0x61646e4b, 345, 15, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('k','n','d','2'), _OT('k','n','d','a') }, TRUE },
+    { /* Kana */ { 0x616e614b, 411,  8, 0x0020, 0, 0, 1, 1, 0, 0, 0 }, { _OT('k','a','n','a') } },
+    { /* Kali */ { 0x696c614b, 357,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('k','a','l','i') } },
+    { /* Khar */ { 0x7261684b, 305, 15, 0x0020, 1, 0, 1, 0, 0, 0, 0 }, { _OT('k','h','a','r') } },
+    { /* Khmr */ { 0x726d684b, 355,  8, 0x0020, 1, 0, 1, 0, 1, 0, 0 }, { _OT('k','h','m','r') }, TRUE },
+    { /* Laoo */ { 0x6f6f614c, 356,  8, 0x0020, 1, 0, 1, 0, 1, 0, 0 }, { _OT('l','a','o',' ') }, TRUE },
+    { /* Latn */ { 0x6e74614c, 215,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('l','a','t','n') }, FALSE, &latn_shaping_ops },
+    { /* Lepc */ { 0x6370654c, 335,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('l','e','p','c') } },
+    { /* Limb */ { 0x626d694c, 336,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('l','i','m','b') } },
+    { /* Linb */ { 0x626e694c, 401,  1, 0x0020, 0, 0, 1, 1, 0, 0, 0 }, { _OT('l','i','n','b') } },
+    { /* Lisu */ { 0x7573694c, 399,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('l','i','s','u') } },
+    { /* Lyci */ { 0x6963794c, 202,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('l','y','c','i') } },
+    { /* Lydi */ { 0x6964794c, 116,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('l','y','d','i') } },
+    { /* Mlym */ { 0x6d796c4d, 347, 15, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('m','l','m','2'), _OT('m','l','y','m') }, TRUE },
+    { /* Mand */ { 0x646e614d, 140,  8, 0x0640, 0, 1, 0, 0, 0, 1, 1 }, { _OT('m','a','n','d') } },
+    { /* Mtei */ { 0x6965744d, 337,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('m','t','e','i') } },
+    { /* Mong */ { 0x676e6f4d, 145,  8, 0x0020, 0, 1, 0, 0, 0, 1, 1 }, { _OT('m','o','n','g') }, TRUE },
+    { /* Mymr */ { 0x726d794d, 350, 15, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('m','y','m','r') }, TRUE },
+    { /* Talu */ { 0x756c6154, 354,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('t','a','l','u') }, TRUE },
+    { /* Nkoo */ { 0x6f6f6b4e, 165,  8, 0x0020, 0, 1, 0, 0, 0, 1, 1 }, { _OT('n','k','o',' ') }, TRUE },
+    { /* Ogam */ { 0x6d61674f, 212,  1, 0x1680, 0, 1, 0, 0, 0, 1, 0 }, { _OT('o','g','a','m') }, TRUE },
+    { /* Olck */ { 0x6b636c4f, 261,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('o','l','c','k') } },
+    { /* Ital */ { 0x6c617449, 210,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('i','t','a','l') } },
+    { /* Xpeo */ { 0x6f657058,  30,  1, 0x0020, 0, 1, 1, 1, 0, 0, 0 }, { _OT('x','p','e','o') }, TRUE },
+    { /* Sarb */ { 0x62726153, 105,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('s','a','r','b') } },
+    { /* Orkh */ { 0x686b724f, 175,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('o','r','k','h') } },
+    { /* Orya */ { 0x6179724f, 327, 15, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('o','r','y','2'), _OT('o','r','y','a') }, TRUE },
+    { /* Osma */ { 0x616d734f, 260,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('o','s','m','a') }, TRUE },
+    { /* Phag */ { 0x67616850, 331,  8, 0x0020, 0, 1, 0, 0, 0, 1, 1 }, { _OT('p','h','a','g') }, TRUE },
+    { /* Phnx */ { 0x786e6850, 115,  1, 0x0020, 0, 0, 1, 0, 0, 0, 0 }, { _OT('p','h','n','x') } },
+    { /* Rjng */ { 0x676e6a52, 363,  8, 0x0020, 1, 0, 1, 0, 0, 0, 0 }, { _OT('r','j','n','g') } },
+    { /* Runr */ { 0x726e7552, 211,  1, 0x0020, 0, 0, 1, 0, 0, 0, 0 }, { _OT('r','u','n','r') }, TRUE },
+    { /* Samr */ { 0x726d6153, 123,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('s','a','m','r') } },
+    { /* Saur */ { 0x72756153, 344,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('s','a','u','r') } },
+    { /* Shaw */ { 0x77616853, 281,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('s','h','a','w') } },
+    { /* Sinh */ { 0x686e6953, 348,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('s','i','n','h') }, TRUE },
+    { /* Sund */ { 0x646e7553, 362,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('s','u','n','d') } },
+    { /* Sylo */ { 0x6f6c7953, 316,  8, 0x0020, 1, 1, 0, 0, 0, 1, 0 }, { _OT('s','y','l','o') } },
+    { /* Syrc */ { 0x63727953, 135,  8, 0x0640, 0, 1, 0, 0, 0, 1, 1 }, { _OT('s','y','r','c') }, TRUE },
+    { /* Tglg */ { 0x676c6754, 370,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('t','g','l','g') } },
+    { /* Tagb */ { 0x62676154, 373,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('t','a','g','b') } },
+    { /* Tale */ { 0x656c6154, 353,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('t','a','l','e') }, TRUE },
+    { /* Lana */ { 0x616e614c, 351,  8, 0x0020, 1, 0, 1, 0, 0, 0, 0 }, { _OT('l','a','n','a') } },
+    { /* Tavt */ { 0x74766154, 359,  8, 0x0020, 1, 0, 1, 0, 1, 0, 0 }, { _OT('t','a','v','t') } },
+    { /* Taml */ { 0x6c6d6154, 346, 15, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('t','m','l','2'), _OT('t','a','m','l') }, TRUE },
+    { /* Telu */ { 0x756c6554, 340, 15, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('t','e','l','2'), _OT('t','e','l','u') }, TRUE },
+    { /* Thaa */ { 0x61616854, 170,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('t','h','a','a') }, TRUE },
+    { /* Thai */ { 0x69616854, 352,  8, 0x0020, 1, 0, 1, 0, 1, 0, 0 }, { _OT('t','h','a','i') }, TRUE },
+    { /* Tibt */ { 0x74626954, 330,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('t','i','b','t') }, TRUE },
+    { /* Tfng */ { 0x676e6654, 120,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('t','f','n','g') }, TRUE },
+    { /* Ugar */ { 0x72616755,  40,  1, 0x0020, 0, 0, 1, 1, 0, 0, 0 }, { _OT('u','g','a','r') } },
+    { /* Vaii */ { 0x69696156, 470,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('v','a','i',' ') }, TRUE },
+    { /* Yiii */ { 0x69696959, 460,  1, 0x0020, 0, 0, 1, 1, 0, 0, 0 }, { _OT('y','i',' ',' ') }, TRUE },
+    { /* Cakm */ { 0x6d6b6143, 349,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('c','a','k','m') } },
+    { /* Merc */ { 0x6372654d, 101,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('m','e','r','c') } },
+    { /* Mero */ { 0x6f72654d, 100,  1, 0x0020, 0, 1, 1, 1, 0, 0, 0 }, { _OT('m','e','r','o') } },
+    { /* Plrd */ { 0x64726c50, 282,  8, 0x0020, 1, 0, 1, 0, 0, 0, 0 }, { _OT('p','l','r','d') } },
+    { /* Shrd */ { 0x64726853, 319,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('s','h','r','d') } },
+    { /* Sora */ { 0x61726f53, 398,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('s','o','r','a') } },
+    { /* Takr */ { 0x726b6154, 321,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('t','a','k','r') } },
+    { /* Bass */ { 0x73736142, 259,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('b','a','s','s') } },
+    { /* Aghb */ { 0x62686741, 239,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('a','g','h','b') } },
+    { /* Dupl */ { 0x6c707544, 755,  8, 0x0020, 0, 1, 0, 0, 0, 1, 1 }, { _OT('d','u','p','l') } },
+    { /* Elba */ { 0x61626c45, 226,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('e','l','b','a') } },
+    { /* Gran */ { 0x6e617247, 343, 15, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('g','r','a','n') } },
+    { /* Khoj */ { 0x6a6f684b, 322, 15, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('k','h','o','j') } },
+    { /* Sind */ { 0x646e6953, 318,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('s','i','n','d') } },
+    { /* Lina */ { 0x616e694c, 400,  1, 0x0020, 0, 0, 1, 1, 0, 0, 0 }, { _OT('l','i','n','a') } },
+    { /* Mahj */ { 0x6a68614d, 314,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('m','a','h','j') } },
+    { /* Mani */ { 0x696e614d, 139,  8, 0x0640, 0, 1, 0, 0, 0, 1, 1 }, { _OT('m','a','n','i') } },
+    { /* Mend */ { 0x646e654d, 438,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('m','e','n','d') } },
+    { /* Modi */ { 0x69646f4d, 324, 15, 0x0020, 1, 1, 0, 0, 0, 1, 0 }, { _OT('m','o','d','i') } },
+    { /* Mroo */ { 0x6f6f724d, 199,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('m','r','o','o') } },
+    { /* Nbat */ { 0x7461624e, 159,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('n','b','a','t') } },
+    { /* Narb */ { 0x6272614e, 106,  1, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('n','a','r','b') } },
+    { /* Perm */ { 0x6d726550, 227,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('p','e','r','m') } },
+    { /* Hmng */ { 0x676e6d48, 450,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('h','m','n','g') } },
+    { /* Palm */ { 0x6d6c6150, 126,  8, 0x0020, 1, 1, 1, 0, 0, 0, 0 }, { _OT('p','a','l','m') } },
+    { /* Pauc */ { 0x63756150, 263,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('p','a','u','c') } },
+    { /* Phlp */ { 0x706c6850, 132,  8, 0x0640, 0, 1, 0, 0, 0, 1, 1 }, { _OT('p','h','l','p') } },
+    { /* Sidd */ { 0x64646953, 302,  8, 0x0020, 1, 0, 1, 1, 0, 0, 0 }, { _OT('s','i','d','d') } },
+    { /* Tirh */ { 0x68726954, 326, 15, 0x0020, 1, 1, 0, 0, 0, 1, 0 }, { _OT('t','i','r','h') } },
+    { /* Wara */ { 0x61726157, 262,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('w','a','r','a') } },
+    { /* Adlm */ { 0x6d6c6441, 166,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('a','d','l','m') } },
+    { /* Ahom */ { 0x6d6f6841, 338,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('a','h','o','m') } },
+    { /* Hluw */ { 0x77756c48,  80,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('h','l','u','w') } },
+    { /* Bhks */ { 0x736b6842, 334,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('b','h','k','s') } },
+    { /* Hatr */ { 0x72746148, 127,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('h','a','t','r') } },
+    { /* Marc */ { 0x6372614d, 332,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('m','a','r','c') } },
+    { /* Mult */ { 0x746c754d, 323,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('m','u','l','t') } },
+    { /* Newa */ { 0x6177654e, 333,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('n','e','w','a') } },
+    { /* Hung */ { 0x676e7548, 176,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('h','u','n','g') } },
+    { /* Osge */ { 0x6567734f, 219,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('o','s','g','e') } },
+    { /* Sgnw */ { 0x776e6753,  95,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('s','g','n','w') } },
+    { /* Tang */ { 0x676e6154, 520,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('t','a','n','g') } },
+    { /* Gonm */ { 0x6d6e6f47, 313,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('g','o','n','m') } },
+    { /* Nshu */ { 0x7568734e, 499,  1, 0x0020, 0, 0, 1, 1, 0, 0, 0 }, { _OT('n','s','h','u') } },
+    { /* Soyo */ { 0x6f796f53, 329,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('s','o','y','o') } },
+    { /* Zanb */ { 0x626e615a, 339,  8, 0x0020, 0, 1, 1, 0, 0, 0, 0 }, { _OT('z','a','n','b') } },
 };
 #undef _OT
 
 const char *debugstr_sa_script(UINT16 script)
 {
-    return script < Script_LastId ? debugstr_an((char*)&dwritescripts_properties[script].props.isoScriptCode, 4): "not defined";
+    return script < Script_LastId ? debugstr_tag(dwritescripts_properties[script].props.isoScriptCode) : "undefined";
 }
 
 /* system font falback configuration */
 static const WCHAR meiryoW[] = {'M','e','i','r','y','o',0};
 
+static const WCHAR *cjk_families[] = { meiryoW };
+
+static const DWRITE_UNICODE_RANGE cjk_ranges[] =
+{
+    { 0x3000, 0x30ff }, /* CJK Symbols and Punctuation, Hiragana, Katakana */
+    { 0x31f0, 0x31ff }, /* Katakana Phonetic Extensions */
+    { 0x4e00, 0x9fff }, /* CJK Unified Ideographs */
+};
+
 struct fallback_mapping {
-    DWRITE_UNICODE_RANGE range;
-    const WCHAR *family;
+    DWRITE_UNICODE_RANGE *ranges;
+    UINT32 ranges_count;
+    WCHAR **families;
+    UINT32 families_count;
+    IDWriteFontCollection *collection;
+    WCHAR *locale;
+    FLOAT scale;
 };
 
 static const struct fallback_mapping fontfallback_neutral_data[] = {
-    { { 0x3000, 0x30ff }, meiryoW }, /* CJK Symbols and Punctuation, Hiragana, Katakana */
-    { { 0x31f0, 0x31ff }, meiryoW }, /* Katakana Phonetic Extensions */
-    { { 0x4e00, 0x9fff }, meiryoW }, /* CJK Unified Ideographs */
+#define MAPPING_RANGE(ranges, families) \
+        { (DWRITE_UNICODE_RANGE *)ranges, ARRAY_SIZE(ranges), \
+          (WCHAR **)families, ARRAY_SIZE(families) }
+
+    MAPPING_RANGE(cjk_ranges, cjk_families),
+
+#undef MAPPING_RANGE
 };
 
 struct dwrite_fontfallback {
     IDWriteFontFallback IDWriteFontFallback_iface;
-    IDWriteFactory4 *factory;
+    LONG ref;
+    IDWriteFactory5 *factory;
     IDWriteFontCollection1 *systemcollection;
-    const struct fallback_mapping *mappings;
-    UINT32 count;
+    struct fallback_mapping *mappings;
+    UINT32 mappings_count;
+};
+
+struct dwrite_fontfallback_builder {
+    IDWriteFontFallbackBuilder IDWriteFontFallbackBuilder_iface;
+    LONG ref;
+    IDWriteFactory5 *factory;
+    struct fallback_mapping *mappings;
+    UINT32 mappings_count;
+    UINT32 mappings_capacity;
 };
 
 struct dwrite_numbersubstitution {
@@ -225,9 +259,16 @@ static inline struct dwrite_numbersubstitution *impl_from_IDWriteNumberSubstitut
     return CONTAINING_RECORD(iface, struct dwrite_numbersubstitution, IDWriteNumberSubstitution_iface);
 }
 
+static struct dwrite_numbersubstitution *unsafe_impl_from_IDWriteNumberSubstitution(IDWriteNumberSubstitution *iface);
+
 static inline struct dwrite_fontfallback *impl_from_IDWriteFontFallback(IDWriteFontFallback *iface)
 {
     return CONTAINING_RECORD(iface, struct dwrite_fontfallback, IDWriteFontFallback_iface);
+}
+
+static inline struct dwrite_fontfallback_builder *impl_from_IDWriteFontFallbackBuilder(IDWriteFontFallbackBuilder *iface)
+{
+    return CONTAINING_RECORD(iface, struct dwrite_fontfallback_builder, IDWriteFontFallbackBuilder_iface);
 }
 
 static inline UINT32 decode_surrogate_pair(const WCHAR *str, UINT32 index, UINT32 end)
@@ -407,7 +448,7 @@ static HRESULT analyze_linebreaks(const WCHAR *text, UINT32 count, DWRITE_LINE_B
     short *break_class;
     int i, j;
 
-    break_class = heap_alloc(count*sizeof(short));
+    break_class = heap_calloc(count, sizeof(*break_class));
     if (!break_class)
         return E_OUTOFMEMORY;
 
@@ -474,7 +515,7 @@ static HRESULT analyze_linebreaks(const WCHAR *text, UINT32 count, DWRITE_LINE_B
     {
         switch (break_class[i])
         {
-            /* LB7 - do not break before spaces */
+            /* LB7 - do not break before spaces or zero-width space */
             case b_SP:
                 set_break_condition(i, BreakConditionBefore, DWRITE_BREAK_CONDITION_MAY_NOT_BREAK, &state);
                 break;
@@ -488,10 +529,9 @@ static HRESULT analyze_linebreaks(const WCHAR *text, UINT32 count, DWRITE_LINE_B
                 if (j < count-1 && break_class[j+1] != b_ZW)
                     set_break_condition(j, BreakConditionAfter, DWRITE_BREAK_CONDITION_CAN_BREAK, &state);
                 break;
-            /* LB8a - do not break between ZWJ and an ideograph, emoji base or emoji modifier */
+            /* LB8a - do not break after ZWJ */
             case b_ZWJ:
-                if (i < count-1 && (break_class[i+1] == b_ID || break_class[i+1] == b_EB || break_class[i+1] == b_EM))
-                    set_break_condition(i, BreakConditionAfter, DWRITE_BREAK_CONDITION_MAY_NOT_BREAK, &state);
+                set_break_condition(i, BreakConditionAfter, DWRITE_BREAK_CONDITION_MAY_NOT_BREAK, &state);
                 break;
         }
     }
@@ -800,6 +840,8 @@ static HRESULT WINAPI dwritetextanalyzer_QueryInterface(IDWriteTextAnalyzer2 *if
         return S_OK;
     }
 
+    WARN("%s not implemented.\n", debugstr_guid(riid));
+
     *obj = NULL;
     return E_NOINTERFACE;
 }
@@ -895,8 +937,8 @@ static HRESULT WINAPI dwritetextanalyzer_AnalyzeBidi(IDWriteTextAnalyzer2 *iface
     if (FAILED(hr))
         return hr;
 
-    levels = heap_alloc(length*sizeof(*levels));
-    explicit = heap_alloc(length*sizeof(*explicit));
+    levels = heap_calloc(length, sizeof(*levels));
+    explicit = heap_calloc(length, sizeof(*explicit));
 
     if (!levels || !explicit) {
         hr = E_OUTOFMEMORY;
@@ -971,7 +1013,7 @@ static HRESULT WINAPI dwritetextanalyzer_AnalyzeLineBreakpoints(IDWriteTextAnaly
     if (len < length) {
         UINT32 read;
 
-        buff = heap_alloc(length*sizeof(WCHAR));
+        buff = heap_calloc(length, sizeof(*buff));
         if (!buff)
             return E_OUTOFMEMORY;
         memcpy(buff, text, len*sizeof(WCHAR));
@@ -990,7 +1032,7 @@ static HRESULT WINAPI dwritetextanalyzer_AnalyzeLineBreakpoints(IDWriteTextAnaly
         text = buff;
     }
 
-    breakpoints = heap_alloc(length*sizeof(*breakpoints));
+    breakpoints = heap_calloc(length, sizeof(*breakpoints));
     if (!breakpoints) {
         hr = E_OUTOFMEMORY;
         goto done;
@@ -1011,47 +1053,134 @@ done:
 
 static UINT32 get_opentype_language(const WCHAR *locale)
 {
-    UINT32 language = DWRITE_FONT_FEATURE_TAG_DEFAULT;
+    UINT32 language = DWRITE_MAKE_OPENTYPE_TAG('d','f','l','t');
 
     if (locale) {
         WCHAR tag[5];
-        if (GetLocaleInfoEx(locale, LOCALE_SOPENTYPELANGUAGETAG, tag, sizeof(tag)/sizeof(WCHAR)))
+        if (GetLocaleInfoEx(locale, LOCALE_SOPENTYPELANGUAGETAG, tag, ARRAY_SIZE(tag)))
             language = DWRITE_MAKE_OPENTYPE_TAG(tag[0],tag[1],tag[2],tag[3]);
     }
 
     return language;
 }
 
+static DWRITE_NUMBER_SUBSTITUTION_METHOD get_number_substitutes(IDWriteNumberSubstitution *substitution, WCHAR *digits)
+{
+    struct dwrite_numbersubstitution *numbersubst = unsafe_impl_from_IDWriteNumberSubstitution(substitution);
+    DWRITE_NUMBER_SUBSTITUTION_METHOD method;
+    WCHAR isolang[9];
+    DWORD lctype;
+
+    if (!numbersubst)
+        return DWRITE_NUMBER_SUBSTITUTION_METHOD_NONE;
+
+    lctype = numbersubst->ignore_user_override ? LOCALE_NOUSEROVERRIDE : 0;
+
+    if (numbersubst->method == DWRITE_NUMBER_SUBSTITUTION_METHOD_FROM_CULTURE) {
+        DWORD value;
+
+        method = DWRITE_NUMBER_SUBSTITUTION_METHOD_NONE;
+        if (GetLocaleInfoEx(numbersubst->locale, lctype | LOCALE_IDIGITSUBSTITUTION | LOCALE_RETURN_NUMBER, (WCHAR *)&value, 2)) {
+            switch (value)
+            {
+            case 0:
+                method = DWRITE_NUMBER_SUBSTITUTION_METHOD_CONTEXTUAL;
+                break;
+            case 2:
+                method = DWRITE_NUMBER_SUBSTITUTION_METHOD_NATIONAL;
+                break;
+            case 1:
+            default:
+                if (value != 1)
+                    WARN("Unknown IDIGITSUBSTITUTION value %u, locale %s.\n", value, debugstr_w(numbersubst->locale));
+            }
+        }
+        else
+            WARN("Failed to get IDIGITSUBSTITUTION for locale %s\n", debugstr_w(numbersubst->locale));
+    }
+    else
+        method = numbersubst->method;
+
+    digits[0] = 0;
+    switch (method)
+    {
+    case DWRITE_NUMBER_SUBSTITUTION_METHOD_NATIONAL:
+        GetLocaleInfoEx(numbersubst->locale, lctype | LOCALE_SNATIVEDIGITS, digits, NATIVE_DIGITS_LEN);
+        break;
+    case DWRITE_NUMBER_SUBSTITUTION_METHOD_CONTEXTUAL:
+    case DWRITE_NUMBER_SUBSTITUTION_METHOD_TRADITIONAL:
+        if (GetLocaleInfoEx(numbersubst->locale, LOCALE_SISO639LANGNAME, isolang, ARRAY_SIZE(isolang))) {
+             static const WCHAR arW[] = {'a','r',0};
+             static const WCHAR arabicW[] = {0x640,0x641,0x642,0x643,0x644,0x645,0x646,0x647,0x648,0x649,0};
+
+             /* For some Arabic locales Latin digits are returned for SNATIVEDIGITS */
+             if (!strcmpW(arW, isolang)) {
+                 strcpyW(digits, arabicW);
+                 break;
+             }
+        }
+        GetLocaleInfoEx(numbersubst->locale, lctype | LOCALE_SNATIVEDIGITS, digits, NATIVE_DIGITS_LEN);
+        break;
+    default:
+        ;
+    }
+
+    if (method != DWRITE_NUMBER_SUBSTITUTION_METHOD_NONE && !*digits) {
+        WARN("Failed to get number substitutes for locale %s, method %d\n", debugstr_w(numbersubst->locale), method);
+        method = DWRITE_NUMBER_SUBSTITUTION_METHOD_NONE;
+    }
+
+    return method;
+}
+
+static void analyzer_dump_user_features(DWRITE_TYPOGRAPHIC_FEATURES const **features,
+        UINT32 const *feature_range_lengths, UINT32 feature_ranges)
+{
+    UINT32 i, j, start;
+
+    if (!TRACE_ON(dwrite) || !features)
+        return;
+
+    for (i = 0, start = 0; i < feature_ranges; start += feature_range_lengths[i++]) {
+        TRACE("feature range [%u,%u)\n", start, start + feature_range_lengths[i]);
+        for (j = 0; j < features[i]->featureCount; j++)
+            TRACE("feature %s, parameter %u\n", debugstr_tag(features[i]->features[j].nameTag),
+                    features[i]->features[j].parameter);
+    }
+}
+
 static HRESULT WINAPI dwritetextanalyzer_GetGlyphs(IDWriteTextAnalyzer2 *iface,
     WCHAR const* text, UINT32 length, IDWriteFontFace* fontface, BOOL is_sideways,
     BOOL is_rtl, DWRITE_SCRIPT_ANALYSIS const* analysis, WCHAR const* locale,
     IDWriteNumberSubstitution* substitution, DWRITE_TYPOGRAPHIC_FEATURES const** features,
-    UINT32 const* feature_range_len, UINT32 feature_ranges, UINT32 max_glyph_count,
+    UINT32 const* feature_range_lengths, UINT32 feature_ranges, UINT32 max_glyph_count,
     UINT16* clustermap, DWRITE_SHAPING_TEXT_PROPERTIES* text_props, UINT16* glyph_indices,
     DWRITE_SHAPING_GLYPH_PROPERTIES* glyph_props, UINT32* actual_glyph_count)
 {
-    const struct dwritescript_properties *scriptprops;
+    DWRITE_NUMBER_SUBSTITUTION_METHOD method;
     struct scriptshaping_context context;
-    struct scriptshaping_cache *cache = NULL;
-    BOOL update_cluster, need_vertical;
-    IDWriteFontFace1 *fontface1;
+    struct dwrite_fontface *font_obj;
+    WCHAR digits[NATIVE_DIGITS_LEN];
+    BOOL update_cluster;
     WCHAR *string;
     UINT32 i, g;
     HRESULT hr = S_OK;
-    UINT16 script;
 
     TRACE("(%s:%u %p %d %d %s %s %p %p %p %u %u %p %p %p %p %p)\n", debugstr_wn(text, length),
         length, fontface, is_sideways, is_rtl, debugstr_sa_script(analysis->script), debugstr_w(locale), substitution,
-        features, feature_range_len, feature_ranges, max_glyph_count, clustermap, text_props, glyph_indices,
+        features, feature_range_lengths, feature_ranges, max_glyph_count, clustermap, text_props, glyph_indices,
         glyph_props, actual_glyph_count);
 
-    script = analysis->script > Script_LastId ? Script_Unknown : analysis->script;
+    analyzer_dump_user_features(features, feature_range_lengths, feature_ranges);
 
     if (max_glyph_count < length)
         return E_NOT_SUFFICIENT_BUFFER;
 
-    if (substitution)
-        FIXME("number substitution is not supported.\n");
+    string = heap_calloc(length, sizeof(*string));
+    if (!string)
+        return E_OUTOFMEMORY;
+
+    method = get_number_substitutes(substitution, digits);
 
     for (i = 0; i < length; i++) {
         /* FIXME: set to better values */
@@ -1066,6 +1195,21 @@ static HRESULT WINAPI dwritetextanalyzer_GetGlyphs(IDWriteTextAnalyzer2 *iface,
         text_props[i].reserved = 0;
 
         clustermap[i] = i;
+
+        string[i] = text[i];
+        switch (method)
+        {
+        case DWRITE_NUMBER_SUBSTITUTION_METHOD_CONTEXTUAL:
+            if (!is_rtl)
+                break;
+            /* fallthrough */
+        default:
+            if (string[i] >= '0' && string[i] <= '9')
+                string[i] = digits[string[i] - '0'];
+            break;
+        case DWRITE_NUMBER_SUBSTITUTION_METHOD_NONE:
+            ;
+        }
     }
 
     for (; i < max_glyph_count; i++) {
@@ -1076,42 +1220,19 @@ static HRESULT WINAPI dwritetextanalyzer_GetGlyphs(IDWriteTextAnalyzer2 *iface,
         glyph_props[i].reserved = 0;
     }
 
-    string = heap_alloc(sizeof(WCHAR)*length);
-    if (!string)
-        return E_OUTOFMEMORY;
-
-    hr = IDWriteFontFace_QueryInterface(fontface, &IID_IDWriteFontFace1, (void**)&fontface1);
-    if (FAILED(hr))
-        WARN("failed to get IDWriteFontFace1\n");
-
-    need_vertical = is_sideways && fontface1 && IDWriteFontFace1_HasVerticalGlyphVariants(fontface1);
-
     for (i = 0, g = 0, update_cluster = FALSE; i < length; i++) {
         UINT32 codepoint;
 
         if (!update_cluster) {
-            codepoint = decode_surrogate_pair(text, i, length);
-            if (!codepoint) {
-                codepoint = is_rtl ? bidi_get_mirrored_char(text[i]) : text[i];
-                string[i] = codepoint;
-            }
-            else {
-                string[i] = text[i];
-                string[i+1] = text[i+1];
+            codepoint = decode_surrogate_pair(string, i, length);
+            if (!codepoint)
+                codepoint = is_rtl ? bidi_get_mirrored_char(string[i]) : string[i];
+            else
                 update_cluster = TRUE;
-            }
 
             hr = IDWriteFontFace_GetGlyphIndices(fontface, &codepoint, 1, &glyph_indices[g]);
             if (FAILED(hr))
                 goto done;
-
-            if (need_vertical) {
-                UINT16 vertical;
-
-                hr = IDWriteFontFace1_GetVerticalGlyphVariants(fontface1, 1, &glyph_indices[g], &vertical);
-                if (hr == S_OK)
-                    glyph_indices[g] = vertical;
-            }
 
             g++;
         }
@@ -1128,35 +1249,19 @@ static HRESULT WINAPI dwritetextanalyzer_GetGlyphs(IDWriteTextAnalyzer2 *iface,
     }
     *actual_glyph_count = g;
 
-    hr = create_scriptshaping_cache(fontface, &cache);
-    if (FAILED(hr))
-        goto done;
+    font_obj = unsafe_impl_from_IDWriteFontFace(fontface);
 
-    context.cache = cache;
+    context.cache = fontface_get_shaping_cache(font_obj);
     context.text = text;
     context.length = length;
     context.is_rtl = is_rtl;
-    context.max_glyph_count = max_glyph_count;
     context.language_tag = get_opentype_language(locale);
-
-    scriptprops = &dwritescripts_properties[script];
-    if (scriptprops->ops && scriptprops->ops->contextual_shaping) {
-        hr = scriptprops->ops->contextual_shaping(&context, clustermap, glyph_indices, actual_glyph_count);
-        if (FAILED(hr))
-            goto done;
-    }
 
     /* FIXME: apply default features */
 
-    if (scriptprops->ops && scriptprops->ops->set_text_glyphs_props)
-        hr = scriptprops->ops->set_text_glyphs_props(&context, clustermap, glyph_indices, *actual_glyph_count, text_props, glyph_props);
-    else
-        hr = default_shaping_ops.set_text_glyphs_props(&context, clustermap, glyph_indices, *actual_glyph_count, text_props, glyph_props);
+    hr = default_shaping_ops.set_text_glyphs_props(&context, clustermap, glyph_indices, *actual_glyph_count, text_props, glyph_props);
 
 done:
-    if (fontface1)
-        IDWriteFontFace1_Release(fontface1);
-    release_scriptshaping_cache(cache);
     heap_free(string);
 
     return hr;
@@ -1165,101 +1270,127 @@ done:
 static HRESULT WINAPI dwritetextanalyzer_GetGlyphPlacements(IDWriteTextAnalyzer2 *iface,
     WCHAR const* text, UINT16 const* clustermap, DWRITE_SHAPING_TEXT_PROPERTIES* props,
     UINT32 text_len, UINT16 const* glyphs, DWRITE_SHAPING_GLYPH_PROPERTIES const* glyph_props,
-    UINT32 glyph_count, IDWriteFontFace *fontface, FLOAT emSize, BOOL is_sideways, BOOL is_rtl,
+    UINT32 glyph_count, IDWriteFontFace *fontface, float emSize, BOOL is_sideways, BOOL is_rtl,
     DWRITE_SCRIPT_ANALYSIS const* analysis, WCHAR const* locale, DWRITE_TYPOGRAPHIC_FEATURES const** features,
-    UINT32 const* feature_range_len, UINT32 feature_ranges, FLOAT *advances, DWRITE_GLYPH_OFFSET *offsets)
+    UINT32 const* feature_range_lengths, UINT32 feature_ranges, float *advances, DWRITE_GLYPH_OFFSET *offsets)
 {
-    DWRITE_FONT_METRICS metrics;
-    IDWriteFontFace1 *fontface1;
-    HRESULT hr;
-    UINT32 i;
+    const struct dwritescript_properties *scriptprops;
+    struct dwrite_fontface *font_obj;
+    unsigned int i, script;
+    HRESULT hr = S_OK;
 
     TRACE("(%s %p %p %u %p %p %u %p %.2f %d %d %s %s %p %p %u %p %p)\n", debugstr_wn(text, text_len),
         clustermap, props, text_len, glyphs, glyph_props, glyph_count, fontface, emSize, is_sideways,
-        is_rtl, debugstr_sa_script(analysis->script), debugstr_w(locale), features, feature_range_len,
+        is_rtl, debugstr_sa_script(analysis->script), debugstr_w(locale), features, feature_range_lengths,
         feature_ranges, advances, offsets);
+
+    analyzer_dump_user_features(features, feature_range_lengths, feature_ranges);
 
     if (glyph_count == 0)
         return S_OK;
 
-    hr = IDWriteFontFace_QueryInterface(fontface, &IID_IDWriteFontFace1, (void**)&fontface1);
-    if (FAILED(hr)) {
-        WARN("failed to get IDWriteFontFace1.\n");
-        return hr;
-    }
+    font_obj = unsafe_impl_from_IDWriteFontFace(fontface);
 
-    IDWriteFontFace_GetMetrics(fontface, &metrics);
-    for (i = 0; i < glyph_count; i++) {
+    for (i = 0; i < glyph_count; ++i)
+    {
         if (glyph_props[i].isZeroWidthSpace)
             advances[i] = 0.0f;
-        else {
-            INT32 a;
-
-            hr = IDWriteFontFace1_GetDesignGlyphAdvances(fontface1, 1, &glyphs[i], &a, is_sideways);
-            if (FAILED(hr))
-                a = 0;
-            advances[i] = get_scaled_advance_width(a, emSize, &metrics);
-        }
+        else
+            advances[i] = fontface_get_scaled_design_advance(font_obj, DWRITE_MEASURING_MODE_NATURAL, emSize, 1.0f,
+                    NULL, glyphs[i], is_sideways);
         offsets[i].advanceOffset = 0.0f;
         offsets[i].ascenderOffset = 0.0f;
     }
 
-    /* FIXME: actually apply features */
+    script = analysis->script > Script_LastId ? Script_Unknown : analysis->script;
 
-    IDWriteFontFace1_Release(fontface1);
-    return S_OK;
+    scriptprops = &dwritescripts_properties[script];
+    if (scriptprops->ops && scriptprops->ops->gpos_features)
+    {
+        struct scriptshaping_context context;
+
+        context.cache = fontface_get_shaping_cache(font_obj);
+        context.text = text;
+        context.length = text_len;
+        context.is_rtl = is_rtl;
+        context.u.pos.glyphs = glyphs;
+        context.u.pos.glyph_props = glyph_props;
+        context.glyph_count = glyph_count;
+        context.emsize = emSize;
+        context.measuring_mode = DWRITE_MEASURING_MODE_NATURAL;
+        context.advances = advances;
+        context.offsets = offsets;
+        context.language_tag = get_opentype_language(locale);
+
+        hr = shape_get_positions(&context, scriptprops->scripttags, scriptprops->ops->gpos_features);
+    }
+
+    return hr;
 }
 
 static HRESULT WINAPI dwritetextanalyzer_GetGdiCompatibleGlyphPlacements(IDWriteTextAnalyzer2 *iface,
     WCHAR const* text, UINT16 const* clustermap, DWRITE_SHAPING_TEXT_PROPERTIES* props,
     UINT32 text_len, UINT16 const* glyphs, DWRITE_SHAPING_GLYPH_PROPERTIES const* glyph_props,
-    UINT32 glyph_count, IDWriteFontFace *fontface, FLOAT emSize, FLOAT ppdip,
+    UINT32 glyph_count, IDWriteFontFace *fontface, float emSize, float ppdip,
     DWRITE_MATRIX const* transform, BOOL use_gdi_natural, BOOL is_sideways, BOOL is_rtl,
     DWRITE_SCRIPT_ANALYSIS const* analysis, WCHAR const* locale, DWRITE_TYPOGRAPHIC_FEATURES const** features,
-    UINT32 const* feature_range_lengths, UINT32 feature_ranges, FLOAT *advances, DWRITE_GLYPH_OFFSET *offsets)
+    UINT32 const* feature_range_lengths, UINT32 feature_ranges, float *advances, DWRITE_GLYPH_OFFSET *offsets)
 {
-    DWRITE_FONT_METRICS metrics;
-    IDWriteFontFace1 *fontface1;
-    HRESULT hr;
-    UINT32 i;
+    const struct dwritescript_properties *scriptprops;
+    DWRITE_MEASURING_MODE measuring_mode;
+    struct dwrite_fontface *font_obj;
+    unsigned int i, script;
+    HRESULT hr = S_OK;
 
     TRACE("(%s %p %p %u %p %p %u %p %.2f %.2f %p %d %d %d %s %s %p %p %u %p %p)\n", debugstr_wn(text, text_len),
         clustermap, props, text_len, glyphs, glyph_props, glyph_count, fontface, emSize, ppdip,
         transform, use_gdi_natural, is_sideways, is_rtl, debugstr_sa_script(analysis->script), debugstr_w(locale),
         features, feature_range_lengths, feature_ranges, advances, offsets);
 
+    analyzer_dump_user_features(features, feature_range_lengths, feature_ranges);
+
     if (glyph_count == 0)
         return S_OK;
 
-    hr = IDWriteFontFace_QueryInterface(fontface, &IID_IDWriteFontFace1, (void**)&fontface1);
-    if (FAILED(hr)) {
-        WARN("failed to get IDWriteFontFace1.\n");
-        return hr;
-    }
+    font_obj = unsafe_impl_from_IDWriteFontFace(fontface);
 
-    hr = IDWriteFontFace_GetGdiCompatibleMetrics(fontface, emSize, ppdip, transform, &metrics);
-    if (FAILED(hr)) {
-        IDWriteFontFace1_Release(fontface1);
-        WARN("failed to get compat metrics, 0x%08x\n", hr);
-        return hr;
-    }
-    for (i = 0; i < glyph_count; i++) {
-        INT32 a;
+    measuring_mode = use_gdi_natural ? DWRITE_MEASURING_MODE_GDI_NATURAL : DWRITE_MEASURING_MODE_GDI_CLASSIC;
 
-        hr = IDWriteFontFace1_GetGdiCompatibleGlyphAdvances(fontface1, emSize, ppdip,
-            transform, use_gdi_natural, is_sideways, 1, &glyphs[i], &a);
-        if (FAILED(hr))
+    for (i = 0; i < glyph_count; ++i)
+    {
+        if (glyph_props[i].isZeroWidthSpace)
             advances[i] = 0.0f;
         else
-            advances[i] = floorf(a * emSize * ppdip / metrics.designUnitsPerEm + 0.5f) / ppdip;
+            advances[i] = fontface_get_scaled_design_advance(font_obj, measuring_mode, emSize, ppdip,
+                    transform, glyphs[i], is_sideways);
         offsets[i].advanceOffset = 0.0f;
         offsets[i].ascenderOffset = 0.0f;
     }
 
-    /* FIXME: actually apply features */
+    script = analysis->script > Script_LastId ? Script_Unknown : analysis->script;
 
-    IDWriteFontFace1_Release(fontface1);
-    return S_OK;
+    scriptprops = &dwritescripts_properties[script];
+    if (scriptprops->ops && scriptprops->ops->gpos_features)
+    {
+        struct scriptshaping_context context;
+
+        context.cache = fontface_get_shaping_cache(font_obj);
+        context.text = text;
+        context.length = text_len;
+        context.is_rtl = is_rtl;
+        context.u.pos.glyphs = glyphs;
+        context.u.pos.glyph_props = glyph_props;
+        context.glyph_count = glyph_count;
+        context.emsize = emSize * ppdip;
+        context.measuring_mode = measuring_mode;
+        context.advances = advances;
+        context.offsets = offsets;
+        context.language_tag = get_opentype_language(locale);
+
+        hr = shape_get_positions(&context, scriptprops->scripttags, scriptprops->ops->gpos_features);
+    }
+
+    return hr;
 }
 
 static inline FLOAT get_cluster_advance(const FLOAT *advances, UINT32 start, UINT32 end)
@@ -1270,124 +1401,121 @@ static inline FLOAT get_cluster_advance(const FLOAT *advances, UINT32 start, UIN
     return advance;
 }
 
-static void apply_single_glyph_spacing(FLOAT leading_spacing, FLOAT trailing_spacing,
-    FLOAT min_advance_width, UINT32 g, FLOAT const *advances, DWRITE_GLYPH_OFFSET const *offsets,
-    DWRITE_SHAPING_GLYPH_PROPERTIES const *props, FLOAT *modified_advances, DWRITE_GLYPH_OFFSET *modified_offsets)
+static HRESULT apply_cluster_spacing(float leading_spacing, float trailing_spacing, float min_advance_width,
+        unsigned int start, unsigned int end, float const *advances, DWRITE_GLYPH_OFFSET const *offsets,
+        DWRITE_SHAPING_GLYPH_PROPERTIES const *glyph_props, float *modified_advances,
+        DWRITE_GLYPH_OFFSET *modified_offsets)
 {
     BOOL reduced = leading_spacing < 0.0f || trailing_spacing < 0.0f;
-    FLOAT advance = advances[g];
-    FLOAT origin = 0.0f;
+    unsigned int first_spacing, last_spacing, i;
+    float advance, origin = 0.0f, *deltas;
+    BOOL is_spacing_cluster = FALSE;
 
-    if (props[g].isZeroWidthSpace) {
-        modified_advances[g] = advances[g];
-        modified_offsets[g] = offsets[g];
-        return;
+    if (modified_advances != advances)
+        memcpy(&modified_advances[start], &advances[start], (end - start + 1) * sizeof(*advances));
+    if (modified_offsets != offsets)
+        memcpy(&modified_offsets[start], &offsets[start], (end - start + 1) * sizeof(*offsets));
+
+    for (first_spacing = start; first_spacing <= end; ++first_spacing)
+    {
+        if ((is_spacing_cluster = !glyph_props[first_spacing].isZeroWidthSpace))
+            break;
     }
 
-    /* first apply negative spacing and check if we hit minimum width */
-    if (leading_spacing < 0.0f) {
+    /* Nothing to adjust if there is no spacing glyphs. */
+    if (!is_spacing_cluster)
+        return S_OK;
+
+    for (last_spacing = end; last_spacing >= start; --last_spacing)
+    {
+        if (!glyph_props[last_spacing].isZeroWidthSpace)
+            break;
+    }
+
+    deltas = heap_calloc(end - start + 1, sizeof(*deltas));
+    if (!deltas)
+        return E_OUTOFMEMORY;
+
+    /* Cluster advance, note that properties are ignored. */
+    origin = offsets[start].advanceOffset;
+    for (i = start, advance = 0.0f; i <= end; ++i)
+    {
+        float cur = advance + offsets[i].advanceOffset;
+
+        deltas[i - start] = cur - origin;
+
+        advance += advances[i];
+        origin = cur;
+    }
+
+    /* Negative spacing. */
+    if (leading_spacing < 0.0f)
+    {
         advance += leading_spacing;
-        origin -= leading_spacing;
+        modified_advances[first_spacing] += leading_spacing;
+        modified_offsets[first_spacing].advanceOffset += leading_spacing;
     }
+
     if (trailing_spacing < 0.0f)
+    {
         advance += trailing_spacing;
-
-    if (advance < min_advance_width) {
-        FLOAT half = (min_advance_width - advance) / 2.0f;
-
-        if (!reduced)
-            origin -= half;
-        else if (leading_spacing < 0.0f && trailing_spacing < 0.0f)
-            origin -= half;
-        else if (leading_spacing < 0.0f)
-            origin -= min_advance_width - advance;
-
-        advance = min_advance_width;
+        modified_advances[last_spacing] += trailing_spacing;
     }
 
-    /* now apply positive spacing adjustments */
-    if (leading_spacing > 0.0f) {
-        advance += leading_spacing;
-        origin -= leading_spacing;
-    }
-    if (trailing_spacing > 0.0f)
-        advance += trailing_spacing;
-
-    modified_advances[g] = advance;
-    modified_offsets[g].advanceOffset = offsets[g].advanceOffset - origin;
-    /* ascender is never touched, it's orthogonal to reading direction and is not
-       affected by advance adjustments */
-    modified_offsets[g].ascenderOffset = offsets[g].ascenderOffset;
-}
-
-static void apply_cluster_spacing(FLOAT leading_spacing, FLOAT trailing_spacing, FLOAT min_advance_width,
-    UINT32 start, UINT32 end, FLOAT const *advances, DWRITE_GLYPH_OFFSET const *offsets,
-    FLOAT *modified_advances, DWRITE_GLYPH_OFFSET *modified_offsets)
-{
-    BOOL reduced = leading_spacing < 0.0f || trailing_spacing < 0.0f;
-    FLOAT advance = get_cluster_advance(advances, start, end);
-    FLOAT origin = 0.0f;
-    UINT16 g;
-
-    modified_advances[start] = advances[start];
-    modified_advances[end-1] = advances[end-1];
-
-    /* first apply negative spacing and check if we hit minimum width */
-    if (leading_spacing < 0.0f) {
-        advance += leading_spacing;
-        modified_advances[start] += leading_spacing;
-        origin -= leading_spacing;
-    }
-    if (trailing_spacing < 0.0f) {
-        advance += trailing_spacing;
-        modified_advances[end-1] += trailing_spacing;
-    }
-
+    /* Minimal advance. */
     advance = min_advance_width - advance;
     if (advance > 0.0f) {
-        /* additional spacing is only applied to leading and trailing glyph */
-        FLOAT half = advance / 2.0f;
+        /* Additional spacing is only applied to leading and trailing spacing glyphs. */
+        float half = advance / 2.0f;
 
-        if (!reduced) {
-            origin -= half;
-            modified_advances[start] += half;
-            modified_advances[end-1] += half;
+        if (!reduced)
+        {
+            modified_advances[first_spacing] += half;
+            modified_advances[last_spacing] += half;
+            modified_offsets[first_spacing].advanceOffset += half;
         }
-        else if (leading_spacing < 0.0f && trailing_spacing < 0.0f) {
-            origin -= half;
-            modified_advances[start] += half;
-            modified_advances[end-1] += half;
+        else if (leading_spacing < 0.0f && trailing_spacing < 0.0f)
+        {
+            modified_advances[first_spacing] += half;
+            modified_advances[last_spacing] += half;
+            modified_offsets[first_spacing].advanceOffset += half;
         }
-        else if (leading_spacing < 0.0f) {
-            origin -= advance;
-            modified_advances[start] += advance;
+        else if (leading_spacing < 0.0f)
+        {
+            modified_advances[first_spacing] += advance;
+            modified_offsets[first_spacing].advanceOffset += advance;
         }
         else
-            modified_advances[end-1] += advance;
+            modified_advances[last_spacing] += advance;
     }
 
-    /* now apply positive spacing adjustments */
-    if (leading_spacing > 0.0f) {
-        modified_advances[start] += leading_spacing;
-        origin -= leading_spacing;
+    /* Positive spacing. */
+    if (leading_spacing > 0.0f)
+    {
+        modified_advances[first_spacing] += leading_spacing;
+        modified_offsets[first_spacing].advanceOffset += leading_spacing;
     }
+
     if (trailing_spacing > 0.0f)
-        modified_advances[end-1] += trailing_spacing;
+        modified_advances[last_spacing] += trailing_spacing;
 
-    for (g = start; g < end; g++) {
-        if (g == start) {
-            modified_offsets[g].advanceOffset = offsets[g].advanceOffset - origin;
-            modified_offsets[g].ascenderOffset = offsets[g].ascenderOffset;
-        }
-        else if (g == end - 1)
-            /* trailing glyph offset is not adjusted */
-            modified_offsets[g] = offsets[g];
-        else {
-            /* for all glyphs within a cluster use original advances and offsets */
-            modified_advances[g] = advances[g];
-            modified_offsets[g] = offsets[g];
-        }
+    /* Update offsets to preserve original relative positions within cluster. */
+    for (i = first_spacing; i > start; --i)
+    {
+        unsigned int cur = i - 1;
+        modified_offsets[cur].advanceOffset = modified_advances[cur] + modified_offsets[i].advanceOffset -
+                deltas[i - start];
     }
+
+    for (i = first_spacing + 1; i <= end; ++i)
+    {
+        modified_offsets[i].advanceOffset = deltas[i - start] + modified_offsets[i - 1].advanceOffset -
+                modified_advances[i - 1];
+    }
+
+    heap_free(deltas);
+
+    return S_OK;
 }
 
 static inline UINT32 get_cluster_length(UINT16 const *clustermap, UINT32 start, UINT32 text_len)
@@ -1435,16 +1563,13 @@ static inline UINT32 get_cluster_length(UINT16 const *clustermap, UINT32 start, 
 
    It's known that isZeroWidthSpace property keeps initial advance from changing.
 
-   TODO: test other properties; make isZeroWidthSpace work properly for clusters
-         with more than one glyph.
-
 */
 static HRESULT WINAPI dwritetextanalyzer1_ApplyCharacterSpacing(IDWriteTextAnalyzer2 *iface,
     FLOAT leading_spacing, FLOAT trailing_spacing, FLOAT min_advance_width, UINT32 len,
     UINT32 glyph_count, UINT16 const *clustermap, FLOAT const *advances, DWRITE_GLYPH_OFFSET const *offsets,
     DWRITE_SHAPING_GLYPH_PROPERTIES const *props, FLOAT *modified_advances, DWRITE_GLYPH_OFFSET *modified_offsets)
 {
-    UINT16 start;
+    unsigned int i;
 
     TRACE("(%.2f %.2f %.2f %u %u %p %p %p %p %p %p)\n", leading_spacing, trailing_spacing, min_advance_width,
         len, glyph_count, clustermap, advances, offsets, props, modified_advances, modified_offsets);
@@ -1455,33 +1580,18 @@ static HRESULT WINAPI dwritetextanalyzer1_ApplyCharacterSpacing(IDWriteTextAnaly
         return E_INVALIDARG;
     }
 
-    /* minimum advance is not applied if no adjustments were made */
-    if (leading_spacing == 0.0f && trailing_spacing == 0.0f) {
-        memmove(modified_advances, advances, glyph_count*sizeof(*advances));
-        memmove(modified_offsets, offsets, glyph_count*sizeof(*offsets));
-        return S_OK;
-    }
+    for (i = 0; i < len;)
+    {
+        unsigned int length = get_cluster_length(clustermap, i, len);
+        unsigned int start, end;
 
-    for (start = 0; start < len;) {
-        UINT32 length = get_cluster_length(clustermap, start, len);
+        start = clustermap[i];
+        end = i + length < len ? clustermap[i + length] : glyph_count;
 
-        if (length == 1) {
-            UINT32 g = clustermap[start];
+        apply_cluster_spacing(leading_spacing, trailing_spacing, min_advance_width, start, end - 1, advances,
+                offsets, props, modified_advances, modified_offsets);
 
-            apply_single_glyph_spacing(leading_spacing, trailing_spacing, min_advance_width,
-                g, advances, offsets, props, modified_advances, modified_offsets);
-        }
-        else {
-            UINT32 g_start, g_end;
-
-            g_start = clustermap[start];
-            g_end = (start + length < len) ? clustermap[start + length] : glyph_count;
-
-            apply_cluster_spacing(leading_spacing, trailing_spacing, min_advance_width,
-                g_start, g_end, advances, offsets, modified_advances, modified_offsets);
-        }
-
-        start += length;
+        i += length;
     }
 
     return S_OK;
@@ -1524,7 +1634,9 @@ static HRESULT WINAPI dwritetextanalyzer1_GetScriptProperties(IDWriteTextAnalyze
 
 static inline BOOL is_char_from_simple_script(WCHAR c)
 {
-    if (IS_HIGH_SURROGATE(c) || IS_LOW_SURROGATE(c))
+    if (IS_HIGH_SURROGATE(c) || IS_LOW_SURROGATE(c) ||
+            /* LRM, RLM, LRE, RLE, PDF, LRO, RLO */
+            c == 0x200e || c == 0x200f || (c >= 0x202a && c <= 0x202e))
         return FALSE;
     else {
         UINT16 script = get_char_script(c);
@@ -1565,7 +1677,7 @@ static HRESULT WINAPI dwritetextanalyzer1_GetTextComplexity(IDWriteTextAnalyzer2
 
     /* fetch indices */
     if (*is_simple && indices) {
-        UINT32 *codepoints = heap_alloc(*len_read*sizeof(UINT32));
+        UINT32 *codepoints = heap_calloc(*len_read, sizeof(*codepoints));
         if (!codepoints)
             return E_OUTOFMEMORY;
 
@@ -1664,6 +1776,7 @@ static HRESULT WINAPI dwritetextanalyzer2_GetTypographicFeatures(IDWriteTextAnal
     UINT32 max_tagcount, UINT32 *actual_tagcount, DWRITE_FONT_FEATURE_TAG *tags)
 {
     const struct dwritescript_properties *props;
+    const DWORD *scripts;
     HRESULT hr = S_OK;
     UINT32 language;
 
@@ -1677,21 +1790,22 @@ static HRESULT WINAPI dwritetextanalyzer2_GetTypographicFeatures(IDWriteTextAnal
     props = &dwritescripts_properties[sa.script];
     *actual_tagcount = 0;
 
-    if (props->scriptalttag)
-        hr = opentype_get_typographic_features(fontface, props->scriptalttag, language, max_tagcount, actual_tagcount, tags);
-
-    if (*actual_tagcount == 0)
-        hr = opentype_get_typographic_features(fontface, props->scripttag, language, max_tagcount, actual_tagcount, tags);
+    scripts = props->scripttags;
+    while (*scripts && !*actual_tagcount)
+    {
+        hr = opentype_get_typographic_features(fontface, *scripts, language, max_tagcount, actual_tagcount, tags);
+        scripts++;
+    }
 
     return hr;
 };
 
 static HRESULT WINAPI dwritetextanalyzer2_CheckTypographicFeature(IDWriteTextAnalyzer2 *iface,
-    IDWriteFontFace *face, DWRITE_SCRIPT_ANALYSIS sa, const WCHAR *localeName,
-    DWRITE_FONT_FEATURE_TAG feature, UINT32 glyph_count, const UINT16 *indices, UINT8 *feature_applies)
+        IDWriteFontFace *face, DWRITE_SCRIPT_ANALYSIS sa, const WCHAR *locale, DWRITE_FONT_FEATURE_TAG feature,
+        UINT32 glyph_count, const UINT16 *glyphs, UINT8 *feature_applies)
 {
-    FIXME("(%p %u %s %x %u %p %p): stub\n", face, sa.script, debugstr_w(localeName), feature, glyph_count, indices,
-        feature_applies);
+    FIXME("(%p %u %s %s %u %p %p): stub\n", face, sa.script, debugstr_w(locale), debugstr_tag(feature), glyph_count,
+            glyphs, feature_applies);
     return E_NOTIMPL;
 }
 
@@ -1722,10 +1836,9 @@ static const struct IDWriteTextAnalyzer2Vtbl textanalyzervtbl = {
 
 static IDWriteTextAnalyzer2 textanalyzer = { &textanalyzervtbl };
 
-HRESULT get_textanalyzer(IDWriteTextAnalyzer **ret)
+IDWriteTextAnalyzer *get_text_analyzer(void)
 {
-    *ret = (IDWriteTextAnalyzer*)&textanalyzer;
-    return S_OK;
+    return (IDWriteTextAnalyzer *)&textanalyzer;
 }
 
 static HRESULT WINAPI dwritenumbersubstitution_QueryInterface(IDWriteNumberSubstitution *iface, REFIID riid, void **obj)
@@ -1741,6 +1854,8 @@ static HRESULT WINAPI dwritenumbersubstitution_QueryInterface(IDWriteNumberSubst
         IDWriteNumberSubstitution_AddRef(iface);
         return S_OK;
     }
+
+    WARN("%s not implemented.\n", debugstr_guid(riid));
 
     *obj = NULL;
 
@@ -1775,6 +1890,13 @@ static const struct IDWriteNumberSubstitutionVtbl numbersubstitutionvtbl = {
     dwritenumbersubstitution_AddRef,
     dwritenumbersubstitution_Release
 };
+
+struct dwrite_numbersubstitution *unsafe_impl_from_IDWriteNumberSubstitution(IDWriteNumberSubstitution *iface)
+{
+    if (!iface || iface->lpVtbl != &numbersubstitutionvtbl)
+        return NULL;
+    return CONTAINING_RECORD(iface, struct dwrite_numbersubstitution, IDWriteNumberSubstitution_iface);
+}
 
 HRESULT create_numbersubstitution(DWRITE_NUMBER_SUBSTITUTION_METHOD method, const WCHAR *locale,
     BOOL ignore_user_override, IDWriteNumberSubstitution **ret)
@@ -1820,6 +1942,8 @@ static HRESULT WINAPI fontfallback_QueryInterface(IDWriteFontFallback *iface, RE
         return S_OK;
     }
 
+    WARN("%s not implemented.\n", debugstr_guid(riid));
+
     *obj = NULL;
     return E_NOINTERFACE;
 }
@@ -1828,24 +1952,24 @@ static ULONG WINAPI fontfallback_AddRef(IDWriteFontFallback *iface)
 {
     struct dwrite_fontfallback *fallback = impl_from_IDWriteFontFallback(iface);
     TRACE("(%p)\n", fallback);
-    return IDWriteFactory4_AddRef(fallback->factory);
+    return IDWriteFactory5_AddRef(fallback->factory);
 }
 
 static ULONG WINAPI fontfallback_Release(IDWriteFontFallback *iface)
 {
     struct dwrite_fontfallback *fallback = impl_from_IDWriteFontFallback(iface);
     TRACE("(%p)\n", fallback);
-    return IDWriteFactory4_Release(fallback->factory);
+    return IDWriteFactory5_Release(fallback->factory);
 }
 
-static int compare_fallback_mapping(const void *a, const void *b)
+static int compare_mapping_range(const void *a, const void *b)
 {
-    UINT32 ch = *(UINT32*)a;
-    struct fallback_mapping *mapping = (struct fallback_mapping*)b;
+    UINT32 ch = *(UINT32 *)a;
+    DWRITE_UNICODE_RANGE *range = (DWRITE_UNICODE_RANGE *)b;
 
-    if (ch > mapping->range.last)
+    if (ch > range->last)
         return 1;
-    else if (ch < mapping->range.first)
+    else if (ch < range->first)
         return -1;
     else
         return 0;
@@ -1853,8 +1977,17 @@ static int compare_fallback_mapping(const void *a, const void *b)
 
 static const struct fallback_mapping *find_fallback_mapping(struct dwrite_fontfallback *fallback, UINT32 ch)
 {
-    return bsearch(&ch, fallback->mappings, fallback->count, sizeof(*fallback->mappings),
-        compare_fallback_mapping);
+    UINT32 i;
+
+    for (i = 0; i < fallback->mappings_count; i++) {
+        struct fallback_mapping *mapping = &fallback->mappings[i];
+
+        if (bsearch(&ch, mapping->ranges, mapping->ranges_count, sizeof(*mapping->ranges),
+                compare_mapping_range) != NULL)
+            return mapping;
+    }
+
+    return NULL;
 }
 
 HRESULT create_matching_font(IDWriteFontCollection *collection, const WCHAR *name,
@@ -1910,28 +2043,39 @@ static HRESULT fallback_map_characters(IDWriteFont *font, const WCHAR *text, UIN
 }
 
 static HRESULT fallback_get_fallback_font(struct dwrite_fontfallback *fallback, const WCHAR *text, UINT32 length,
-    DWRITE_FONT_WEIGHT weight, DWRITE_FONT_STYLE style, DWRITE_FONT_STRETCH stretch, UINT32 *mapped_length, IDWriteFont **mapped_font)
+        DWRITE_FONT_WEIGHT weight, DWRITE_FONT_STYLE style, DWRITE_FONT_STRETCH stretch, UINT32 *mapped_length,
+        IDWriteFont **mapped_font)
 {
     const struct fallback_mapping *mapping;
     HRESULT hr;
+    UINT32 i;
+
+    *mapped_font = NULL;
 
     mapping = find_fallback_mapping(fallback, text[0]);
     if (!mapping) {
-        WARN("no mapping for 0x%x\n", text[0]);
+        WARN("No mapping range for %#x.\n", text[0]);
         return E_FAIL;
     }
 
-    /* now let's see what fallback can handle */
-    hr = create_matching_font((IDWriteFontCollection*)fallback->systemcollection, mapping->family, weight, style, stretch, mapped_font);
-    if (FAILED(hr)) {
-        WARN("failed to create fallback font %s for range [0x%x,0x%x], 0x%08x\n", debugstr_w(mapping->family),
-            mapping->range.first, mapping->range.last, hr);
-        return hr;
+    /* Now let's see what fallback can handle. Pick first font that could be created. */
+    for (i = 0; i < mapping->families_count; i++) {
+        hr = create_matching_font((IDWriteFontCollection *)fallback->systemcollection, mapping->families[i],
+                weight, style, stretch, mapped_font);
+        if (hr == S_OK) {
+            TRACE("Created fallback font using family %s.\n", debugstr_w(mapping->families[i]));
+            break;
+        }
+    }
+
+    if (!*mapped_font) {
+        WARN("Failed to create fallback font.\n");
+        return E_FAIL;
     }
 
     hr = fallback_map_characters(*mapped_font, text, length, mapped_length);
     if (FAILED(hr))
-        WARN("mapping with fallback font %s failed, 0x%08x\n", debugstr_w(mapping->family), hr);
+        WARN("Mapping with fallback family %s failed, hr %#x.\n", debugstr_w(mapping->families[i]), hr);
 
     if (!*mapped_length) {
         IDWriteFont_Release(*mapped_font);
@@ -2011,7 +2155,7 @@ static const IDWriteFontFallbackVtbl fontfallbackvtbl = {
     fontfallback_MapCharacters
 };
 
-HRESULT create_system_fontfallback(IDWriteFactory4 *factory, IDWriteFontFallback **ret)
+HRESULT create_system_fontfallback(IDWriteFactory5 *factory, IDWriteFontFallback **ret)
 {
     struct dwrite_fontfallback *fallback;
 
@@ -2023,9 +2167,9 @@ HRESULT create_system_fontfallback(IDWriteFactory4 *factory, IDWriteFontFallback
 
     fallback->IDWriteFontFallback_iface.lpVtbl = &fontfallbackvtbl;
     fallback->factory = factory;
-    fallback->mappings = fontfallback_neutral_data;
-    fallback->count = sizeof(fontfallback_neutral_data)/sizeof(fontfallback_neutral_data[0]);
-    IDWriteFactory4_GetSystemFontCollection(fallback->factory, FALSE, &fallback->systemcollection, FALSE);
+    fallback->mappings = (struct fallback_mapping *)fontfallback_neutral_data;
+    fallback->mappings_count = ARRAY_SIZE(fontfallback_neutral_data);
+    IDWriteFactory5_GetSystemFontCollection(fallback->factory, FALSE, &fallback->systemcollection, FALSE);
 
     *ret = &fallback->IDWriteFontFallback_iface;
     return S_OK;
@@ -2036,4 +2180,220 @@ void release_system_fontfallback(IDWriteFontFallback *iface)
     struct dwrite_fontfallback *fallback = impl_from_IDWriteFontFallback(iface);
     IDWriteFontCollection1_Release(fallback->systemcollection);
     heap_free(fallback);
+}
+
+static ULONG WINAPI customfontfallback_AddRef(IDWriteFontFallback *iface)
+{
+    struct dwrite_fontfallback *fallback = impl_from_IDWriteFontFallback(iface);
+    ULONG ref = InterlockedIncrement(&fallback->ref);
+    TRACE("(%p)->(%d)\n", fallback, ref);
+    return ref;
+}
+
+static ULONG WINAPI customfontfallback_Release(IDWriteFontFallback *iface)
+{
+    struct dwrite_fontfallback *fallback = impl_from_IDWriteFontFallback(iface);
+    ULONG ref = InterlockedDecrement(&fallback->ref);
+
+    TRACE("(%p)->(%d)\n", fallback, ref);
+
+    if (!ref) {
+        IDWriteFactory5_Release(fallback->factory);
+        heap_free(fallback);
+    }
+
+    return ref;
+}
+
+static HRESULT WINAPI customfontfallback_MapCharacters(IDWriteFontFallback *iface, IDWriteTextAnalysisSource *source,
+    UINT32 position, UINT32 length, IDWriteFontCollection *basecollection, const WCHAR *basefamily,
+    DWRITE_FONT_WEIGHT weight, DWRITE_FONT_STYLE style, DWRITE_FONT_STRETCH stretch, UINT32 *mapped_length,
+    IDWriteFont **ret_font, FLOAT *scale)
+{
+    struct dwrite_fontfallback *fallback = impl_from_IDWriteFontFallback(iface);
+
+    FIXME("(%p)->(%p %u %u %p, %s, %u, %u, %u, %p, %p, %p)\n", fallback, source, position, length,
+        basecollection, debugstr_w(basefamily), weight, style, stretch, mapped_length, ret_font, scale);
+
+    return E_NOTIMPL;
+}
+
+static const IDWriteFontFallbackVtbl customfontfallbackvtbl =
+{
+    fontfallback_QueryInterface,
+    customfontfallback_AddRef,
+    customfontfallback_Release,
+    customfontfallback_MapCharacters,
+};
+
+static HRESULT WINAPI fontfallbackbuilder_QueryInterface(IDWriteFontFallbackBuilder *iface, REFIID riid, void **obj)
+{
+    struct dwrite_fontfallback_builder *fallbackbuilder = impl_from_IDWriteFontFallbackBuilder(iface);
+
+    TRACE("(%p)->(%s %p)\n", fallbackbuilder, debugstr_guid(riid), obj);
+
+    if (IsEqualIID(riid, &IID_IDWriteFontFallbackBuilder) || IsEqualIID(riid, &IID_IUnknown)) {
+        *obj = iface;
+        IDWriteFontFallbackBuilder_AddRef(iface);
+        return S_OK;
+    }
+
+    WARN("%s not implemented.\n", debugstr_guid(riid));
+
+    *obj = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI fontfallbackbuilder_AddRef(IDWriteFontFallbackBuilder *iface)
+{
+    struct dwrite_fontfallback_builder *fallbackbuilder = impl_from_IDWriteFontFallbackBuilder(iface);
+    ULONG ref = InterlockedIncrement(&fallbackbuilder->ref);
+    TRACE("(%p)->(%d)\n", fallbackbuilder, ref);
+    return ref;
+}
+
+static ULONG WINAPI fontfallbackbuilder_Release(IDWriteFontFallbackBuilder *iface)
+{
+    struct dwrite_fontfallback_builder *fallbackbuilder = impl_from_IDWriteFontFallbackBuilder(iface);
+    ULONG ref = InterlockedDecrement(&fallbackbuilder->ref);
+
+    TRACE("(%p)->(%d)\n", fallbackbuilder, ref);
+
+    if (!ref) {
+        UINT32 i;
+
+        for (i = 0; i < fallbackbuilder->mappings_count; i++) {
+            struct fallback_mapping *mapping = &fallbackbuilder->mappings[i];
+            UINT32 j;
+
+            for (j = 0; j < mapping->families_count; j++)
+                heap_free(mapping->families[j]);
+            heap_free(mapping->families);
+
+            if (mapping->collection)
+                IDWriteFontCollection_Release(mapping->collection);
+            heap_free(mapping->ranges);
+            heap_free(mapping->locale);
+        }
+
+        IDWriteFactory5_Release(fallbackbuilder->factory);
+        heap_free(fallbackbuilder->mappings);
+        heap_free(fallbackbuilder);
+    }
+
+    return ref;
+}
+
+static HRESULT WINAPI fontfallbackbuilder_AddMapping(IDWriteFontFallbackBuilder *iface,
+        const DWRITE_UNICODE_RANGE *ranges, UINT32 ranges_count, WCHAR const **target_families, UINT32 families_count,
+        IDWriteFontCollection *collection, WCHAR const *locale, WCHAR const *base_family, FLOAT scale)
+{
+    struct dwrite_fontfallback_builder *fallbackbuilder = impl_from_IDWriteFontFallbackBuilder(iface);
+    struct fallback_mapping *mapping;
+    UINT32 i;
+
+    TRACE("(%p)->(%p, %u, %p, %u, %p, %s, %s, %f)\n", fallbackbuilder, ranges, ranges_count, target_families,
+            families_count, collection, debugstr_w(locale), debugstr_w(base_family), scale);
+
+    if (!ranges || ranges_count == 0 || !target_families || families_count == 0 || scale < 0.0f)
+        return E_INVALIDARG;
+
+    if (base_family)
+        FIXME("base family ignored.\n");
+
+    if (fallbackbuilder->mappings_count == fallbackbuilder->mappings_capacity) {
+        struct fallback_mapping *mappings;
+
+        if (fallbackbuilder->mappings_capacity == 0) {
+            if ((mappings = heap_calloc(16, sizeof(*mappings))))
+                fallbackbuilder->mappings_capacity = 16;
+        }
+        else {
+            if ((mappings = heap_realloc(fallbackbuilder->mappings, sizeof(*fallbackbuilder->mappings) *
+                    fallbackbuilder->mappings_capacity * 2)))
+                fallbackbuilder->mappings_capacity *= 2;
+        }
+        if (!mappings)
+            return E_OUTOFMEMORY;
+
+        fallbackbuilder->mappings = mappings;
+    }
+
+    mapping = &fallbackbuilder->mappings[fallbackbuilder->mappings_count++];
+
+    mapping->ranges = heap_calloc(ranges_count, sizeof(*mapping->ranges));
+    memcpy(mapping->ranges, ranges, sizeof(*mapping->ranges) * ranges_count);
+    mapping->ranges_count = ranges_count;
+    mapping->families = heap_alloc_zero(sizeof(*mapping->families) * families_count);
+    mapping->families_count = families_count;
+    for (i = 0; i < families_count; i++)
+        mapping->families[i] = heap_strdupW(target_families[i]);
+    mapping->collection = collection;
+    if (mapping->collection)
+        IDWriteFontCollection_AddRef(mapping->collection);
+    mapping->locale = heap_strdupW(locale);
+    mapping->scale = scale;
+
+    return S_OK;
+}
+
+static HRESULT WINAPI fontfallbackbuilder_AddMappings(IDWriteFontFallbackBuilder *iface, IDWriteFontFallback *fallback)
+{
+    struct dwrite_fontfallback_builder *fallbackbuilder = impl_from_IDWriteFontFallbackBuilder(iface);
+
+    FIXME("(%p)->(%p): stub\n", fallbackbuilder, fallback);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI fontfallbackbuilder_CreateFontFallback(IDWriteFontFallbackBuilder *iface,
+        IDWriteFontFallback **ret)
+{
+    struct dwrite_fontfallback_builder *fallbackbuilder = impl_from_IDWriteFontFallbackBuilder(iface);
+    struct dwrite_fontfallback *fallback;
+
+    FIXME("(%p)->(%p): stub\n", fallbackbuilder, ret);
+
+    *ret = NULL;
+
+    fallback = heap_alloc(sizeof(*fallback));
+    if (!fallback)
+        return E_OUTOFMEMORY;
+
+    fallback->IDWriteFontFallback_iface.lpVtbl = &customfontfallbackvtbl;
+    fallback->ref = 1;
+    fallback->factory = fallbackbuilder->factory;
+    IDWriteFactory5_AddRef(fallback->factory);
+
+    *ret = &fallback->IDWriteFontFallback_iface;
+    return S_OK;
+}
+
+static const IDWriteFontFallbackBuilderVtbl fontfallbackbuildervtbl =
+{
+    fontfallbackbuilder_QueryInterface,
+    fontfallbackbuilder_AddRef,
+    fontfallbackbuilder_Release,
+    fontfallbackbuilder_AddMapping,
+    fontfallbackbuilder_AddMappings,
+    fontfallbackbuilder_CreateFontFallback,
+};
+
+HRESULT create_fontfallback_builder(IDWriteFactory5 *factory, IDWriteFontFallbackBuilder **ret)
+{
+    struct dwrite_fontfallback_builder *builder;
+
+    *ret = NULL;
+
+    builder = heap_alloc_zero(sizeof(*builder));
+    if (!builder)
+        return E_OUTOFMEMORY;
+
+    builder->IDWriteFontFallbackBuilder_iface.lpVtbl = &fontfallbackbuildervtbl;
+    builder->ref = 1;
+    builder->factory = factory;
+    IDWriteFactory5_AddRef(builder->factory);
+
+    *ret = &builder->IDWriteFontFallbackBuilder_iface;
+    return S_OK;
 }

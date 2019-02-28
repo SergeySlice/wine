@@ -205,8 +205,6 @@ static RTL_RUN_ONCE init_once = RTL_RUN_ONCE_INIT;
 /* at some point we may want to allow Winelib apps to set this */
 static const BOOL is_case_sensitive = FALSE;
 
-UNICODE_STRING system_dir = { 0, 0, NULL };  /* system directory */
-
 static struct file_identity windir;
 
 static RTL_CRITICAL_SECTION dir_section;
@@ -434,55 +432,6 @@ static void flush_dir_queue(void)
 }
 
 
-/***********************************************************************
- *           get_default_com_device
- *
- * Return the default device to use for serial ports.
- */
-static char *get_default_com_device( int num )
-{
-    char *ret = NULL;
-
-    if (num < 1 || num > 256) return NULL;
-#ifdef linux
-    ret = RtlAllocateHeap( GetProcessHeap(), 0, sizeof("/dev/ttyS256") );
-    if (!ret) return NULL;
-    sprintf( ret, "/dev/ttyS%d", num - 1 );
-#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
-    ret = RtlAllocateHeap( GetProcessHeap(), 0, sizeof("/dev/cuau256") );
-    if (!ret) return NULL;
-    sprintf( ret, "/dev/cuau%d", num - 1 );
-#elif defined(__DragonFly__)
-    ret = RtlAllocateHeap( GetProcessHeap(), 0, sizeof("/dev/cuaa256") );
-    if (!ret) return NULL;
-    sprintf( ret, "/dev/cuaa%d", num - 1 );
-#else
-    FIXME( "no known default for device com%d\n", num );
-#endif
-    return ret;
-}
-
-
-/***********************************************************************
- *           get_default_lpt_device
- *
- * Return the default device to use for parallel ports.
- */
-static char *get_default_lpt_device( int num )
-{
-    char *ret = NULL;
-
-    if (num < 1 || num > 256) return NULL;
-#ifdef linux
-    ret = RtlAllocateHeap( GetProcessHeap(), 0, sizeof("/dev/lp256") );
-    if (!ret) return NULL;
-    sprintf( ret, "/dev/lp%d", num - 1 );
-#else
-    FIXME( "no known default for device lpt%d\n", num );
-#endif
-    return ret;
-}
-
 #ifdef __ANDROID__
 
 static char *unescape_field( char *str )
@@ -689,6 +638,7 @@ static char *parse_mount_entries( FILE *f, dev_t dev, ino_t ino )
     {
         /* don't even bother stat'ing network mounts, there's no meaningful device anyway */
         if (!strcmp( entry->mnt_type, "nfs" ) ||
+            !strcmp( entry->mnt_type, "cifs" ) ||
             !strcmp( entry->mnt_type, "smbfs" ) ||
             !strcmp( entry->mnt_type, "ncpfs" )) continue;
 
@@ -967,6 +917,7 @@ static char *get_device_mount_point( dev_t dev )
         {
             /* don't even bother stat'ing network mounts, there's no meaningful device anyway */
             if (!strcmp( entry->mnt_type, "nfs" ) ||
+                !strcmp( entry->mnt_type, "cifs" ) ||
                 !strcmp( entry->mnt_type, "smbfs" ) ||
                 !strcmp( entry->mnt_type, "ncpfs" )) continue;
 
@@ -1057,7 +1008,7 @@ struct vol_caps
 static struct fs_cache *look_up_fs_cache( dev_t dev )
 {
     int i;
-    for (i = 0; i < sizeof(fs_cache)/sizeof(fs_cache[0]); i++)
+    for (i = 0; i < ARRAY_SIZE( fs_cache ); i++)
         if (fs_cache[i].dev == dev)
             return fs_cache+i;
     return NULL;
@@ -1082,7 +1033,7 @@ static void add_fs_cache( dev_t dev, fsid_t fsid, BOOLEAN case_sensitive )
     }
 
     /* Add a new entry */
-    for (i = 0; i < sizeof(fs_cache)/sizeof(fs_cache[0]); i++)
+    for (i = 0; i < ARRAY_SIZE( fs_cache ); i++)
         if (fs_cache[i].dev == 0)
         {
             /* This entry is empty, use it */
@@ -1504,8 +1455,8 @@ static BOOL append_entry( struct dir_data *data, const char *long_name,
     if (short_name)
     {
         short_len = ntdll_umbstowcs( 0, short_name, strlen(short_name),
-                                     short_nameW, sizeof(short_nameW) / sizeof(WCHAR) - 1 );
-        if (short_len == -1) short_len = sizeof(short_nameW) / sizeof(WCHAR) - 1;
+                                     short_nameW, ARRAY_SIZE( short_nameW ) - 1 );
+        if (short_len == -1) short_len = ARRAY_SIZE( short_nameW ) - 1;
         for (i = 0; i < short_len; i++) short_nameW[i] = toupperW( short_nameW[i] );
     }
     else  /* generate a short name if necessary */
@@ -2318,37 +2269,29 @@ done:
  */
 static void init_redirects(void)
 {
-    UNICODE_STRING nt_name;
-    ANSI_STRING unix_name;
-    NTSTATUS status;
+    static const char windows_dir[] = "/dosdevices/c:/windows";
+    const char *config_dir = wine_get_config_dir();
+    char *dir;
     struct stat st;
     unsigned int i;
 
-    if (!RtlDosPathNameToNtPathName_U( user_shared_data->NtSystemRoot, &nt_name, NULL, NULL ))
-    {
-        ERR( "can't convert %s\n", debugstr_w(user_shared_data->NtSystemRoot) );
-        return;
-    }
-    status = wine_nt_to_unix_file_name( &nt_name, &unix_name, FILE_OPEN_IF, FALSE );
-    RtlFreeUnicodeString( &nt_name );
-    if (status)
-    {
-        ERR( "cannot open %s (%x)\n", debugstr_w(user_shared_data->NtSystemRoot), status );
-        return;
-    }
-    if (!stat( unix_name.Buffer, &st ))
+    if (!(dir = RtlAllocateHeap( GetProcessHeap(), 0, strlen(config_dir) + sizeof(windows_dir) ))) return;
+    strcpy( dir, config_dir );
+    strcat( dir, windows_dir );
+    if (!stat( dir, &st ))
     {
         windir.dev = st.st_dev;
         windir.ino = st.st_ino;
-        nb_redirects = sizeof(redirects) / sizeof(redirects[0]);
+        nb_redirects = ARRAY_SIZE( redirects );
         for (i = 0; i < nb_redirects; i++)
         {
             if (!redirects[i].dos_target) continue;
-            redirects[i].unix_target = get_redirect_target( unix_name.Buffer, redirects[i].dos_target );
+            redirects[i].unix_target = get_redirect_target( dir, redirects[i].dos_target );
             TRACE( "%s -> %s\n", debugstr_w(redirects[i].source), redirects[i].unix_target );
         }
     }
-    RtlFreeAnsiString( &unix_name );
+    else ERR( "%s: %s\n", dir, strerror(errno) );
+    RtlFreeHeap( GetProcessHeap(), 0, dir );
 
 }
 
@@ -2425,14 +2368,10 @@ static int get_redirect_path( char *unix_name, int pos, const WCHAR *name, int l
 #endif
 
 /***********************************************************************
- *           DIR_init_windows_dir
+ *           init_directories
  */
-void DIR_init_windows_dir( const WCHAR *win, const WCHAR *sys )
+void init_directories(void)
 {
-    /* FIXME: should probably store paths as NT file names */
-
-    RtlCreateUnicodeString( &system_dir, sys );
-
 #ifndef _WIN64
     if (is_wow64) init_redirects();
 #endif
@@ -2505,8 +2444,6 @@ static NTSTATUS get_dos_device( const WCHAR *name, UINT name_len, ANSI_STRING *u
             dev[2] = 0;  /* remove last ':' to get the drive mount point symlink */
             new_name = get_default_drive_device( unix_name );
         }
-        else if (!strncmp( dev, "com", 3 )) new_name = get_default_com_device( atoi(dev + 3 ));
-        else if (!strncmp( dev, "lpt", 3 )) new_name = get_default_lpt_device( atoi(dev + 3 ));
 
         if (!new_name) break;
 
@@ -2528,11 +2465,11 @@ static inline int get_dos_prefix_len( const UNICODE_STRING *name )
 
     if (name->Length >= sizeof(nt_prefixW) &&
         !memcmp( name->Buffer, nt_prefixW, sizeof(nt_prefixW) ))
-        return sizeof(nt_prefixW) / sizeof(WCHAR);
+        return ARRAY_SIZE( nt_prefixW );
 
     if (name->Length >= sizeof(dosdev_prefixW) &&
-        !memicmpW( name->Buffer, dosdev_prefixW, sizeof(dosdev_prefixW)/sizeof(WCHAR) ))
-        return sizeof(dosdev_prefixW) / sizeof(WCHAR);
+        !memicmpW( name->Buffer, dosdev_prefixW, ARRAY_SIZE( dosdev_prefixW )))
+        return ARRAY_SIZE( dosdev_prefixW );
 
     return 0;
 }
@@ -2705,9 +2642,8 @@ static NTSTATUS lookup_unix_name( const WCHAR *name, int name_len, char **buffer
         {
             if (!stat( unix_name, &st ))
             {
-                /* creation fails with STATUS_ACCESS_DENIED for the root of the drive */
                 if (disposition == FILE_CREATE)
-                    return name_len ? STATUS_OBJECT_NAME_COLLISION : STATUS_ACCESS_DENIED;
+                    return STATUS_OBJECT_NAME_COLLISION;
                 return STATUS_SUCCESS;
             }
         }

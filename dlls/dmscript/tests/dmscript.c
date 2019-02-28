@@ -22,7 +22,9 @@
 #include <windef.h>
 #include <initguid.h>
 #include <wine/test.h>
+#include <ole2.h>
 #include <dmusici.h>
+#include <dmusicf.h>
 
 static BOOL missing_dmscript(void)
 {
@@ -88,11 +90,7 @@ static void test_COM(void)
     ULONG refcount;
     HRESULT hr;
 
-    /* COM aggregation */
-    hr = CoCreateInstance(&CLSID_DirectMusicScript, (IUnknown*)&dms, CLSCTX_INPROC_SERVER,
-            &IID_IUnknown, (void**)&dms);
-    todo_wine ok(hr == E_POINTER, "DirectMusicScript create failed: %08x, expected E_POINTER\n", hr);
-    /* An invalid non-NULL pUnkOuter crashes newer Windows versions */
+    /* COM aggregation. An invalid non-NULL outer IUnknown crashes newer Windows versions */
     hr = CoCreateInstance(&CLSID_DirectMusicScript, &unk_obj.IUnknown_iface, CLSCTX_INPROC_SERVER,
             &IID_IUnknown, (void**)&unk_obj.inner_unk);
     ok(hr == CLASS_E_NOAGGREGATION,
@@ -137,15 +135,16 @@ static void test_COM_scripttrack(void)
     IDirectMusicTrack *dmt;
     IPersistStream *ps;
     IUnknown *unk;
+    struct unk_impl unk_obj = {{&unk_vtbl}, 19, NULL};
     ULONG refcount;
     HRESULT hr;
 
-    /* COM aggregation */
-    hr = CoCreateInstance(&CLSID_DirectMusicScriptTrack, (IUnknown*)&dmt, CLSCTX_INPROC_SERVER,
-            &IID_IUnknown, (void**)&dmt);
+    /* COM aggregation. An invalid non-NULL outer IUnknown crashes newer Windows versions */
+    hr = CoCreateInstance(&CLSID_DirectMusicScriptTrack, &unk_obj.IUnknown_iface,
+            CLSCTX_INPROC_SERVER, &IID_IUnknown, (void**)&unk_obj.inner_unk);
     ok(hr == CLASS_E_NOAGGREGATION,
             "DirectMusicScriptTrack create failed: %08x, expected CLASS_E_NOAGGREGATION\n", hr);
-    ok(!dmt, "dmt = %p\n", dmt);
+    ok(!unk_obj.inner_unk, "unk_obj.inner_unk = %p\n", unk_obj.inner_unk);
 
     /* Invalid RIID */
     hr = CoCreateInstance(&CLSID_DirectMusicScriptTrack, NULL, CLSCTX_INPROC_SERVER,
@@ -237,6 +236,102 @@ static void test_scripttrack(void)
     while (IDirectMusicTrack_Release(dmt));
 }
 
+struct chunk {
+    FOURCC id;
+    DWORD size;
+    FOURCC type;
+};
+
+#define CHUNK_HDR_SIZE (sizeof(FOURCC) + sizeof(DWORD))
+
+/* Generate a RIFF file format stream from an array of FOURCC ids.
+   RIFF and LIST need to be followed by the form type respectively list type,
+   followed by the chunks of the list and terminated with 0. */
+static IStream *gen_riff_stream(const FOURCC *ids)
+{
+    static const LARGE_INTEGER zero;
+    int level = -1;
+    DWORD *sizes[4];    /* Stack for the sizes of RIFF and LIST chunks */
+    char riff[1024];
+    char *p = riff;
+    struct chunk *ck;
+    IStream *stream;
+
+    do {
+        ck = (struct chunk *)p;
+        ck->id = *ids++;
+        switch (ck->id) {
+            case 0:
+                *sizes[level] = p - (char *)sizes[level] - sizeof(DWORD);
+                level--;
+                break;
+            case FOURCC_RIFF:
+                level++;
+                sizes[level] = &ck->size;
+                ck->type = *ids++;
+                p += sizeof(*ck);
+                break;
+        }
+    } while (level >= 0);
+
+    ck = (struct chunk *)riff;
+    CreateStreamOnHGlobal(NULL, TRUE, &stream);
+    IStream_Write(stream, riff, ck->size + CHUNK_HDR_SIZE, NULL);
+    IStream_Seek(stream, zero, STREAM_SEEK_SET, NULL);
+
+    return stream;
+}
+
+static void test_parsedescriptor(void)
+{
+    IDirectMusicObject *dmo;
+    IStream *stream;
+    DMUS_OBJECTDESC desc = {0};
+    HRESULT hr;
+    FOURCC empty[] = {FOURCC_RIFF, DMUS_FOURCC_SCRIPT_FORM, 0};
+
+    hr = CoCreateInstance(&CLSID_DirectMusicScript, NULL, CLSCTX_INPROC_SERVER,
+            &IID_IDirectMusicObject, (void **)&dmo);
+    ok(hr == S_OK, "DirectMusicScript create failed: %08x, expected S_OK\n", hr);
+
+    /* Nothing loaded */
+    hr = IDirectMusicObject_GetDescriptor(dmo, &desc);
+    ok(hr == S_OK, "GetDescriptor failed: %08x, expected S_OK\n", hr);
+    todo_wine ok(desc.dwValidData == (DMUS_OBJ_CLASS | DMUS_OBJ_VERSION),
+            "Got valid data %#x, expected DMUS_OBJ_OBJECT | DMUS_OBJ_VERSION\n", desc.dwValidData);
+    ok(IsEqualGUID(&desc.guidClass, &CLSID_DirectMusicScript),
+            "Got class guid %s, expected CLSID_DirectMusicScript\n",
+            wine_dbgstr_guid(&desc.guidClass));
+    ok(!desc.vVersion.dwVersionMS && !desc.vVersion.dwVersionLS,
+            "Got DMUS_VERSION %u.%u, expected 0.0\n", desc.vVersion.dwVersionMS,
+            desc.vVersion.dwVersionLS);
+
+    /* Empty RIFF stream */
+    stream = gen_riff_stream(empty);
+    memset(&desc, 0, sizeof(desc));
+    hr = IDirectMusicObject_ParseDescriptor(dmo, stream, &desc);
+    ok(hr == S_OK, "ParseDescriptor failed: %08x, expected S_OK\n", hr);
+    ok(!desc.dwValidData, "Got valid data %#x, expected 0\n", desc.dwValidData);
+    IStream_Release(stream);
+
+    /* NULL pointers */
+    memset(&desc, 0, sizeof(desc));
+    hr = IDirectMusicObject_ParseDescriptor(dmo, NULL, &desc);
+    ok(hr == E_POINTER, "ParseDescriptor failed: %08x, expected E_POINTER\n", hr);
+    hr = IDirectMusicObject_ParseDescriptor(dmo, stream, NULL);
+    ok(hr == E_POINTER, "ParseDescriptor failed: %08x, expected E_POINTER\n", hr);
+
+    /* Wrong form */
+    empty[1] = DMUS_FOURCC_CONTAINER_FORM;
+    stream = gen_riff_stream(empty);
+    hr = IDirectMusicObject_ParseDescriptor(dmo, stream, &desc);
+    ok(hr == DMUS_E_SCRIPT_INVALID_FILE,
+            "ParseDescriptor failed: %08x, expected DMUS_E_SCRIPT_INVALID_FILE\n", hr);
+    IStream_Release(stream);
+
+    IDirectMusicObject_Release(dmo);
+}
+
 START_TEST(dmscript)
 {
     CoInitialize(NULL);
@@ -251,6 +346,7 @@ START_TEST(dmscript)
     test_COM_scripttrack();
     test_dmscript();
     test_scripttrack();
+    test_parsedescriptor();
 
     CoUninitialize();
 }

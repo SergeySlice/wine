@@ -1334,15 +1334,21 @@ static void add_join( dibdrv_physdev *pdev, HRGN region, HRGN round_cap, const P
 {
     HRGN join;
     POINT pts[4];
+    RECT rect;
 
     switch (pdev->pen_join)
     {
     default: FIXME( "Unknown line join %x\n", pdev->pen_join );
         /* fall through */
     case PS_JOIN_ROUND:
-        OffsetRgn( round_cap, pt->x, pt->y );
-        CombineRgn( region, region, round_cap, RGN_OR );
-        OffsetRgn( round_cap, -pt->x, -pt->y );
+        GetRgnBox( round_cap, &rect );
+        offset_rect( &rect, pt->x, pt->y );
+        if (clip_rect_to_dib( &pdev->dib, &rect ))
+        {
+            OffsetRgn( round_cap, pt->x, pt->y );
+            CombineRgn( region, region, round_cap, RGN_OR );
+            OffsetRgn( round_cap, -pt->x, -pt->y );
+        }
         return;
 
     case PS_JOIN_MITER:
@@ -1358,7 +1364,9 @@ static void add_join( dibdrv_physdev *pdev, HRGN region, HRGN round_cap, const P
         break;
     }
 
-    CombineRgn( region, region, join, RGN_OR );
+    GetRgnBox( join, &rect );
+    if (clip_rect_to_dib( &pdev->dib, &rect ))
+        CombineRgn( region, region, join, RGN_OR );
     DeleteObject( join );
     return;
 }
@@ -1367,7 +1375,7 @@ static BOOL wide_line_segment( dibdrv_physdev *pdev, HRGN total,
                                const POINT *pt_1, const POINT *pt_2, int dx, int dy,
                                BOOL need_cap_1, BOOL need_cap_2, struct face *face_1, struct face *face_2 )
 {
-    RECT rect;
+    RECT rect, clip_rect;
     BOOL sq_cap_1 = need_cap_1 && (pdev->pen_endcap == PS_ENDCAP_SQUARE);
     BOOL sq_cap_2 = need_cap_2 && (pdev->pen_endcap == PS_ENDCAP_SQUARE);
 
@@ -1381,7 +1389,9 @@ static BOOL wide_line_segment( dibdrv_physdev *pdev, HRGN total,
         rect.bottom = rect.top + pdev->pen_width;
         if ((sq_cap_1 && dx > 0) || (sq_cap_2 && dx < 0)) rect.left  -= pdev->pen_width / 2;
         if ((sq_cap_2 && dx > 0) || (sq_cap_1 && dx < 0)) rect.right += pdev->pen_width / 2;
-        add_rect_to_region( total, &rect );
+        clip_rect = rect;
+        if (clip_rect_to_dib( &pdev->dib, &clip_rect ))
+            add_rect_to_region( total, &clip_rect );
         if (dx > 0)
         {
             face_1->start.x = face_1->end.x   = rect.left;
@@ -1405,7 +1415,9 @@ static BOOL wide_line_segment( dibdrv_physdev *pdev, HRGN total,
         rect.right = rect.left + pdev->pen_width;
         if ((sq_cap_1 && dy > 0) || (sq_cap_2 && dy < 0)) rect.top    -= pdev->pen_width / 2;
         if ((sq_cap_2 && dy > 0) || (sq_cap_1 && dy < 0)) rect.bottom += pdev->pen_width / 2;
-        add_rect_to_region( total, &rect );
+        clip_rect = rect;
+        if (clip_rect_to_dib( &pdev->dib, &clip_rect ))
+            add_rect_to_region( total, &clip_rect );
         if (dy > 0)
         {
             face_1->start.x = face_2->end.x   = rect.left;
@@ -1475,9 +1487,20 @@ static BOOL wide_line_segment( dibdrv_physdev *pdev, HRGN total,
             seg_pts[3].y += wide_half.x;
         }
 
-        segment = CreatePolygonRgn( seg_pts, 4, ALTERNATE );
-        CombineRgn( total, total, segment, RGN_OR );
-        DeleteObject( segment );
+        if (dx > 0 && dy > 0)
+            set_rect( &clip_rect, seg_pts[0].x, seg_pts[1].y, seg_pts[2].x, seg_pts[3].y );
+        else if (dx > 0 && dy < 0)
+            set_rect( &clip_rect, seg_pts[1].x, seg_pts[2].y, seg_pts[3].x, seg_pts[0].y );
+        else if (dx < 0 && dy > 0)
+            set_rect( &clip_rect, seg_pts[3].x, seg_pts[0].y, seg_pts[1].x, seg_pts[2].y );
+        else
+            set_rect( &clip_rect, seg_pts[2].x, seg_pts[3].y, seg_pts[0].x, seg_pts[1].y );
+        if (clip_rect_to_dib( &pdev->dib, &clip_rect ))
+        {
+            segment = CreatePolygonRgn( seg_pts, 4, ALTERNATE );
+            CombineRgn( total, total, segment, RGN_OR );
+            DeleteObject( segment );
+        }
 
         face_1->start = seg_pts[0];
         face_1->end   = seg_pts[1];
@@ -1754,20 +1777,31 @@ COLORREF dibdrv_SetDCPenColor( PHYSDEV dev, COLORREF color )
 }
 
 /**********************************************************************
+ *             fill_with_pixel
+ *
+ * Fill a number of rectangles with a given pixel color and rop mode
+ */
+BOOL fill_with_pixel( DC *dc, dib_info *dib, DWORD pixel, int num, const RECT *rects, INT rop )
+{
+    rop_mask mask;
+
+    calc_rop_masks( rop, pixel, &mask );
+    dib->funcs->solid_rects( dib, num, rects, mask.and, mask.xor );
+    return TRUE;
+}
+
+/**********************************************************************
  *             solid_brush
  *
  * Fill a number of rectangles with the solid brush
  */
 static BOOL solid_brush(dibdrv_physdev *pdev, dib_brush *brush, dib_info *dib,
-                        int num, const RECT *rects, INT rop)
+                        int num, const RECT *rects, const POINT *brush_org, INT rop)
 {
     DC *dc = get_physdev_dc( &pdev->dev );
-    rop_mask brush_color;
     DWORD color = get_pixel_color( dc, &pdev->dib, brush->colorref, TRUE );
 
-    calc_rop_masks( rop, color, &brush_color );
-    dib->funcs->solid_rects( dib, num, rects, brush_color.and, brush_color.xor );
-    return TRUE;
+    return fill_with_pixel( dc, dib, color, num, rects, rop );
 }
 
 static BOOL alloc_brush_mask_bits( dib_brush *brush )
@@ -1922,7 +1956,7 @@ static BOOL select_pattern_brush( dibdrv_physdev *pdev, dib_brush *brush, BOOL *
     BITMAPINFO *info = (BITMAPINFO *)buffer;
     RGBQUAD color_table[2];
     dib_info pattern;
-    BOOL dither = (brush->dib.bit_count == 1);
+    BOOL dither = (brush->dib.bit_count == 1) || (pdev->dib.bit_count == 1);
 
     if (brush->pattern.info->bmiHeader.biClrUsed && brush->pattern.usage == DIB_PAL_COLORS)
     {
@@ -1994,9 +2028,8 @@ static BOOL select_pattern_brush( dibdrv_physdev *pdev, dib_brush *brush, BOOL *
  * FIXME: Should we insist l < r && t < b?  Currently we assume this.
  */
 static BOOL pattern_brush(dibdrv_physdev *pdev, dib_brush *brush, dib_info *dib,
-                          int num, const RECT *rects, INT rop)
+                          int num, const RECT *rects, const POINT *brush_org, INT rop)
 {
-    DC *dc = get_physdev_dc( &pdev->dev );
     BOOL needs_reselect = FALSE;
 
     if (rop != brush->rop)
@@ -2032,14 +2065,14 @@ static BOOL pattern_brush(dibdrv_physdev *pdev, dib_brush *brush, dib_info *dib,
         }
     }
 
-    dib->funcs->pattern_rects( dib, num, rects, &dc->brush_org, &brush->dib, &brush->masks );
+    dib->funcs->pattern_rects( dib, num, rects, brush_org, &brush->dib, &brush->masks );
 
     if (needs_reselect) free_pattern_brush( brush );
     return TRUE;
 }
 
 static BOOL null_brush(dibdrv_physdev *pdev, dib_brush *brush, dib_info *dib,
-                       int num, const RECT *rects, INT rop)
+                       int num, const RECT *rects, const POINT *brush_org, INT rop)
 {
     return TRUE;
 }
@@ -2063,7 +2096,7 @@ static BOOL brush_needs_dithering( dibdrv_physdev *pdev, COLORREF color )
 }
 
 static void select_brush( dibdrv_physdev *pdev, dib_brush *brush,
-                          const LOGBRUSH *logbrush, const struct brush_pattern *pattern )
+                          const LOGBRUSH *logbrush, const struct brush_pattern *pattern, BOOL dither )
 {
     free_pattern_brush( brush );
 
@@ -2084,7 +2117,7 @@ static void select_brush( dibdrv_physdev *pdev, dib_brush *brush,
         case BS_NULL:    brush->rects = null_brush; break;
         case BS_HATCHED: brush->rects = pattern_brush; break;
         case BS_SOLID:
-            brush->rects = brush_needs_dithering( pdev, brush->colorref ) ? pattern_brush : solid_brush;
+            brush->rects = dither && brush_needs_dithering( pdev, brush->colorref ) ? pattern_brush : solid_brush;
             break;
         }
     }
@@ -2106,7 +2139,7 @@ HBRUSH dibdrv_SelectBrush( PHYSDEV dev, HBRUSH hbrush, const struct brush_patter
     if (hbrush == GetStockObject( DC_BRUSH ))
         logbrush.lbColor = dc->dcBrushColor;
 
-    select_brush( pdev, &pdev->brush, &logbrush, pattern );
+    select_brush( pdev, &pdev->brush, &logbrush, pattern, TRUE );
     return hbrush;
 }
 
@@ -2120,6 +2153,7 @@ HPEN dibdrv_SelectPen( PHYSDEV dev, HPEN hpen, const struct brush_pattern *patte
     LOGPEN logpen;
     LOGBRUSH logbrush;
     EXTLOGPEN *elp = NULL;
+    BOOL dither = TRUE;
 
     TRACE("(%p, %p)\n", dev, hpen);
 
@@ -2147,6 +2181,7 @@ HPEN dibdrv_SelectPen( PHYSDEV dev, HPEN hpen, const struct brush_pattern *patte
         logbrush.lbStyle = BS_SOLID;
         logbrush.lbColor = logpen.lopnColor;
         logbrush.lbHatch = 0;
+        dither = FALSE;
     }
 
     pdev->pen_join   = logpen.lopnStyle & PS_JOIN_MASK;
@@ -2157,7 +2192,7 @@ HPEN dibdrv_SelectPen( PHYSDEV dev, HPEN hpen, const struct brush_pattern *patte
         logbrush.lbColor = dc->dcPenColor;
 
     set_dash_pattern( &pdev->pen_pattern, 0, NULL );
-    select_brush( pdev, &pdev->pen_brush, &logbrush, pattern );
+    select_brush( pdev, &pdev->pen_brush, &logbrush, pattern, dither );
 
     pdev->pen_style = logpen.lopnStyle & PS_STYLE_MASK;
 
@@ -2224,7 +2259,7 @@ COLORREF dibdrv_SetDCBrushColor( PHYSDEV dev, COLORREF color )
     if (dc->hBrush == GetStockObject( DC_BRUSH ))
     {
         LOGBRUSH logbrush = { BS_SOLID, color, 0 };
-        select_brush( pdev, &pdev->brush, &logbrush, NULL );
+        select_brush( pdev, &pdev->brush, &logbrush, NULL, TRUE );
     }
     return color;
 }

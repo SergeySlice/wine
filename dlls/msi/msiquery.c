@@ -26,16 +26,17 @@
 #include "winbase.h"
 #include "winerror.h"
 #include "wine/debug.h"
+#include "wine/exception.h"
 #include "wine/unicode.h"
 #include "msi.h"
 #include "msiquery.h"
 #include "objbase.h"
 #include "objidl.h"
-#include "msipriv.h"
 #include "winnls.h"
 
+#include "msipriv.h"
 #include "query.h"
-#include "msiserver.h"
+#include "winemsi.h"
 
 #include "initguid.h"
 
@@ -115,9 +116,6 @@ UINT MSI_DatabaseOpenViewW(MSIDATABASE *db,
     UINT r;
 
     TRACE("%s %p\n", debugstr_w(szQuery), pView);
-
-    if( !szQuery)
-        return ERROR_INVALID_PARAMETER;
 
     /* pre allocate a handle to hold a pointer to the view */
     query = alloc_msiobject( MSIHANDLETYPE_VIEW, sizeof (MSIQUERY),
@@ -247,28 +245,33 @@ UINT WINAPI MsiDatabaseOpenViewW(MSIHANDLE hdb,
 
     TRACE("%s %p\n", debugstr_w(szQuery), phView);
 
+    if (!phView)
+        return ERROR_INVALID_PARAMETER;
+
+    if (!szQuery)
+        return ERROR_BAD_QUERY_SYNTAX;
+
     db = msihandle2msiinfo( hdb, MSIHANDLETYPE_DATABASE );
     if( !db )
     {
-        HRESULT hr;
-        IWineMsiRemoteDatabase *remote_database;
+        MSIHANDLE remote, remote_view;
 
-        remote_database = (IWineMsiRemoteDatabase *)msi_get_remote( hdb );
-        if ( !remote_database )
+        if (!(remote = msi_get_remote(hdb)))
             return ERROR_INVALID_HANDLE;
 
-        hr = IWineMsiRemoteDatabase_OpenView( remote_database, szQuery, phView );
-        IWineMsiRemoteDatabase_Release( remote_database );
-
-        if (FAILED(hr))
+        __TRY
         {
-            if (HRESULT_FACILITY(hr) == FACILITY_WIN32)
-                return HRESULT_CODE(hr);
-
-            return ERROR_FUNCTION_FAILED;
+            ret = remote_DatabaseOpenView(remote, szQuery, &remote_view);
         }
+        __EXCEPT(rpc_filter)
+        {
+            ret = GetExceptionCode();
+        }
+        __ENDTRY
 
-        return ERROR_SUCCESS;
+        if (!ret)
+            *phView = alloc_msi_remote_handle(remote_view);
+        return ret;
     }
 
     ret = MSI_DatabaseOpenViewW( db, szQuery, &query );
@@ -284,7 +287,7 @@ UINT WINAPI MsiDatabaseOpenViewW(MSIHANDLE hdb,
     return ret;
 }
 
-UINT msi_view_get_row(MSIDATABASE *db, MSIVIEW *view, UINT row, MSIRECORD **rec)
+UINT msi_view_refresh_row(MSIDATABASE *db, MSIVIEW *view, UINT row, MSIRECORD *rec)
 {
     UINT row_count = 0, col_count = 0, i, ival, ret, type;
 
@@ -296,13 +299,6 @@ UINT msi_view_get_row(MSIDATABASE *db, MSIVIEW *view, UINT row, MSIRECORD **rec)
 
     if (!col_count)
         return ERROR_INVALID_PARAMETER;
-
-    if (row >= row_count)
-        return ERROR_NO_MORE_ITEMS;
-
-    *rec = MSI_CreateRecord(col_count);
-    if (!*rec)
-        return ERROR_FUNCTION_FAILED;
 
     for (i = 1; i <= col_count; i++)
     {
@@ -320,7 +316,7 @@ UINT msi_view_get_row(MSIDATABASE *db, MSIVIEW *view, UINT row, MSIRECORD **rec)
             ret = view->ops->fetch_stream(view, row, i, &stm);
             if ((ret == ERROR_SUCCESS) && stm)
             {
-                MSI_RecordSetIStream(*rec, i, stm);
+                MSI_RecordSetIStream(rec, i, stm);
                 IStream_Release(stm);
             }
             else
@@ -339,26 +335,46 @@ UINT msi_view_get_row(MSIDATABASE *db, MSIVIEW *view, UINT row, MSIRECORD **rec)
         if (! (type & MSITYPE_VALID))
             ERR("Invalid type!\n");
 
-        /* check if it's nul (0) - if so, don't set anything */
-        if (!ival)
-            continue;
-
         if (type & MSITYPE_STRING)
         {
             int len;
-            const WCHAR *sval = msi_string_lookup( db->strings, ival, &len );
-            msi_record_set_string( *rec, i, sval, len );
+            const WCHAR *sval = msi_string_lookup(db->strings, ival, &len);
+            msi_record_set_string(rec, i, sval, len);
         }
         else
         {
             if ((type & MSI_DATASIZEMASK) == 2)
-                MSI_RecordSetInteger(*rec, i, ival - (1<<15));
+                MSI_RecordSetInteger(rec, i, ival ? ival - (1<<15) : MSI_NULL_INTEGER);
             else
-                MSI_RecordSetInteger(*rec, i, ival - (1u<<31));
+                MSI_RecordSetInteger(rec, i, ival - (1u<<31));
         }
     }
 
     return ERROR_SUCCESS;
+}
+
+UINT msi_view_get_row(MSIDATABASE *db, MSIVIEW *view, UINT row, MSIRECORD **rec)
+{
+    UINT row_count = 0, col_count = 0, r;
+    MSIRECORD *object;
+
+    TRACE("view %p, row %u, rec %p.\n", view, row, rec);
+
+    if ((r = view->ops->get_dimensions(view, &row_count, &col_count)))
+        return r;
+
+    if (row >= row_count)
+        return ERROR_NO_MORE_ITEMS;
+
+    if (!(object = MSI_CreateRecord( col_count )))
+        return ERROR_OUTOFMEMORY;
+
+    if ((r = msi_view_refresh_row(db, view, row, object)))
+        msiobj_release( &object->hdr );
+    else
+        *rec = object;
+
+    return r;
 }
 
 UINT MSI_ViewFetch(MSIQUERY *query, MSIRECORD **prec)
@@ -376,7 +392,8 @@ UINT MSI_ViewFetch(MSIQUERY *query, MSIRECORD **prec)
     if (r == ERROR_SUCCESS)
     {
         query->row ++;
-        MSI_RecordSetIntPtr(*prec, 0, (INT_PTR)query);
+        (*prec)->cookie = (UINT64)(ULONG_PTR)query;
+        MSI_RecordSetInteger(*prec, 0, 1);
     }
 
     return r;
@@ -395,8 +412,31 @@ UINT WINAPI MsiViewFetch(MSIHANDLE hView, MSIHANDLE *record)
     *record = 0;
 
     query = msihandle2msiinfo( hView, MSIHANDLETYPE_VIEW );
-    if( !query )
-        return ERROR_INVALID_HANDLE;
+    if (!query)
+    {
+        struct wire_record *wire_rec = NULL;
+        MSIHANDLE remote;
+
+        if (!(remote = msi_get_remote(hView)))
+            return ERROR_INVALID_HANDLE;
+
+        __TRY
+        {
+            ret = remote_ViewFetch(remote, &wire_rec);
+        }
+        __EXCEPT(rpc_filter)
+        {
+            ret = GetExceptionCode();
+        }
+        __ENDTRY
+
+        if (!ret)
+        {
+            ret = unmarshal_record(wire_rec, record);
+            free_remote_record(wire_rec);
+        }
+        return ret;
+    }
     ret = MSI_ViewFetch( query, &rec );
     if( ret == ERROR_SUCCESS )
     {
@@ -432,8 +472,25 @@ UINT WINAPI MsiViewClose(MSIHANDLE hView)
     TRACE("%d\n", hView );
 
     query = msihandle2msiinfo( hView, MSIHANDLETYPE_VIEW );
-    if( !query )
-        return ERROR_INVALID_HANDLE;
+    if (!query)
+    {
+        MSIHANDLE remote;
+
+        if (!(remote = msi_get_remote(hView)))
+            return ERROR_INVALID_HANDLE;
+
+        __TRY
+        {
+            ret = remote_ViewClose(remote);
+        }
+        __EXCEPT(rpc_filter)
+        {
+            ret = GetExceptionCode();
+        }
+        __ENDTRY
+
+        return ret;
+    }
 
     ret = MSI_ViewClose( query );
     msiobj_release( &query->hdr );
@@ -464,25 +521,40 @@ UINT WINAPI MsiViewExecute(MSIHANDLE hView, MSIHANDLE hRec)
     
     TRACE("%d %d\n", hView, hRec);
 
-    query = msihandle2msiinfo( hView, MSIHANDLETYPE_VIEW );
-    if( !query )
-        return ERROR_INVALID_HANDLE;
-
     if( hRec )
     {
         rec = msihandle2msiinfo( hRec, MSIHANDLETYPE_RECORD );
         if( !rec )
+            return ERROR_INVALID_HANDLE;
+    }
+
+    query = msihandle2msiinfo( hView, MSIHANDLETYPE_VIEW );
+    if( !query )
+    {
+        MSIHANDLE remote;
+
+        if (!(remote = msi_get_remote(hView)))
+            return ERROR_INVALID_HANDLE;
+
+        __TRY
         {
-            ret = ERROR_INVALID_HANDLE;
-            goto out;
+            ret = remote_ViewExecute(remote, rec ? (struct wire_record *)&rec->count : NULL);
         }
+        __EXCEPT(rpc_filter)
+        {
+            ret = GetExceptionCode();
+        }
+        __ENDTRY
+
+        if (rec)
+            msiobj_release(&rec->hdr);
+        return ret;
     }
 
     msiobj_lock( &rec->hdr );
     ret = MSI_ViewExecute( query, rec );
     msiobj_unlock( &rec->hdr );
 
-out:
     msiobj_release( &query->hdr );
     if( rec )
         msiobj_release( &rec->hdr );
@@ -581,8 +653,32 @@ UINT WINAPI MsiViewGetColumnInfo(MSIHANDLE hView, MSICOLINFO info, MSIHANDLE *hR
         return ERROR_INVALID_PARAMETER;
 
     query = msihandle2msiinfo( hView, MSIHANDLETYPE_VIEW );
-    if( !query )
-        return ERROR_INVALID_HANDLE;
+    if (!query)
+    {
+        struct wire_record *wire_rec = NULL;
+        MSIHANDLE remote;
+
+        if (!(remote = msi_get_remote(hView)))
+            return ERROR_INVALID_HANDLE;
+
+        __TRY
+        {
+            r = remote_ViewGetColumnInfo(remote, info, &wire_rec);
+        }
+        __EXCEPT(rpc_filter)
+        {
+            r = GetExceptionCode();
+        }
+        __ENDTRY
+
+        if (!r)
+        {
+            r = unmarshal_record(wire_rec, hRec);
+            free_remote_record(wire_rec);
+        }
+
+        return r;
+    }
 
     r = MSI_ViewGetColumnInfo( query, info, &rec );
     if ( r == ERROR_SUCCESS )
@@ -610,10 +706,10 @@ UINT MSI_ViewModify( MSIQUERY *query, MSIMODIFY mode, MSIRECORD *rec )
     if ( !view  || !view->ops->modify)
         return ERROR_FUNCTION_FAILED;
 
-    if ( mode == MSIMODIFY_UPDATE && MSI_RecordGetIntPtr( rec, 0 ) != (INT_PTR)query )
+    if ( mode == MSIMODIFY_UPDATE && rec->cookie != (UINT64)(ULONG_PTR)query )
         return ERROR_FUNCTION_FAILED;
 
-    r = view->ops->modify( view, mode, rec, query->row );
+    r = view->ops->modify( view, mode, rec, query->row - 1 );
     if (mode == MSIMODIFY_DELETE && r == ERROR_SUCCESS)
         query->row--;
 
@@ -629,17 +725,45 @@ UINT WINAPI MsiViewModify( MSIHANDLE hView, MSIMODIFY eModifyMode,
 
     TRACE("%d %x %d\n", hView, eModifyMode, hRecord);
 
-    query = msihandle2msiinfo( hView, MSIHANDLETYPE_VIEW );
-    if( !query )
+    rec = msihandle2msiinfo( hRecord, MSIHANDLETYPE_RECORD );
+
+    if (!rec)
         return ERROR_INVALID_HANDLE;
 
-    rec = msihandle2msiinfo( hRecord, MSIHANDLETYPE_RECORD );
+    query = msihandle2msiinfo( hView, MSIHANDLETYPE_VIEW );
+    if (!query)
+    {
+        struct wire_record *wire_refreshed = NULL;
+        MSIHANDLE remote;
+
+        if (!(remote = msi_get_remote(hView)))
+            return ERROR_INVALID_HANDLE;
+
+        __TRY
+        {
+            r = remote_ViewModify(remote, eModifyMode,
+                (struct wire_record *)&rec->count, &wire_refreshed);
+        }
+        __EXCEPT(rpc_filter)
+        {
+            r = GetExceptionCode();
+        }
+        __ENDTRY
+
+        if (!r && (eModifyMode == MSIMODIFY_REFRESH || eModifyMode == MSIMODIFY_SEEK))
+        {
+            r = copy_remote_record(wire_refreshed, hRecord);
+            free_remote_record(wire_refreshed);
+        }
+
+        msiobj_release(&rec->hdr);
+        return r;
+    }
+
     r = MSI_ViewModify( query, eModifyMode, rec );
 
     msiobj_release( &query->hdr );
-    if( rec )
-        msiobj_release( &rec->hdr );
-
+    msiobj_release(&rec->hdr);
     return r;
 }
 
@@ -713,84 +837,84 @@ MSIHANDLE WINAPI MsiGetLastErrorRecord( void )
     return 0;
 }
 
-UINT MSI_DatabaseApplyTransformW( MSIDATABASE *db,
-                 LPCWSTR szTransformFile, int iErrorCond )
+UINT MSI_DatabaseApplyTransformW( MSIDATABASE *db, const WCHAR *transform, int error_cond )
 {
-    HRESULT r;
+    HRESULT hr;
     UINT ret = ERROR_FUNCTION_FAILED;
-    IStorage *stg = NULL;
+    IStorage *stg;
     STATSTG stat;
 
-    TRACE("%p %s %d\n", db, debugstr_w(szTransformFile), iErrorCond);
+    TRACE( "%p %s %08x\n", db, debugstr_w(transform), error_cond );
 
-    r = StgOpenStorage( szTransformFile, NULL,
-           STGM_DIRECT|STGM_READ|STGM_SHARE_DENY_WRITE, NULL, 0, &stg);
-    if ( FAILED(r) )
+    if (*transform == ':')
     {
-        WARN("failed to open transform 0x%08x\n", r);
-        return ret;
+        hr = IStorage_OpenStorage( db->storage, transform + 1, NULL, STGM_SHARE_EXCLUSIVE, NULL, 0, &stg );
+        if (FAILED( hr ))
+        {
+            WARN( "failed to open substorage transform 0x%08x\n", hr );
+            return ERROR_FUNCTION_FAILED;
+        }
+    }
+    else
+    {
+        hr = StgOpenStorage( transform, NULL, STGM_DIRECT|STGM_READ|STGM_SHARE_DENY_WRITE, NULL, 0, &stg );
+        if (FAILED( hr ))
+        {
+            WARN( "failed to open file transform 0x%08x\n", hr );
+            return ERROR_FUNCTION_FAILED;
+        }
     }
 
-    r = IStorage_Stat( stg, &stat, STATFLAG_NONAME );
-    if ( FAILED( r ) )
-        goto end;
-
-    if ( !IsEqualGUID( &stat.clsid, &CLSID_MsiTransform ) )
-        goto end;
-
-    if( TRACE_ON( msi ) )
-        enum_stream_names( stg );
+    hr = IStorage_Stat( stg, &stat, STATFLAG_NONAME );
+    if (FAILED( hr )) goto end;
+    if (!IsEqualGUID( &stat.clsid, &CLSID_MsiTransform )) goto end;
+    if (TRACE_ON( msi )) enum_stream_names( stg );
 
     ret = msi_table_apply_transform( db, stg );
 
 end:
     IStorage_Release( stg );
-
     return ret;
 }
 
-UINT WINAPI MsiDatabaseApplyTransformW( MSIHANDLE hdb,
-                 LPCWSTR szTransformFile, int iErrorCond)
+UINT WINAPI MsiDatabaseApplyTransformW( MSIHANDLE hdb, const WCHAR *transform, int error_cond )
 {
     MSIDATABASE *db;
     UINT r;
 
-    db = msihandle2msiinfo( hdb, MSIHANDLETYPE_DATABASE );
-    if( !db )
-    {
-        IWineMsiRemoteDatabase *remote_database;
+    if (error_cond) FIXME( "ignoring error conditions\n" );
 
-        remote_database = (IWineMsiRemoteDatabase *)msi_get_remote( hdb );
-        if ( !remote_database )
+    db = msihandle2msiinfo( hdb, MSIHANDLETYPE_DATABASE );
+    if (!db)
+    {
+        MSIHANDLE remote;
+
+        if (!(remote = msi_get_remote(hdb)))
             return ERROR_INVALID_HANDLE;
 
-        IWineMsiRemoteDatabase_Release( remote_database );
         WARN("MsiDatabaseApplyTransform not allowed during a custom action!\n");
 
         return ERROR_SUCCESS;
     }
 
-    r = MSI_DatabaseApplyTransformW( db, szTransformFile, iErrorCond );
+    r = MSI_DatabaseApplyTransformW( db, transform, error_cond );
     msiobj_release( &db->hdr );
     return r;
 }
 
-UINT WINAPI MsiDatabaseApplyTransformA( MSIHANDLE hdb, 
-                 LPCSTR szTransformFile, int iErrorCond)
+UINT WINAPI MsiDatabaseApplyTransformA( MSIHANDLE hdb, const char *transform, int error_cond )
 {
-    LPWSTR wstr;
+    WCHAR *wstr;
     UINT ret;
 
-    TRACE("%d %s %d\n", hdb, debugstr_a(szTransformFile), iErrorCond);
+    TRACE( "%d %s %08x\n", hdb, debugstr_a(transform), error_cond );
 
-    wstr = strdupAtoW( szTransformFile );
-    if( szTransformFile && !wstr )
+    wstr = strdupAtoW( transform );
+    if (transform && !wstr)
         return ERROR_NOT_ENOUGH_MEMORY;
 
-    ret = MsiDatabaseApplyTransformW( hdb, wstr, iErrorCond);
-
+    ret = MsiDatabaseApplyTransformW( hdb, wstr, error_cond );
     msi_free( wstr );
-
     return ret;
 }
 
@@ -820,13 +944,11 @@ UINT WINAPI MsiDatabaseCommit( MSIHANDLE hdb )
     db = msihandle2msiinfo( hdb, MSIHANDLETYPE_DATABASE );
     if( !db )
     {
-        IWineMsiRemoteDatabase *remote_database;
+        MSIHANDLE remote;
 
-        remote_database = (IWineMsiRemoteDatabase *)msi_get_remote( hdb );
-        if ( !remote_database )
+        if (!(remote = msi_get_remote(hdb)))
             return ERROR_INVALID_HANDLE;
 
-        IWineMsiRemoteDatabase_Release( remote_database );
         WARN("not allowed during a custom action!\n");
 
         return ERROR_SUCCESS;
@@ -946,25 +1068,29 @@ UINT WINAPI MsiDatabaseGetPrimaryKeysW( MSIHANDLE hdb,
     db = msihandle2msiinfo( hdb, MSIHANDLETYPE_DATABASE );
     if( !db )
     {
-        HRESULT hr;
-        IWineMsiRemoteDatabase *remote_database;
+        struct wire_record *wire_rec = NULL;
+        MSIHANDLE remote;
 
-        remote_database = (IWineMsiRemoteDatabase *)msi_get_remote( hdb );
-        if ( !remote_database )
+        if (!(remote = msi_get_remote(hdb)))
             return ERROR_INVALID_HANDLE;
 
-        hr = IWineMsiRemoteDatabase_GetPrimaryKeys( remote_database, table, phRec );
-        IWineMsiRemoteDatabase_Release( remote_database );
-
-        if (FAILED(hr))
+        __TRY
         {
-            if (HRESULT_FACILITY(hr) == FACILITY_WIN32)
-                return HRESULT_CODE(hr);
+            r = remote_DatabaseGetPrimaryKeys(remote, table, &wire_rec);
+        }
+        __EXCEPT(rpc_filter)
+        {
+            r = GetExceptionCode();
+        }
+        __ENDTRY
 
-            return ERROR_FUNCTION_FAILED;
+        if (!r)
+        {
+            r = unmarshal_record(wire_rec, phRec);
+            free_remote_record(wire_rec);
         }
 
-        return ERROR_SUCCESS;
+        return r;
     }
 
     r = MSI_DatabaseGetPrimaryKeys( db, table, &rec );
@@ -1031,27 +1157,86 @@ MSICONDITION WINAPI MsiDatabaseIsTablePersistentW(
     db = msihandle2msiinfo( hDatabase, MSIHANDLETYPE_DATABASE );
     if( !db )
     {
-        HRESULT hr;
-        MSICONDITION condition;
-        IWineMsiRemoteDatabase *remote_database;
+        MSIHANDLE remote;
 
-        remote_database = (IWineMsiRemoteDatabase *)msi_get_remote( hDatabase );
-        if ( !remote_database )
+        if (!(remote = msi_get_remote(hDatabase)))
             return MSICONDITION_ERROR;
 
-        hr = IWineMsiRemoteDatabase_IsTablePersistent( remote_database,
-                                                       szTableName, &condition );
-        IWineMsiRemoteDatabase_Release( remote_database );
+        __TRY
+        {
+            r = remote_DatabaseIsTablePersistent(remote, szTableName);
+        }
+        __EXCEPT(rpc_filter)
+        {
+            r = MSICONDITION_ERROR;
+        }
+        __ENDTRY
 
-        if (FAILED(hr))
-            return MSICONDITION_ERROR;
-
-        return condition;
+        return r;
     }
 
     r = MSI_DatabaseIsTablePersistent( db, szTableName );
 
     msiobj_release( &db->hdr );
 
+    return r;
+}
+
+UINT __cdecl s_remote_ViewClose(MSIHANDLE view)
+{
+    return MsiViewClose(view);
+}
+
+UINT __cdecl s_remote_ViewExecute(MSIHANDLE view, struct wire_record *remote_rec)
+{
+    MSIHANDLE rec = 0;
+    UINT r;
+
+    if ((r = unmarshal_record(remote_rec, &rec)))
+        return r;
+
+    r = MsiViewExecute(view, rec);
+
+    MsiCloseHandle(rec);
+    return r;
+}
+
+UINT __cdecl s_remote_ViewFetch(MSIHANDLE view, struct wire_record **rec)
+{
+    MSIHANDLE handle;
+    UINT r = MsiViewFetch(view, &handle);
+    *rec = NULL;
+    if (!r)
+        *rec = marshal_record(handle);
+    MsiCloseHandle(handle);
+    return r;
+}
+
+UINT __cdecl s_remote_ViewGetColumnInfo(MSIHANDLE view, MSICOLINFO info, struct wire_record **rec)
+{
+    MSIHANDLE handle;
+    UINT r = MsiViewGetColumnInfo(view, info, &handle);
+    *rec = NULL;
+    if (!r)
+        *rec = marshal_record(handle);
+    MsiCloseHandle(handle);
+    return r;
+}
+
+UINT __cdecl s_remote_ViewModify(MSIHANDLE view, MSIMODIFY mode,
+    struct wire_record *remote_rec, struct wire_record **remote_refreshed)
+{
+    MSIHANDLE handle = 0;
+    UINT r;
+
+    if ((r = unmarshal_record(remote_rec, &handle)))
+        return r;
+
+    r = MsiViewModify(view, mode, handle);
+    *remote_refreshed = NULL;
+    if (!r && (mode == MSIMODIFY_REFRESH || mode == MSIMODIFY_SEEK))
+        *remote_refreshed = marshal_record(handle);
+
+    MsiCloseHandle(handle);
     return r;
 }

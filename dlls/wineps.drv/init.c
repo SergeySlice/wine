@@ -33,6 +33,7 @@
 #include "winerror.h"
 #include "winreg.h"
 #include "winnls.h"
+#include "winuser.h"
 #include "psdrv.h"
 #include "winspool.h"
 #include "wine/library.h"
@@ -284,22 +285,15 @@ static void PSDRV_UpdateDevCaps( PSDRV_PDEVICE *physDev )
 
 	if(&page->entry == &physDev->pi->ppd->PageSizes) {
 	    FIXME("Can't find page\n");
-	    physDev->ImageableArea.left = 0;
-	    physDev->ImageableArea.right = 0;
-	    physDev->ImageableArea.bottom = 0;
-	    physDev->ImageableArea.top = 0;
+            SetRectEmpty(&physDev->ImageableArea);
 	    physDev->PageSize.cx = 0;
 	    physDev->PageSize.cy = 0;
 	} else if(page->ImageableArea) {
 	  /* physDev sizes in device units; ppd sizes in 1/72" */
-	    physDev->ImageableArea.left = page->ImageableArea->llx *
-	      physDev->logPixelsX / 72;
-	    physDev->ImageableArea.right = page->ImageableArea->urx *
-	      physDev->logPixelsX / 72;
-	    physDev->ImageableArea.bottom = page->ImageableArea->lly *
-	      physDev->logPixelsY / 72;
-	    physDev->ImageableArea.top = page->ImageableArea->ury *
-	      physDev->logPixelsY / 72;
+            SetRect(&physDev->ImageableArea, page->ImageableArea->llx * physDev->logPixelsX / 72,
+                    page->ImageableArea->ury * physDev->logPixelsY / 72,
+                    page->ImageableArea->urx * physDev->logPixelsX / 72,
+                    page->ImageableArea->lly * physDev->logPixelsY / 72);
 	    physDev->PageSize.cx = page->PaperDimension->x *
 	      physDev->logPixelsX / 72;
 	    physDev->PageSize.cy = page->PaperDimension->y *
@@ -323,10 +317,7 @@ static void PSDRV_UpdateDevCaps( PSDRV_PDEVICE *physDev )
 	  physDev->logPixelsY / 254;
     } else {
         FIXME("Odd dmFields %x\n", physDev->Devmode->dmPublic.dmFields);
-	physDev->ImageableArea.left = 0;
-	physDev->ImageableArea.right = 0;
-	physDev->ImageableArea.bottom = 0;
-	physDev->ImageableArea.top = 0;
+        SetRectEmpty(&physDev->ImageableArea);
 	physDev->PageSize.cx = 0;
 	physDev->PageSize.cy = 0;
     }
@@ -495,42 +486,23 @@ static INT PSDRV_GetDeviceCaps( PHYSDEV dev, INT cap )
         return MulDiv(physDev->vertSize, 100,
 		      physDev->Devmode->dmPublic.u1.s1.dmScale);
     case HORZRES:
-    case DESKTOPHORZRES:
         return physDev->horzRes;
     case VERTRES:
-    case DESKTOPVERTRES:
         return physDev->vertRes;
     case BITSPIXEL:
         /* Although Windows returns 1 for monochrome printers, we want
            CreateCompatibleBitmap to provide something other than 1 bpp */
         return 32;
-    case PLANES:
-        return 1;
-    case NUMBRUSHES:
-        return -1;
     case NUMPENS:
         return 10;
-    case NUMMARKERS:
-        return 0;
     case NUMFONTS:
         return 39;
     case NUMCOLORS:
         return -1;
     case PDEVICESIZE:
         return sizeof(PSDRV_PDEVICE);
-    case CURVECAPS:
-        return (CC_CIRCLES | CC_PIE | CC_CHORD | CC_ELLIPSES | CC_WIDE |
-                CC_STYLED | CC_WIDESTYLED | CC_INTERIORS | CC_ROUNDRECT);
-    case LINECAPS:
-        return (LC_POLYLINE | LC_MARKER | LC_POLYMARKER | LC_WIDE |
-                LC_STYLED | LC_WIDESTYLED | LC_INTERIORS);
-    case POLYGONALCAPS:
-        return (PC_POLYGON | PC_RECTANGLE | PC_WINDPOLYGON | PC_SCANLINE |
-                PC_WIDE | PC_STYLED | PC_WIDESTYLED | PC_INTERIORS);
     case TEXTCAPS:
         return TC_CR_ANY | TC_VA_ABLE; /* psdrv 0x59f7 */
-    case CLIPCAPS:
-        return CP_RECTANGLE;
     case RASTERCAPS:
         return (RC_BITBLT | RC_BITMAP64 | RC_GDI20_OUTPUT | RC_DIBTODEV |
                 RC_STRETCHBLT | RC_STRETCHDIB); /* psdrv 0x6e99 */
@@ -538,17 +510,12 @@ static INT PSDRV_GetDeviceCaps( PHYSDEV dev, INT cap )
         return physDev->logPixelsX;
     case ASPECTY:
         return physDev->logPixelsY;
-    case ASPECTXY:
-        return (int)hypot( (double)physDev->logPixelsX,
-                           (double)physDev->logPixelsY );
     case LOGPIXELSX:
         return MulDiv(physDev->logPixelsX,
 		      physDev->Devmode->dmPublic.u1.s1.dmScale, 100);
     case LOGPIXELSY:
         return MulDiv(physDev->logPixelsY,
 		      physDev->Devmode->dmPublic.u1.s1.dmScale, 100);
-    case SIZEPALETTE:
-        return 0;
     case NUMRESERVED:
         return 0;
     case COLORRES:
@@ -577,16 +544,9 @@ static INT PSDRV_GetDeviceCaps( PHYSDEV dev, INT cap )
       }
       return physDev->PageSize.cy - physDev->ImageableArea.top;
 
-    case SCALINGFACTORX:
-    case SCALINGFACTORY:
-    case VREFRESH:
-    case BLTALIGNMENT:
-        return 0;
-    case SHADEBLENDCAPS:
-        return SB_NONE;
     default:
-        FIXME("(%p): unsupported capability %d, will return 0\n", dev->hdc, cap );
-        return 0;
+        dev = GET_NEXT_PHYSDEV( dev, pGetDeviceCaps );
+        return dev->funcs->pGetDeviceCaps( dev, cap );
     }
 }
 
@@ -948,6 +908,7 @@ static const struct gdi_dc_funcs psdrv_funcs =
     NULL,                               /* pUnrealizePalette */
     NULL,                               /* pWidenPath */
     NULL,                               /* wine_get_wgl_driver */
+    NULL,                               /* wine_get_vulkan_driver */
     GDI_PRIORITY_GRAPHICS_DRV           /* priority */
 };
 

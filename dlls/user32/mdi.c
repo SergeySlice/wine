@@ -437,7 +437,7 @@ static LRESULT MDI_RefreshMenu(MDICLIENTINFO *ci)
 
             if (visible == MDI_MOREWINDOWSLIMIT)
             {
-                LoadStringW(user32_module, IDS_MDI_MOREWINDOWS, buf, sizeof(buf)/sizeof(WCHAR));
+                LoadStringW(user32_module, IDS_MDI_MOREWINDOWS, buf, ARRAY_SIZE(buf));
                 AppendMenuW(ci->hWindowMenu, MF_STRING, id, buf);
                 break;
             }
@@ -453,7 +453,7 @@ static LRESULT MDI_RefreshMenu(MDICLIENTINFO *ci)
             buf[0] = '&';
             buf[1] = '0' + visible;
             buf[2] = ' ';
-            InternalGetWindowText(ci->child[i], buf + 3, sizeof(buf)/sizeof(WCHAR) - 3);
+            InternalGetWindowText(ci->child[i], buf + 3, ARRAY_SIZE(buf) - 3);
             TRACE("Adding %p, id %u %s\n", ci->child[i], id, debugstr_w(buf));
             AppendMenuW(ci->hWindowMenu, MF_STRING, id, buf);
 
@@ -979,7 +979,7 @@ static void MDI_UpdateFrameText( HWND frame, HWND hClient, BOOL repaint, LPCWSTR
 
     if (!lpTitle && !ci->frameTitle)  /* first time around, get title from the frame window */
     {
-        GetWindowTextW( frame, lpBuffer, sizeof(lpBuffer)/sizeof(WCHAR) );
+        GetWindowTextW( frame, lpBuffer, ARRAY_SIZE( lpBuffer ));
         lpTitle = lpBuffer;
     }
 
@@ -1688,10 +1688,13 @@ BOOL WINAPI TranslateMDISysAccel( HWND hwndClient, LPMSG msg )
  */
 void WINAPI CalcChildScroll( HWND hwnd, INT scroll )
 {
+    DPI_AWARENESS_CONTEXT context;
     SCROLLINFO info;
     RECT childRect, clientRect;
     HWND *list;
     DWORD style;
+
+    context = SetThreadDpiAwarenessContext( GetWindowDpiAwarenessContext( hwnd ));
 
     GetClientRect( hwnd, &clientRect );
     SetRectEmpty( &childRect );
@@ -1748,6 +1751,7 @@ void WINAPI CalcChildScroll( HWND hwnd, INT scroll )
                         }
 			break;
     }
+    SetThreadDpiAwarenessContext( context );
 }
 
 
@@ -1757,10 +1761,12 @@ void WINAPI CalcChildScroll( HWND hwnd, INT scroll )
 void WINAPI ScrollChildren(HWND hWnd, UINT uMsg, WPARAM wParam,
                              LPARAM lParam)
 {
+    DPI_AWARENESS_CONTEXT context;
     INT newPos = -1;
     INT curPos, length, minPos, maxPos, shift;
     RECT rect;
 
+    context = SetThreadDpiAwarenessContext( GetWindowDpiAwarenessContext( hWnd ));
     GetClientRect( hWnd, &rect );
 
     switch(uMsg)
@@ -1778,7 +1784,7 @@ void WINAPI ScrollChildren(HWND hWnd, UINT uMsg, WPARAM wParam,
 	shift = GetSystemMetrics(SM_CXVSCROLL);
         break;
     default:
-        return;
+        goto done;
     }
 
     switch( wParam )
@@ -1801,7 +1807,7 @@ void WINAPI ScrollChildren(HWND hWnd, UINT uMsg, WPARAM wParam,
 			break;
 
 	case SB_THUMBTRACK:
-			return;
+			goto done;
 
 	case SB_TOP:
 			newPos = minPos;
@@ -1811,7 +1817,7 @@ void WINAPI ScrollChildren(HWND hWnd, UINT uMsg, WPARAM wParam,
 			break;
 	case SB_ENDSCROLL:
 			CalcChildScroll(hWnd,(uMsg == WM_VSCROLL)?SB_VERT:SB_HORZ);
-			return;
+			goto done;
     }
 
     if( newPos > maxPos )
@@ -1828,6 +1834,8 @@ void WINAPI ScrollChildren(HWND hWnd, UINT uMsg, WPARAM wParam,
     else
 	ScrollWindowEx(hWnd ,curPos - newPos, 0, NULL, NULL, 0, NULL,
 			SW_INVALIDATE | SW_ERASE | SW_SCROLLCHILDREN );
+done:
+    SetThreadDpiAwarenessContext( context );
 }
 
 
@@ -1910,7 +1918,7 @@ static INT_PTR WINAPI MDI_MoreWindowsDlgProc (HWND hDlg, UINT iMsg, WPARAM wPara
            {
                WCHAR buffer[MDI_MAXTITLELENGTH];
 
-               if (!InternalGetWindowText( ci->child[i], buffer, sizeof(buffer)/sizeof(WCHAR) ))
+               if (!InternalGetWindowText(ci->child[i], buffer, ARRAY_SIZE(buffer)))
                    continue;
                SendMessageW(hListBox, LB_ADDSTRING, 0, (LPARAM)buffer );
                SendMessageW(hListBox, LB_SETITEMDATA, i, (LPARAM)ci->child[i] );

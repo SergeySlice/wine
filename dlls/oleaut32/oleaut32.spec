@@ -319,7 +319,7 @@
 329 stdcall VarCyMulI8(int64 int64 ptr)
 330 stdcall VarDateFromUdate(ptr long ptr)
 331 stdcall VarUdateFromDate(double long ptr)
-332 stub GetAltMonthNames
+332 stdcall GetAltMonthNames(long ptr)
 333 stdcall VarI8FromUI1(long long)
 334 stdcall VarI8FromI2(long long)
 335 stdcall VarI8FromR4(float long)
@@ -377,7 +377,7 @@
 397 stub UserMSG_to_local
 398 stub UserMSG_free_inst
 399 stub UserMSG_free_local
-401 stdcall OleLoadPictureEx(ptr long long long long long long ptr)
+401 stdcall OleLoadPictureEx(ptr long long ptr long long long ptr)
 402 stub OleLoadPictureFileEx
 411 stdcall SafeArrayCreateVector(long long long)
 412 stdcall SafeArrayCopyData(ptr ptr)

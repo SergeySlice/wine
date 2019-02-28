@@ -92,8 +92,7 @@ static void ddraw_enumerate_secondary_devices(struct wined3d *wined3d, LPDDENUMC
 /* Handle table functions */
 BOOL ddraw_handle_table_init(struct ddraw_handle_table *t, UINT initial_size)
 {
-    t->entries = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, initial_size * sizeof(*t->entries));
-    if (!t->entries)
+    if (!(t->entries = heap_alloc_zero(initial_size * sizeof(*t->entries))))
     {
         ERR("Failed to allocate handle table memory.\n");
         return FALSE;
@@ -107,7 +106,7 @@ BOOL ddraw_handle_table_init(struct ddraw_handle_table *t, UINT initial_size)
 
 void ddraw_handle_table_destroy(struct ddraw_handle_table *t)
 {
-    HeapFree(GetProcessHeap(), 0, t->entries);
+    heap_free(t->entries);
     memset(t, 0, sizeof(*t));
 }
 
@@ -136,9 +135,9 @@ DWORD ddraw_allocate_handle(struct ddraw_handle_table *t, void *object, enum ddr
     {
         /* Grow the table */
         UINT new_size = t->table_size + (t->table_size >> 1);
-        struct ddraw_handle_entry *new_entries = HeapReAlloc(GetProcessHeap(),
-                0, t->entries, new_size * sizeof(*t->entries));
-        if (!new_entries)
+        struct ddraw_handle_entry *new_entries;
+
+        if (!(new_entries = heap_realloc(t->entries, new_size * sizeof(*t->entries))))
         {
             ERR("Failed to grow the handle table.\n");
             return DDRAW_INVALID_HANDLE;
@@ -200,6 +199,40 @@ void *ddraw_get_object(struct ddraw_handle_table *t, DWORD handle, enum ddraw_ha
     return entry->object;
 }
 
+HRESULT WINAPI GetSurfaceFromDC(HDC dc, IDirectDrawSurface4 **surface, HDC *device_dc)
+{
+    struct ddraw *ddraw;
+
+    TRACE("dc %p, surface %p, device_dc %p.\n", dc, surface, device_dc);
+
+    if (!surface)
+        return E_INVALIDARG;
+
+    if (!device_dc)
+    {
+        *surface = NULL;
+
+        return E_INVALIDARG;
+    }
+
+    wined3d_mutex_lock();
+    LIST_FOR_EACH_ENTRY(ddraw, &global_ddraw_list, struct ddraw, ddraw_list_entry)
+    {
+        if (FAILED(IDirectDraw4_GetSurfaceFromDC(&ddraw->IDirectDraw4_iface, dc, surface)))
+            continue;
+
+        *device_dc = NULL; /* FIXME */
+        wined3d_mutex_unlock();
+        return DD_OK;
+    }
+    wined3d_mutex_unlock();
+
+    *surface = NULL;
+    *device_dc = NULL;
+
+    return DDERR_NOTFOUND;
+}
+
 /***********************************************************************
  *
  * Helper function for DirectDrawCreate and friends
@@ -251,13 +284,6 @@ DDRAW_Create(const GUID *guid,
     {
         device_type = WINED3D_DEVICE_TYPE_HAL;
     }
-    //Slice
-    /*
-    else if(guid && guid->Data1 == 0xaeb2cdd4)
-    {
-         device_type = WINED3D_DEVICE_TYPE_HAL;
-    }
-     */
     else
     {
         device_type = 0;
@@ -271,8 +297,7 @@ DDRAW_Create(const GUID *guid,
         flags = WINED3D_LEGACY_FFP_LIGHTING;
 
     /* DirectDraw creation comes here */
-    ddraw = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*ddraw));
-    if (!ddraw)
+    if (!(ddraw = heap_alloc_zero(sizeof(*ddraw))))
     {
         ERR("Out of memory when creating DirectDraw\n");
         return E_OUTOFMEMORY;
@@ -282,7 +307,7 @@ DDRAW_Create(const GUID *guid,
     if (FAILED(hr))
     {
         WARN("Failed to initialize ddraw object, hr %#x.\n", hr);
-        HeapFree(GetProcessHeap(), 0, ddraw);
+        heap_free(ddraw);
         return hr;
     }
 
@@ -643,7 +668,7 @@ static ULONG WINAPI ddraw_class_factory_Release(IClassFactory *iface)
     TRACE("%p decreasing refcount to %u.\n", factory, ref);
 
     if (!ref)
-        HeapFree(GetProcessHeap(), 0, factory);
+        heap_free(factory);
 
     return ref;
 }
@@ -715,20 +740,20 @@ HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void **out)
             && !IsEqualGUID(&IID_IUnknown, riid))
         return E_NOINTERFACE;
 
-    for (i=0; i < sizeof(object_creation)/sizeof(object_creation[0]); i++)
+    for (i=0; i < ARRAY_SIZE(object_creation); i++)
     {
         if (IsEqualGUID(object_creation[i].clsid, rclsid))
             break;
     }
 
-    if (i == sizeof(object_creation)/sizeof(object_creation[0]))
+    if (i == ARRAY_SIZE(object_creation))
     {
         FIXME("%s: no class found.\n", debugstr_guid(rclsid));
         return CLASS_E_CLASSNOTAVAILABLE;
     }
 
-    factory = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*factory));
-    if (factory == NULL) return E_OUTOFMEMORY;
+    if (!(factory = heap_alloc_zero(sizeof(*factory))))
+        return E_OUTOFMEMORY;
 
     factory->IClassFactory_iface.lpVtbl = &IClassFactory_Vtbl;
     factory->ref = 1;
@@ -763,52 +788,6 @@ HRESULT WINAPI DllRegisterServer(void)
 HRESULT WINAPI DllUnregisterServer(void)
 {
     return __wine_unregister_resources( instance );
-}
-
-/*******************************************************************************
- * DestroyCallback
- *
- * Callback function for the EnumSurfaces call in DllMain.
- * Dumps some surface info and releases the surface
- *
- * Params:
- *  surf: The enumerated surface
- *  desc: its description
- *  context: Pointer to the ddraw impl
- *
- * Returns:
- *  DDENUMRET_OK;
- *******************************************************************************/
-static HRESULT WINAPI
-DestroyCallback(IDirectDrawSurface7 *surf,
-                DDSURFACEDESC2 *desc,
-                void *context)
-{
-    struct ddraw_surface *Impl = impl_from_IDirectDrawSurface7(surf);
-    ULONG ref7, ref4, ref3, ref2, ref1, gamma_count, iface_count;
-
-    ref7 = IDirectDrawSurface7_Release(surf);  /* For the EnumSurfaces */
-    ref4 = Impl->ref4;
-    ref3 = Impl->ref3;
-    ref2 = Impl->ref2;
-    ref1 = Impl->ref1;
-    gamma_count = Impl->gamma_count;
-
-    WARN("Surface %p has an reference counts of 7: %u 4: %u 3: %u 2: %u 1: %u gamma: %u\n",
-            Impl, ref7, ref4, ref3, ref2, ref1, gamma_count);
-
-    /* Skip surfaces which are attached somewhere or which are
-     * part of a complex compound. They will get released when destroying
-     * the root
-     */
-    if( (!Impl->is_complex_root) || (Impl->first_attached != Impl) )
-        return DDENUMRET_OK;
-
-    /* Destroy the surface */
-    iface_count = ddraw_surface_release_iface(Impl);
-    while (iface_count) iface_count = ddraw_surface_release_iface(Impl);
-
-    return DDENUMRET_OK;
 }
 
 /***********************************************************************
@@ -896,66 +875,26 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, void *reserved)
     }
 
     case DLL_PROCESS_DETACH:
-        if(!list_empty(&global_ddraw_list))
+        if (WARN_ON(ddraw))
         {
-            struct list *entry, *entry2;
-            WARN("There are still existing DirectDraw interfaces. Wine bug or buggy application?\n");
+            struct ddraw *ddraw;
 
-            /* We remove elements from this loop */
-            LIST_FOR_EACH_SAFE(entry, entry2, &global_ddraw_list)
+            LIST_FOR_EACH_ENTRY(ddraw, &global_ddraw_list, struct ddraw, ddraw_list_entry)
             {
-                struct ddraw *ddraw = LIST_ENTRY(entry, struct ddraw, ddraw_list_entry);
-                HRESULT hr;
-                DDSURFACEDESC2 desc;
-                int i;
+                struct ddraw_surface *surface;
 
-                WARN("DDraw %p has a refcount of %d\n", ddraw, ddraw->ref7 + ddraw->ref4 + ddraw->ref3 + ddraw->ref2 + ddraw->ref1);
+                WARN("DirectDraw object %p has reference counts {%u, %u, %u, %u, %u}.\n",
+                        ddraw, ddraw->ref7, ddraw->ref4, ddraw->ref3, ddraw->ref2, ddraw->ref1);
 
-                /* Add references to each interface to avoid freeing them unexpectedly */
-                IDirectDraw_AddRef(&ddraw->IDirectDraw_iface);
-                IDirectDraw2_AddRef(&ddraw->IDirectDraw2_iface);
-                IDirectDraw4_AddRef(&ddraw->IDirectDraw4_iface);
-                IDirectDraw7_AddRef(&ddraw->IDirectDraw7_iface);
+                if (ddraw->d3ddevice)
+                    WARN("DirectDraw object %p has Direct3D device %p attached.\n", ddraw, ddraw->d3ddevice);
 
-                /* Does a D3D device exist? Destroy it
-                    * TODO: Destroy all Vertex buffers, Lights, Materials
-                    * and execute buffers too
-                    */
-                if(ddraw->d3ddevice)
+                LIST_FOR_EACH_ENTRY(surface, &ddraw->surface_list, struct ddraw_surface, surface_list_entry)
                 {
-                    WARN("DDraw %p has d3ddevice %p attached\n", ddraw, ddraw->d3ddevice);
-                    while(IDirect3DDevice7_Release(&ddraw->d3ddevice->IDirect3DDevice7_iface));
+                    WARN("Surface %p has reference counts {%u, %u, %u, %u, %u, %u}.\n",
+                            surface, surface->ref7, surface->ref4, surface->ref3,
+                            surface->ref2, surface->ref1, surface->gamma_count);
                 }
-
-                /* Destroy the swapchain after any 3D device. The 3D device
-                 * cleanup code needs a swapchain. Specifically, it tries to
-                 * set the current render target to the front buffer. */
-                if (ddraw->wined3d_swapchain)
-                    ddraw_destroy_swapchain(ddraw);
-
-                /* Try to release the objects
-                    * Do an EnumSurfaces to find any hanging surfaces
-                    */
-                memset(&desc, 0, sizeof(desc));
-                desc.dwSize = sizeof(desc);
-                for(i = 0; i <= 1; i++)
-                {
-                    hr = IDirectDraw7_EnumSurfaces(&ddraw->IDirectDraw7_iface, DDENUMSURFACES_ALL,
-                            &desc, ddraw, DestroyCallback);
-                    if(hr != D3D_OK)
-                        ERR("(%p) EnumSurfaces failed, prepare for trouble\n", ddraw);
-                }
-
-                if (!list_empty(&ddraw->surface_list))
-                    ERR("DDraw %p still has surfaces attached.\n", ddraw);
-
-                /* Release all hanging references to destroy the objects. This
-                    * restores the screen mode too
-                    */
-                while(IDirectDraw_Release(&ddraw->IDirectDraw_iface));
-                while(IDirectDraw2_Release(&ddraw->IDirectDraw2_iface));
-                while(IDirectDraw4_Release(&ddraw->IDirectDraw4_iface));
-                while(IDirectDraw7_Release(&ddraw->IDirectDraw7_iface));
             }
         }
 

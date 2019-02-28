@@ -64,33 +64,25 @@ const LUID SeManageVolumePrivilege         = { 28, 0 };
 const LUID SeImpersonatePrivilege          = { 29, 0 };
 const LUID SeCreateGlobalPrivilege         = { 30, 0 };
 
+#define SID_N(n) struct /* same fields as struct SID */ \
+    { \
+        BYTE Revision; \
+        BYTE SubAuthorityCount; \
+        SID_IDENTIFIER_AUTHORITY IdentifierAuthority; \
+        DWORD SubAuthority[n]; \
+    }
+
 static const SID world_sid = { SID_REVISION, 1, { SECURITY_WORLD_SID_AUTHORITY }, { SECURITY_WORLD_RID } };
 static const SID local_sid = { SID_REVISION, 1, { SECURITY_LOCAL_SID_AUTHORITY }, { SECURITY_LOCAL_RID } };
 static const SID interactive_sid = { SID_REVISION, 1, { SECURITY_NT_AUTHORITY }, { SECURITY_INTERACTIVE_RID } };
 static const SID anonymous_logon_sid = { SID_REVISION, 1, { SECURITY_NT_AUTHORITY }, { SECURITY_ANONYMOUS_LOGON_RID } };
 static const SID authenticated_user_sid = { SID_REVISION, 1, { SECURITY_NT_AUTHORITY }, { SECURITY_AUTHENTICATED_USER_RID } };
 static const SID local_system_sid = { SID_REVISION, 1, { SECURITY_NT_AUTHORITY }, { SECURITY_LOCAL_SYSTEM_RID } };
-static const struct /* same fields as struct SID */
-{
-    BYTE Revision;
-    BYTE SubAuthorityCount;
-    SID_IDENTIFIER_AUTHORITY IdentifierAuthority;
-    DWORD SubAuthority[5];
-} local_user_sid = { SID_REVISION, 5, { SECURITY_NT_AUTHORITY }, { SECURITY_NT_NON_UNIQUE, 0, 0, 0, 1000 } };
-static const struct /* same fields as struct SID */
-{
-    BYTE Revision;
-    BYTE SubAuthorityCount;
-    SID_IDENTIFIER_AUTHORITY IdentifierAuthority;
-    DWORD SubAuthority[2];
-} builtin_admins_sid = { SID_REVISION, 2, { SECURITY_NT_AUTHORITY }, { SECURITY_BUILTIN_DOMAIN_RID, DOMAIN_ALIAS_RID_ADMINS } };
-static const struct /* same fields as struct SID */
-{
-    BYTE Revision;
-    BYTE SubAuthorityCount;
-    SID_IDENTIFIER_AUTHORITY IdentifierAuthority;
-    DWORD SubAuthority[2];
-} builtin_users_sid = { SID_REVISION, 2, { SECURITY_NT_AUTHORITY }, { SECURITY_BUILTIN_DOMAIN_RID, DOMAIN_ALIAS_RID_USERS } };
+static const SID high_label_sid = { SID_REVISION, 1, { SECURITY_MANDATORY_LABEL_AUTHORITY }, { SECURITY_MANDATORY_HIGH_RID } };
+static const SID_N(5) local_user_sid = { SID_REVISION, 5, { SECURITY_NT_AUTHORITY }, { SECURITY_NT_NON_UNIQUE, 0, 0, 0, 1000 } };
+static const SID_N(2) builtin_admins_sid = { SID_REVISION, 2, { SECURITY_NT_AUTHORITY }, { SECURITY_BUILTIN_DOMAIN_RID, DOMAIN_ALIAS_RID_ADMINS } };
+static const SID_N(2) builtin_users_sid = { SID_REVISION, 2, { SECURITY_NT_AUTHORITY }, { SECURITY_BUILTIN_DOMAIN_RID, DOMAIN_ALIAS_RID_USERS } };
+static const SID_N(3) builtin_logon_sid = { SID_REVISION, 3, { SECURITY_NT_AUTHORITY }, { SECURITY_LOGON_IDS_RID, 0, 0 } };
 
 const PSID security_world_sid = (PSID)&world_sid;
 static const PSID security_local_sid = (PSID)&local_sid;
@@ -100,6 +92,7 @@ const PSID security_local_system_sid = (PSID)&local_system_sid;
 const PSID security_local_user_sid = (PSID)&local_user_sid;
 const PSID security_builtin_admins_sid = (PSID)&builtin_admins_sid;
 const PSID security_builtin_users_sid = (PSID)&builtin_users_sid;
+const PSID security_high_label_sid = (PSID)&high_label_sid;
 
 static luid_t prev_luid_value = { 1000, 0 };
 
@@ -111,7 +104,8 @@ struct token
     struct list    privileges;      /* privileges available to the token */
     struct list    groups;          /* groups that the user of this token belongs to (sid_and_attributes) */
     SID           *user;            /* SID of user this token represents */
-    SID           *primary_group;   /* SID of user's primary group */
+    SID           *owner;           /* SID of owner (points to user or one of groups) */
+    SID           *primary_group;   /* SID of user's primary group (points to one of groups) */
     unsigned       primary;         /* is this a primary or impersonation token? */
     ACL           *default_dacl;    /* the default DACL to assign to objects created by this user */
     TOKEN_SOURCE   source;          /* source of the token */
@@ -165,11 +159,12 @@ static const struct object_ops token_ops =
     token_destroy              /* destroy */
 };
 
-
 static void token_dump( struct object *obj, int verbose )
 {
-    fprintf( stderr, "Security token\n" );
-    /* FIXME: dump token members */
+    struct token *token = (struct token *)obj;
+    assert( obj->ops == &token_ops );
+    fprintf( stderr, "Token id=%d.%u primary=%u impersonation level=%d\n", token->token_id.high_part,
+             token->token_id.low_part, token->primary, token->impersonation_level );
 }
 
 static unsigned int token_map_access( struct object *obj, unsigned int access )
@@ -336,6 +331,116 @@ int sd_is_valid( const struct security_descriptor *sd, data_size_t size )
     return TRUE;
 }
 
+/* extract security labels from SACL */
+ACL *extract_security_labels( const ACL *sacl )
+{
+    size_t size = sizeof(ACL);
+    const ACE_HEADER *ace;
+    ACE_HEADER *label_ace;
+    unsigned int i, count = 0;
+    ACL *label_acl;
+
+    ace = (const ACE_HEADER *)(sacl + 1);
+    for (i = 0; i < sacl->AceCount; i++, ace = ace_next( ace ))
+    {
+        if (ace->AceType == SYSTEM_MANDATORY_LABEL_ACE_TYPE)
+        {
+            size += ace->AceSize;
+            count++;
+        }
+    }
+
+    label_acl = mem_alloc( size );
+    if (!label_acl) return NULL;
+
+    label_acl->AclRevision = sacl->AclRevision;
+    label_acl->Sbz1 = 0;
+    label_acl->AclSize = size;
+    label_acl->AceCount = count;
+    label_acl->Sbz2 = 0;
+    label_ace = (ACE_HEADER *)(label_acl + 1);
+
+    ace = (const ACE_HEADER *)(sacl + 1);
+    for (i = 0; i < sacl->AceCount; i++, ace = ace_next( ace ))
+    {
+        if (ace->AceType == SYSTEM_MANDATORY_LABEL_ACE_TYPE)
+        {
+            memcpy( label_ace, ace, ace->AceSize );
+            label_ace = (ACE_HEADER *)ace_next( label_ace );
+        }
+    }
+    return label_acl;
+}
+
+/* replace security labels in an existing SACL */
+ACL *replace_security_labels( const ACL *old_sacl, const ACL *new_sacl )
+{
+    const ACE_HEADER *ace;
+    ACE_HEADER *replaced_ace;
+    size_t size = sizeof(ACL);
+    unsigned int i, count = 0;
+    BYTE revision = ACL_REVISION;
+    ACL *replaced_acl;
+
+    if (old_sacl)
+    {
+        revision = max( revision, old_sacl->AclRevision );
+        ace = (const ACE_HEADER *)(old_sacl + 1);
+        for (i = 0; i < old_sacl->AceCount; i++, ace = ace_next( ace ))
+        {
+            if (ace->AceType == SYSTEM_MANDATORY_LABEL_ACE_TYPE) continue;
+            size += ace->AceSize;
+            count++;
+        }
+    }
+
+    if (new_sacl)
+    {
+        revision = max( revision, new_sacl->AclRevision );
+        ace = (const ACE_HEADER *)(new_sacl + 1);
+        for (i = 0; i < new_sacl->AceCount; i++, ace = ace_next( ace ))
+        {
+            if (ace->AceType != SYSTEM_MANDATORY_LABEL_ACE_TYPE) continue;
+            size += ace->AceSize;
+            count++;
+        }
+    }
+
+    replaced_acl = mem_alloc( size );
+    if (!replaced_acl) return NULL;
+
+    replaced_acl->AclRevision = revision;
+    replaced_acl->Sbz1 = 0;
+    replaced_acl->AclSize = size;
+    replaced_acl->AceCount = count;
+    replaced_acl->Sbz2 = 0;
+    replaced_ace = (ACE_HEADER *)(replaced_acl + 1);
+
+    if (old_sacl)
+    {
+        ace = (const ACE_HEADER *)(old_sacl + 1);
+        for (i = 0; i < old_sacl->AceCount; i++, ace = ace_next( ace ))
+        {
+            if (ace->AceType == SYSTEM_MANDATORY_LABEL_ACE_TYPE) continue;
+            memcpy( replaced_ace, ace, ace->AceSize );
+            replaced_ace = (ACE_HEADER *)ace_next( replaced_ace );
+        }
+    }
+
+    if (new_sacl)
+    {
+        ace = (const ACE_HEADER *)(new_sacl + 1);
+        for (i = 0; i < new_sacl->AceCount; i++, ace = ace_next( ace ))
+        {
+            if (ace->AceType != SYSTEM_MANDATORY_LABEL_ACE_TYPE) continue;
+            memcpy( replaced_ace, ace, ace->AceSize );
+            replaced_ace = (ACE_HEADER *)ace_next( replaced_ace );
+        }
+    }
+
+    return replaced_acl;
+}
+
 /* maps from generic rights to specific rights as given by a mapping */
 static inline void map_generic_mask(unsigned int *mask, const GENERIC_MAPPING *mapping)
 {
@@ -478,9 +583,12 @@ static struct token *create_token( unsigned primary, const SID *user,
             group->resource = FALSE;
             group->deny_only = FALSE;
             list_add_tail( &token->groups, &group->entry );
-            /* Use first owner capable group as an owner */
+            /* Use first owner capable group as owner and primary group */
             if (!token->primary_group && group->owner)
+            {
+                token->owner = &group->sid;
                 token->primary_group = &group->sid;
+            }
         }
 
         /* copy privileges */
@@ -512,7 +620,7 @@ static struct token *create_token( unsigned primary, const SID *user,
 }
 
 struct token *token_duplicate( struct token *src_token, unsigned primary,
-                               int impersonation_level )
+                               int impersonation_level, const struct security_descriptor *sd )
 {
     const luid_t *modified_id =
         primary || (impersonation_level == src_token->impersonation_level) ?
@@ -550,7 +658,10 @@ struct token *token_duplicate( struct token *src_token, unsigned primary,
         memcpy( newgroup, group, size );
         list_add_tail( &token->groups, &newgroup->entry );
         if (src_token->primary_group == &group->sid)
+        {
+            token->owner = &newgroup->sid;
             token->primary_group = &newgroup->sid;
+        }
     }
     assert( token->primary_group );
 
@@ -561,6 +672,9 @@ struct token *token_duplicate( struct token *src_token, unsigned primary,
             release_object( token );
             return NULL;
         }
+
+    if (sd) default_set_sd( &token->obj, sd, OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION |
+                            DACL_SECURITY_INFORMATION | SACL_SECURITY_INFORMATION );
 
     return token;
 }
@@ -613,6 +727,56 @@ struct sid_data
     unsigned int subauth[MAX_SUBAUTH_COUNT];
 };
 
+static struct security_descriptor *create_security_label_sd( struct token *token, PSID label_sid )
+{
+    size_t sid_len = security_sid_len( label_sid ), sacl_size, sd_size;
+    SYSTEM_MANDATORY_LABEL_ACE *smla;
+    struct security_descriptor *sd;
+    ACL *sacl;
+
+    sacl_size = sizeof(ACL) + FIELD_OFFSET(SYSTEM_MANDATORY_LABEL_ACE, SidStart) + sid_len;
+    sd_size = sizeof(struct security_descriptor) + sacl_size;
+    if (!(sd = mem_alloc( sd_size )))
+        return NULL;
+
+    sd->control   = SE_SACL_PRESENT;
+    sd->owner_len = 0;
+    sd->group_len = 0;
+    sd->sacl_len  = sacl_size;
+    sd->dacl_len  = 0;
+
+    sacl = (ACL *)(sd + 1);
+    sacl->AclRevision = ACL_REVISION;
+    sacl->Sbz1 = 0;
+    sacl->AclSize = sacl_size;
+    sacl->AceCount = 1;
+    sacl->Sbz2 = 0;
+
+    smla = (SYSTEM_MANDATORY_LABEL_ACE *)(sacl + 1);
+    smla->Header.AceType = SYSTEM_MANDATORY_LABEL_ACE_TYPE;
+    smla->Header.AceFlags = 0;
+    smla->Header.AceSize = FIELD_OFFSET(SYSTEM_MANDATORY_LABEL_ACE, SidStart) + sid_len;
+    smla->Mask = SYSTEM_MANDATORY_LABEL_NO_WRITE_UP;
+    memcpy( &smla->SidStart, label_sid, sid_len );
+
+    assert( sd_is_valid( sd, sd_size ) );
+    return sd;
+}
+
+int token_assign_label( struct token *token, PSID label )
+{
+    struct security_descriptor *sd;
+    int ret = 0;
+
+    if ((sd = create_security_label_sd( token, label )))
+    {
+        ret = set_sd_defaults_from_token( &token->obj, sd, LABEL_SECURITY_INFORMATION, token );
+        free( sd );
+    }
+
+    return ret;
+}
+
 struct token *token_create_admin( void )
 {
     struct token *token = NULL;
@@ -627,12 +791,11 @@ struct token *token_create_admin( void )
     const SID *user_sid = security_unix_uid_to_sid( getuid() );
     ACL *default_dacl = create_default_dacl( user_sid );
 
-    alias_admins_sid = security_sid_alloc( &nt_authority, sizeof(alias_admins_subauth)/sizeof(alias_admins_subauth[0]),
+    alias_admins_sid = security_sid_alloc( &nt_authority, ARRAY_SIZE( alias_admins_subauth ),
                                            alias_admins_subauth );
-    alias_users_sid = security_sid_alloc( &nt_authority, sizeof(alias_users_subauth)/sizeof(alias_users_subauth[0]),
+    alias_users_sid = security_sid_alloc( &nt_authority, ARRAY_SIZE( alias_users_subauth ),
                                           alias_users_subauth );
-    logon_sid = security_sid_alloc( &nt_authority, sizeof(logon_subauth)/sizeof(logon_subauth[0]),
-                                    logon_subauth );
+    logon_sid = security_sid_alloc( &nt_authority, ARRAY_SIZE( logon_subauth ), logon_subauth );
 
     if (alias_admins_sid && alias_users_sid && logon_sid && default_dacl)
     {
@@ -672,8 +835,8 @@ struct token *token_create_admin( void )
             { logon_sid, SE_GROUP_ENABLED|SE_GROUP_ENABLED_BY_DEFAULT|SE_GROUP_MANDATORY|SE_GROUP_LOGON_ID },
         };
         static const TOKEN_SOURCE admin_source = {"SeMgr", {0, 0}};
-        token = create_token( TRUE, user_sid, admin_groups, sizeof(admin_groups)/sizeof(admin_groups[0]),
-                              admin_privs, sizeof(admin_privs)/sizeof(admin_privs[0]), default_dacl,
+        token = create_token( TRUE, user_sid, admin_groups, ARRAY_SIZE( admin_groups ),
+                              admin_privs, ARRAY_SIZE( admin_privs ), default_dacl,
                               admin_source, NULL, -1 );
         /* we really need a primary group */
         assert( token->primary_group );
@@ -1130,15 +1293,20 @@ DECL_HANDLER(get_token_privileges)
 DECL_HANDLER(duplicate_token)
 {
     struct token *src_token;
+    struct unicode_str name;
+    const struct security_descriptor *sd;
+    const struct object_attributes *objattr = get_req_object_attributes( &sd, &name, NULL );
+
+    if (!objattr) return;
 
     if ((src_token = (struct token *)get_handle_obj( current->process, req->handle,
                                                      TOKEN_DUPLICATE,
                                                      &token_ops )))
     {
-        struct token *token = token_duplicate( src_token, req->primary, req->impersonation_level );
+        struct token *token = token_duplicate( src_token, req->primary, req->impersonation_level, sd );
         if (token)
         {
-            reply->new_handle = alloc_handle( current->process, token, req->access, req->attributes);
+            reply->new_handle = alloc_handle_no_access_check( current->process, token, req->access, objattr->attributes );
             release_object( token );
         }
         release_object( src_token );
@@ -1231,16 +1399,14 @@ DECL_HANDLER(access_check)
     }
 }
 
-/* retrieves the SID of the user that the token represents */
+/* retrieves an SID from the token */
 DECL_HANDLER(get_token_sid)
 {
     struct token *token;
 
     reply->sid_len = 0;
 
-    if ((token = (struct token *)get_handle_obj( current->process, req->handle,
-                                                 TOKEN_QUERY,
-                                                 &token_ops )))
+    if ((token = (struct token *)get_handle_obj( current->process, req->handle, TOKEN_QUERY, &token_ops )))
     {
         const SID *sid = NULL;
 
@@ -1254,18 +1420,11 @@ DECL_HANDLER(get_token_sid)
             sid = token->primary_group;
             break;
         case TokenOwner:
-        {
-            struct group *group;
-            LIST_FOR_EACH_ENTRY( group, &token->groups, struct group, entry )
-            {
-                if (group->owner)
-                {
-                    sid = &group->sid;
-                    break;
-                }
-            }
+            sid = token->owner;
             break;
-        }
+        case TokenLogonSid:
+            sid = (const SID *)&builtin_logon_sid;
+            break;
         default:
             set_error( STATUS_INVALID_PARAMETER );
             break;

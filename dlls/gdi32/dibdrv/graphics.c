@@ -74,7 +74,7 @@ static BOOL brush_rect( dibdrv_physdev *pdev, dib_brush *brush, const RECT *rect
 
     if (!get_clipped_rects( &pdev->dib, rect, clip, &clipped_rects )) return TRUE;
     ret = brush->rects( pdev, brush, &pdev->dib, clipped_rects.count, clipped_rects.rects,
-                        dc->ROPmode );
+                        &dc->brush_org, dc->ROPmode );
     free_clipped_rects( &clipped_rects );
     return ret;
 }
@@ -319,7 +319,7 @@ static BOOL draw_arc( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
 {
     dibdrv_physdev *pdev = get_dibdrv_pdev( dev );
     DC *dc = get_physdev_dc( dev );
-    RECT rect;
+    RECT rect, rc;
     POINT pt[2], *points;
     int width, height, count;
     BOOL ret = TRUE;
@@ -370,8 +370,10 @@ static BOOL draw_arc( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
         return FALSE;
     }
 
-    if (pdev->brush.style != BS_NULL && extra_lines > 0 &&
-        !(interior = CreatePolygonRgn( points, count, WINDING )))
+    if (pdev->brush.style != BS_NULL &&
+        extra_lines > 0 &&
+        get_dib_rect( &pdev->dib, &rc ) &&
+        !(interior = create_polypolygon_region( points, &count, 1, WINDING, &rc )))
     {
         HeapFree( GetProcessHeap(), 0, points );
         if (outline) DeleteObject( outline );
@@ -681,8 +683,8 @@ static inline void get_text_bkgnd_masks( DC *dc, const dib_info *dib, rop_mask *
 
 static void draw_glyph( dib_info *dib, int x, int y, const GLYPHMETRICS *metrics,
                         const dib_info *glyph_dib, DWORD text_color,
-                        const struct intensity_range *ranges, const struct clipped_rects *clipped_rects,
-                        RECT *bounds )
+                        const struct font_intensities *intensity,
+                        const struct clipped_rects *clipped_rects, RECT *bounds )
 {
     int i;
     RECT rect, clipped_rect;
@@ -703,10 +705,10 @@ static void draw_glyph( dib_info *dib, int x, int y, const GLYPHMETRICS *metrics
 
             if (glyph_dib->bit_count == 32)
                 dib->funcs->draw_subpixel_glyph( dib, &clipped_rect, glyph_dib, &src_origin,
-                                                 text_color );
+                                                 text_color, intensity->gamma_ramp );
             else
                 dib->funcs->draw_glyph( dib, &clipped_rect, glyph_dib, &src_origin,
-                                        text_color, ranges );
+                                        text_color, intensity->ranges );
         }
     }
 }
@@ -757,7 +759,7 @@ static struct cached_glyph *cache_glyph_bitmap( DC *dc, struct cached_font *font
 
     if (flags & ETO_GLYPH_INDEX) ggo_flags |= GGO_GLYPH_INDEX;
     indices[0] = index;
-    for (i = 0; i < sizeof(indices) / sizeof(indices[0]); i++)
+    for (i = 0; i < ARRAY_SIZE( indices ); i++)
     {
         index = indices[i];
         ret = GetGlyphOutlineW( dc->hSelf, index, ggo_flags, &metrics, 0, NULL, &identity );
@@ -814,7 +816,7 @@ static void render_string( DC *dc, dib_info *dib, struct cached_font *font, INT 
     struct cached_glyph *glyph;
     dib_info glyph_dib;
     DWORD text_color;
-    struct intensity_range ranges[17];
+    struct font_intensities intensity;
 
     glyph_dib.bit_count    = get_glyph_depth( font->aa_flags );
     glyph_dib.rect.left    = 0;
@@ -824,8 +826,10 @@ static void render_string( DC *dc, dib_info *dib, struct cached_font *font, INT 
 
     text_color = get_pixel_color( dc, dib, dc->textColor, TRUE );
 
-    if (glyph_dib.bit_count == 8)
-        get_aa_ranges( dib->funcs->pixel_to_colorref( dib, text_color ), ranges );
+    if (glyph_dib.bit_count == 32)
+        intensity.gamma_ramp = dc->font_gamma_ramp;
+    else
+        get_aa_ranges( dib->funcs->pixel_to_colorref( dib, text_color ), intensity.ranges );
 
     for (i = 0; i < count; i++)
     {
@@ -839,7 +843,7 @@ static void render_string( DC *dc, dib_info *dib, struct cached_font *font, INT 
         glyph_dib.stride      = get_dib_stride( glyph->metrics.gmBlackBoxX, glyph_dib.bit_count );
         glyph_dib.bits.ptr    = glyph->bits;
 
-        draw_glyph( dib, x, y, &glyph->metrics, &glyph_dib, text_color, ranges, clipped_rects, bounds );
+        draw_glyph( dib, x, y, &glyph->metrics, &glyph_dib, text_color, &intensity, clipped_rects, bounds );
 
         if (dx)
         {
@@ -1108,6 +1112,7 @@ COLORREF dibdrv_GetPixel( PHYSDEV dev, INT x, INT y )
     dibdrv_physdev *pdev = get_dibdrv_pdev( dev );
     DC *dc = get_physdev_dc( dev );
     POINT pt;
+    RECT rect;
     DWORD pixel;
 
     TRACE( "(%p, %d, %d)\n", dev, x, y );
@@ -1115,10 +1120,11 @@ COLORREF dibdrv_GetPixel( PHYSDEV dev, INT x, INT y )
     pt.x = x;
     pt.y = y;
     lp_to_dp( dc, &pt, 1 );
-
-    if (pt.x < 0 || pt.x >= pdev->dib.rect.right - pdev->dib.rect.left ||
-        pt.y < 0 || pt.y >= pdev->dib.rect.bottom - pdev->dib.rect.top)
-        return CLR_INVALID;
+    rect.left = pt.x;
+    rect.top =  pt.y;
+    rect.right = rect.left + 1;
+    rect.bottom = rect.top + 1;
+    if (!clip_rect_to_dib( &pdev->dib, &rect )) return CLR_INVALID;
 
     pixel = pdev->dib.funcs->get_pixel( &pdev->dib, pt.x, pt.y );
     return pdev->dib.funcs->pixel_to_colorref( &pdev->dib, pixel );
@@ -1174,6 +1180,7 @@ BOOL dibdrv_PatBlt( PHYSDEV dev, struct bitblt_coords *dst, DWORD rop )
 {
     dibdrv_physdev *pdev = get_dibdrv_pdev(dev);
     dib_brush *brush = &pdev->brush;
+    DC *dc = get_physdev_dc( dev );
     int rop2 = get_rop2_from_rop( rop );
     struct clipped_rects clipped_rects;
     DWORD and = 0, xor = 0;
@@ -1196,7 +1203,8 @@ BOOL dibdrv_PatBlt( PHYSDEV dev, struct bitblt_coords *dst, DWORD rop )
     case R2_NOP:
         break;
     default:
-        ret = brush->rects( pdev, brush, &pdev->dib, clipped_rects.count, clipped_rects.rects, rop2 );
+        ret = brush->rects( pdev, brush, &pdev->dib, clipped_rects.count, clipped_rects.rects,
+                            &dc->brush_org, rop2 );
         break;
     }
     free_clipped_rects( &clipped_rects );
@@ -1242,6 +1250,7 @@ BOOL dibdrv_PolyPolygon( PHYSDEV dev, const POINT *pt, const INT *counts, DWORD 
     dibdrv_physdev *pdev = get_dibdrv_pdev(dev);
     DC *dc = get_physdev_dc( dev );
     DWORD total, i, pos;
+    RECT rc;
     BOOL ret = TRUE;
     POINT pt_buf[32];
     POINT *points = pt_buf;
@@ -1253,7 +1262,7 @@ BOOL dibdrv_PolyPolygon( PHYSDEV dev, const POINT *pt, const INT *counts, DWORD 
         total += counts[i];
     }
 
-    if (total > sizeof(pt_buf) / sizeof(pt_buf[0]))
+    if (total > ARRAY_SIZE( pt_buf ))
     {
         points = HeapAlloc( GetProcessHeap(), 0, total * sizeof(*pt) );
         if (!points) return FALSE;
@@ -1262,7 +1271,8 @@ BOOL dibdrv_PolyPolygon( PHYSDEV dev, const POINT *pt, const INT *counts, DWORD 
     lp_to_dp( dc, points, total );
 
     if (pdev->brush.style != BS_NULL &&
-        !(interior = CreatePolyPolygonRgn( points, counts, polygons, dc->polyFillMode )))
+        get_dib_rect( &pdev->dib, &rc ) &&
+        !(interior = create_polypolygon_region( points, counts, polygons, dc->polyFillMode, &rc )))
     {
         ret = FALSE;
         goto done;
@@ -1322,7 +1332,7 @@ BOOL dibdrv_PolyPolyline( PHYSDEV dev, const POINT* pt, const DWORD* counts, DWO
         total += counts[i];
     }
 
-    if (total > sizeof(pt_buf) / sizeof(pt_buf[0]))
+    if (total > ARRAY_SIZE( pt_buf ))
     {
         points = HeapAlloc( GetProcessHeap(), 0, total * sizeof(*pt) );
         if (!points) return FALSE;
@@ -1601,7 +1611,7 @@ COLORREF dibdrv_SetPixel( PHYSDEV dev, INT x, INT y, COLORREF color )
     color = pdev->dib.funcs->pixel_to_colorref( &pdev->dib, pixel );
 
     if (!get_clipped_rects( &pdev->dib, &rect, pdev->clip, &clipped_rects )) return color;
-    pdev->dib.funcs->solid_rects( &pdev->dib, clipped_rects.count, clipped_rects.rects, 0, pixel );
+    fill_with_pixel( dc, &pdev->dib, pixel, clipped_rects.count, clipped_rects.rects, dc->ROPmode );
     free_clipped_rects( &clipped_rects );
     return color;
 }

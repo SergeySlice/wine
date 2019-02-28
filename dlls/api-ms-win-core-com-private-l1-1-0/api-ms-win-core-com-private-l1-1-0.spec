@@ -1,7 +1,7 @@
+@ stub CLSIDFromOle1Class
 @ stub CleanupOleStateInAllTls
 @ stub CleanupTlsOleState
 @ stub ClearCleanupFlag
-@ stub CLSIDFromOle1Class
 @ stub CoCreateErrorInfo
 @ stub CoCreateObjectInContext
 @ stub CoDeactivateObject
@@ -22,7 +22,7 @@
 @ stdcall CoRegisterInitializeSpy(ptr ptr) ole32.CoRegisterInitializeSpy
 @ stdcall CoRegisterMallocSpy(ptr) ole32.CoRegisterMallocSpy
 @ stdcall CoRegisterMessageFilter(ptr ptr) ole32.CoRegisterMessageFilter
-@ stub CoRegisterSurrogateEx
+@ stdcall CoRegisterSurrogateEx(ptr ptr) ole32.CoRegisterSurrogateEx
 @ stub CoRetireServer
 @ stdcall CoRevokeInitializeSpy(int64) ole32.CoRevokeInitializeSpy
 @ stdcall CoRevokeMallocSpy() ole32.CoRevokeMallocSpy
@@ -39,21 +39,21 @@
 @ stub GetHookInterface
 @ stub HkOleRegisterObject
 @ stub InternalAppInvokeExceptionFilter
-@ stub InternalCallAsProxyExceptionFilter
-@ stub InternalCallerIsAppContainer
-@ stub InternalCallFrameExceptionFilter
-@ stub InternalCanMakeOutCall
 @ stub InternalCCFreeUnused
 @ stub InternalCCGetClassInformationForDde
 @ stub InternalCCGetClassInformationFromKey
 @ stub InternalCCSetDdeServerWindow
 @ stub InternalCMLSendReceive
+@ stub InternalCallAsProxyExceptionFilter
+@ stub InternalCallFrameExceptionFilter
+@ stub InternalCallerIsAppContainer
+@ stub InternalCanMakeOutCall
 @ stub InternalCoIsSurrogateProcess
-@ stub InternalCompleteObjRef
 @ stub InternalCoRegisterDisconnectCallback
 @ stub InternalCoRegisterSurrogatedObject
 @ stub InternalCoStdMarshalObject
 @ stub InternalCoUnregisterDisconnectCallback
+@ stub InternalCompleteObjRef
 @ stub InternalCreateCAggId
 @ stub InternalCreateIdentityHandler
 @ stub InternalDoATClassCreate
@@ -74,10 +74,10 @@
 @ stub InternalOleModalLoopBlockFn
 @ stub InternalRegisterWindowPropInterface
 @ stub InternalReleaseMarshalObjRef
+@ stub InternalSTAInvoke
 @ stub InternalServerExceptionFilter
 @ stub InternalSetAptCallCtrlOnTlsIfRequired
 @ stub InternalSetOleThunkWowPtr
-@ stub InternalSTAInvoke
 @ stub InternalStubInvoke
 @ stub InternalTlsAllocData
 @ stub InternalUnmarshalObjRef

@@ -19,15 +19,6 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  *
- * NOTE
- * 
- * This code was audited for completeness against the documented features
- * of Comctl32.dll version 6.0 on Sep. 24, 2002, by Dimitrie O. Paun.
- * 
- * Unless otherwise noted, we believe this code to be complete, as per
- * the specification mentioned above.
- * If you discover missing features, or bugs, please note them below.
- * 
  * TODO:
  * 	-- CCS_BOTTOM (default)
  * 	-- CCS_LEFT
@@ -293,7 +284,8 @@ STATUSBAR_Refresh (STATUS_INFO *infoPtr, HDC hdc)
 
     SelectObject (hdc, hOldFont);
 
-    if (GetWindowLongW (infoPtr->Self, GWL_STYLE) & SBARS_SIZEGRIP)
+    if ((GetWindowLongW (infoPtr->Self, GWL_STYLE) & SBARS_SIZEGRIP)
+            && !(GetWindowLongW (infoPtr->Notify, GWL_STYLE) & WS_MAXIMIZE))
 	    STATUSBAR_DrawSizeGrip (theme, hdc, &rect);
 
     return 0;
@@ -1006,7 +998,8 @@ STATUSBAR_WMGetText (const STATUS_INFO *infoPtr, INT size, LPWSTR buf)
 static BOOL
 STATUSBAR_WMNCHitTest (const STATUS_INFO *infoPtr, INT x, INT y)
 {
-    if (GetWindowLongW (infoPtr->Self, GWL_STYLE) & SBARS_SIZEGRIP) {
+    if ((GetWindowLongW (infoPtr->Self, GWL_STYLE) & SBARS_SIZEGRIP)
+            && !(GetWindowLongW (infoPtr->Notify, GWL_STYLE) & WS_MAXIMIZE)) {
 	RECT  rect;
 	POINT pt;
 
@@ -1016,10 +1009,7 @@ STATUSBAR_WMNCHitTest (const STATUS_INFO *infoPtr, INT x, INT y)
 	pt.y = y;
 	ScreenToClient (infoPtr->Self, &pt);
 
-	rect.left = rect.right - 13;
-	rect.top += 2;
-
-	if (PtInRect (&rect, pt))
+	if (pt.x >= rect.right - GetSystemMetrics(SM_CXVSCROLL))
         {
             if (GetWindowLongW( infoPtr->Self, GWL_EXSTYLE ) & WS_EX_LAYOUTRTL) return HTBOTTOMLEFT;
 	    else return HTBOTTOMRIGHT;

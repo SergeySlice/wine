@@ -200,7 +200,7 @@ static D3DFORMAT get_luminance_replacement_format(D3DFORMAT format)
     };
     unsigned int i;
 
-    for (i = 0; i < sizeof(luminance_replacements) / sizeof(luminance_replacements[0]); ++i)
+    for (i = 0; i < ARRAY_SIZE(luminance_replacements); ++i)
         if (format == luminance_replacements[i].luminance_format)
             return luminance_replacements[i].replacement_format;
     return format;
@@ -557,7 +557,7 @@ static D3DFORMAT get_alpha_replacement_format(D3DFORMAT format)
     };
     unsigned int i;
 
-    for (i = 0; i < sizeof(replacement_formats) / sizeof(replacement_formats[0]); ++i)
+    for (i = 0; i < ARRAY_SIZE(replacement_formats); ++i)
         if (replacement_formats[i].orig_format == format)
             return replacement_formats[i].replacement_format;
     return format;
@@ -1323,6 +1323,7 @@ static inline void fill_texture(const struct pixel_format_desc *format, BYTE *po
 
 HRESULT WINAPI D3DXFillTexture(struct IDirect3DTexture9 *texture, LPD3DXFILL2D function, void *funcdata)
 {
+    IDirect3DSurface9 *surface, *temp_surface;
     DWORD miplevels;
     DWORD m, x, y;
     D3DSURFACE_DESC desc;
@@ -1331,26 +1332,34 @@ HRESULT WINAPI D3DXFillTexture(struct IDirect3DTexture9 *texture, LPD3DXFILL2D f
     D3DXVECTOR2 coord, size;
     const struct pixel_format_desc *format;
     BYTE *data;
+    HRESULT hr;
 
-    if (texture == NULL || function == NULL)
+    TRACE("texture %p, function %p, funcdata %p.\n", texture, function, funcdata);
+
+    if (!texture || !function)
         return D3DERR_INVALIDCALL;
 
     miplevels = IDirect3DBaseTexture9_GetLevelCount(texture);
 
     for (m = 0; m < miplevels; m++)
     {
-        if (FAILED(IDirect3DTexture9_GetLevelDesc(texture, m, &desc)))
-            return D3DERR_INVALIDCALL;
+        if (FAILED(hr = IDirect3DTexture9_GetLevelDesc(texture, m, &desc)))
+            return hr;
 
         format = get_format_info(desc.Format);
         if (format->type != FORMAT_ARGB && format->type != FORMAT_ARGBF16 && format->type != FORMAT_ARGBF)
         {
-            FIXME("Unsupported texture format %#x\n", desc.Format);
+            FIXME("Unsupported texture format %#x.\n", desc.Format);
             return D3DERR_INVALIDCALL;
         }
 
-        if (FAILED(IDirect3DTexture9_LockRect(texture, m, &lock_rect, NULL, D3DLOCK_DISCARD)))
-            return D3DERR_INVALIDCALL;
+        if (FAILED(hr = IDirect3DTexture9_GetSurfaceLevel(texture, m, &surface)))
+            return hr;
+        if (FAILED(hr = lock_surface(surface, &lock_rect, &temp_surface, TRUE)))
+        {
+            IDirect3DSurface9_Release(surface);
+            return hr;
+        }
 
         size.x = 1.0f / desc.Width;
         size.y = 1.0f / desc.Height;
@@ -1372,7 +1381,12 @@ HRESULT WINAPI D3DXFillTexture(struct IDirect3DTexture9 *texture, LPD3DXFILL2D f
                 fill_texture(format, data + y * lock_rect.Pitch + x * format->bytes_per_pixel, &value);
             }
         }
-        IDirect3DTexture9_UnlockRect(texture, m);
+        if (FAILED(hr = unlock_surface(surface, &lock_rect, temp_surface, TRUE)))
+        {
+            IDirect3DSurface9_Release(surface);
+            return hr;
+        }
+        IDirect3DSurface9_Release(surface);
     }
 
     return D3D_OK;
@@ -1918,4 +1932,13 @@ HRESULT WINAPI D3DXSaveTextureToFileInMemory(ID3DXBuffer **dst_buffer, D3DXIMAGE
     }
 
     return hr;
+}
+
+HRESULT WINAPI D3DXComputeNormalMap(IDirect3DTexture9 *texture, IDirect3DTexture9 *src_texture,
+        const PALETTEENTRY *src_palette, DWORD flags, DWORD channel, float amplitude)
+{
+    FIXME("texture %p, src_texture %p, src_palette %p, flags %#x, channel %u, amplitude %.8e stub.\n",
+            texture, src_texture, src_palette, flags, channel, amplitude);
+
+    return D3D_OK;
 }

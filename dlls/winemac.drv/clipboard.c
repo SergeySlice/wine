@@ -198,7 +198,6 @@ static DWORD clipboard_thread_id;
 static HWND clipboard_hwnd;
 static BOOL is_clipboard_owner;
 static macdrv_window clipboard_cocoa_window;
-static UINT rendered_formats;
 static ULONG64 last_clipboard_update;
 static DWORD last_get_seqno;
 static WINE_CLIPFORMAT **current_mac_formats;
@@ -281,7 +280,7 @@ static WINE_CLIPFORMAT *insert_clipboard_format(UINT id, CFStringRef type)
     {
         WCHAR buffer[256];
 
-        if (!GetClipboardFormatNameW(format->format_id, buffer, sizeof(buffer) / sizeof(buffer[0])))
+        if (!GetClipboardFormatNameW(format->format_id, buffer, ARRAY_SIZE(buffer)))
         {
             WARN("failed to get name for format %s; error 0x%08x\n", debugstr_format(format->format_id), GetLastError());
             HeapFree(GetProcessHeap(), 0, format);
@@ -348,7 +347,7 @@ static void register_builtin_formats(void)
     WINE_CLIPFORMAT *format;
 
     /* Register built-in formats */
-    for (i = 0; i < sizeof(builtin_format_ids)/sizeof(builtin_format_ids[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(builtin_format_ids); i++)
     {
         if (!(format = HeapAlloc(GetProcessHeap(), 0, sizeof(*format)))) break;
         format->format_id       = builtin_format_ids[i].id;
@@ -361,7 +360,7 @@ static void register_builtin_formats(void)
     }
 
     /* Register known mappings between Windows formats and Mac types */
-    for (i = 0; i < sizeof(builtin_format_names)/sizeof(builtin_format_names[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(builtin_format_names); i++)
     {
         if (!(format = HeapAlloc(GetProcessHeap(), 0, sizeof(*format)))) break;
         format->format_id       = RegisterClipboardFormatW(builtin_format_names[i].name);
@@ -1729,11 +1728,7 @@ static void render_format(UINT id)
         {
             HANDLE handle = current_mac_formats[i]->import_func(pasteboard_data);
             CFRelease(pasteboard_data);
-            if (handle)
-            {
-                SetClipboardData(id, handle);
-                rendered_formats++;
-            }
+            if (handle) SetClipboardData(id, handle);
             break;
         }
     }
@@ -1746,7 +1741,7 @@ static void render_format(UINT id)
  * Grab the Win32 clipboard when a Mac app has taken ownership of the
  * pasteboard, and fill it with the pasteboard data types.
  */
-static void grab_win32_clipboard(BOOL changed)
+static void grab_win32_clipboard(void)
 {
     static CFArrayRef last_types;
     CFArrayRef types;
@@ -1758,8 +1753,7 @@ static void grab_win32_clipboard(BOOL changed)
         return;
     }
 
-    changed = (changed || rendered_formats || !last_types || !CFEqual(types, last_types));
-    if (!changed)
+    if (!macdrv_has_pasteboard_changed() && last_types && CFEqual(types, last_types))
     {
         CFRelease(types);
         return;
@@ -1771,7 +1765,6 @@ static void grab_win32_clipboard(BOOL changed)
     if (!OpenClipboard(clipboard_hwnd)) return;
     EmptyClipboard();
     is_clipboard_owner = TRUE;
-    rendered_formats = 0;
     last_clipboard_update = GetTickCount64();
     set_win32_clipboard_formats_from_mac_pasteboard(types);
     CloseClipboard();
@@ -1798,10 +1791,10 @@ static void update_clipboard(void)
     if (is_clipboard_owner)
     {
         if (GetTickCount64() - last_clipboard_update > CLIPBOARD_UPDATE_DELAY)
-            grab_win32_clipboard(FALSE);
+            grab_win32_clipboard();
     }
     else if (!macdrv_is_pasteboard_owner(clipboard_cocoa_window))
-        grab_win32_clipboard(TRUE);
+        grab_win32_clipboard();
 
     updating = FALSE;
 }
@@ -1828,7 +1821,7 @@ static LRESULT CALLBACK clipboard_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
             break;
         case WM_TIMER:
             if (!is_clipboard_owner) break;
-            grab_win32_clipboard(FALSE);
+            grab_win32_clipboard();
             break;
         case WM_DESTROYCLIPBOARD:
             TRACE("WM_DESTROYCLIPBOARD: lost ownership\n");
@@ -1848,12 +1841,12 @@ static LRESULT CALLBACK clipboard_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
 static BOOL wait_clipboard_mutex(void)
 {
     static const WCHAR prefix[] = {'_','_','w','i','n','e','_','c','l','i','p','b','o','a','r','d','_'};
-    WCHAR buffer[MAX_PATH + sizeof(prefix) / sizeof(WCHAR)];
+    WCHAR buffer[MAX_PATH + ARRAY_SIZE(prefix)];
     HANDLE mutex;
 
     memcpy(buffer, prefix, sizeof(prefix));
     if (!GetUserObjectInformationW(GetProcessWindowStation(), UOI_NAME,
-                                   buffer + sizeof(prefix) / sizeof(WCHAR),
+                                   buffer + ARRAY_SIZE(prefix),
                                    sizeof(buffer) - sizeof(prefix), NULL))
     {
         ERR("failed to get winstation name\n");
@@ -1880,7 +1873,7 @@ static BOOL CALLBACK init_pipe_name(INIT_ONCE* once, void* param, void** context
 
     memcpy(clipboard_pipe_name, prefix, sizeof(prefix));
     if (!GetUserObjectInformationW(GetProcessWindowStation(), UOI_NAME,
-                                   clipboard_pipe_name + sizeof(prefix) / sizeof(WCHAR),
+                                   clipboard_pipe_name + ARRAY_SIZE(prefix),
                                    sizeof(clipboard_pipe_name) - sizeof(prefix), NULL))
     {
         ERR("failed to get winstation name\n");
@@ -1974,7 +1967,7 @@ static DWORD WINAPI clipboard_thread(void *arg)
     clipboard_thread_id = GetCurrentThreadId();
     AddClipboardFormatListener(clipboard_hwnd);
     register_builtin_formats();
-    grab_win32_clipboard(TRUE);
+    grab_win32_clipboard();
 
     TRACE("clipboard thread %04x running\n", GetCurrentThreadId());
     while (1)
@@ -2239,7 +2232,7 @@ void macdrv_lost_pasteboard_ownership(HWND hwnd)
 {
     TRACE("win %p\n", hwnd);
     if (!macdrv_is_pasteboard_owner(clipboard_cocoa_window))
-        grab_win32_clipboard(TRUE);
+        grab_win32_clipboard();
 }
 
 

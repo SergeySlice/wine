@@ -86,7 +86,6 @@ static BOOL CALLBACK collect_devices(LPCDIDEVICEINSTANCEW lpddi, IDirectInputDev
  */
 static void init_listview_columns(HWND dialog)
 {
-    HINSTANCE hinstance = (HINSTANCE) GetWindowLongPtrW(dialog, GWLP_HINSTANCE);
     LVCOLUMNW listColumn;
     RECT viewRect;
     int width;
@@ -95,7 +94,7 @@ static void init_listview_columns(HWND dialog)
     GetClientRect(GetDlgItem(dialog, IDC_DEVICEOBJECTSLIST), &viewRect);
     width = (viewRect.right - viewRect.left)/2;
 
-    LoadStringW(hinstance, IDS_OBJECTCOLUMN, column, sizeof(column)/sizeof(column[0]));
+    LoadStringW(DINPUT_instance, IDS_OBJECTCOLUMN, column, ARRAY_SIZE(column));
     listColumn.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM;
     listColumn.pszText = column;
     listColumn.cchTextMax = lstrlenW(listColumn.pszText);
@@ -103,7 +102,7 @@ static void init_listview_columns(HWND dialog)
 
     SendDlgItemMessageW (dialog, IDC_DEVICEOBJECTSLIST, LVM_INSERTCOLUMNW, 0, (LPARAM) &listColumn);
 
-    LoadStringW(hinstance, IDS_ACTIONCOLUMN, column, sizeof(column)/sizeof(column[0]));
+    LoadStringW(DINPUT_instance, IDS_ACTIONCOLUMN, column, ARRAY_SIZE(column));
     listColumn.cx = width;
     listColumn.pszText = column;
     listColumn.cchTextMax = lstrlenW(listColumn.pszText);
@@ -299,10 +298,11 @@ static void assign_action(HWND dialog)
     int obj = lv_get_cur_item(dialog);
     int old_action = lv_get_item_data(dialog, obj);
     int used_obj;
-
-    DIDEVICEOBJECTINSTANCEW ddo = device->ddo[obj];
+    DWORD type;
 
     if (old_action == action) return;
+    if (obj < 0) return;
+    type = device->ddo[obj].dwType;
 
     /* Clear old action */
     if (old_action != -1)
@@ -321,7 +321,7 @@ static void assign_action(HWND dialog)
     lv_set_action(dialog, used_obj, -1, lpdiaf);
 
     /* Set new action */
-    lpdiaf->rgoAction[action].dwObjID = ddo.dwType;
+    lpdiaf->rgoAction[action].dwObjID = type;
     lpdiaf->rgoAction[action].guidInstance = device->ddi.guidInstance;
     lpdiaf->rgoAction[action].dwHow = DIAH_USERCONFIG;
 
@@ -453,7 +453,8 @@ HRESULT _configure_devices(IDirectInput8W *iface,
 
     InitCommonControls();
 
-    DialogBoxParamW(GetModuleHandleA("dinput.dll"), (LPCWSTR) MAKEINTRESOURCE(IDD_CONFIGUREDEVICES), lpdiCDParams->hwnd, ConfigureDevicesDlgProc, (LPARAM) &data);
+    DialogBoxParamW(DINPUT_instance, (const WCHAR *)MAKEINTRESOURCE(IDD_CONFIGUREDEVICES),
+            lpdiCDParams->hwnd, ConfigureDevicesDlgProc, (LPARAM)&data);
 
     return DI_OK;
 }

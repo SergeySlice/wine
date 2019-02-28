@@ -151,8 +151,12 @@
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #define NONAMELESSUNION
+#define USE_WS_PREFIX
+#include "winsock2.h"
+#include "ws2ipdef.h"
 #include "ifenum.h"
 #include "ipstats.h"
+#include "iphlpapi.h"
 
 #include "wine/debug.h"
 #include "wine/server.h"
@@ -348,14 +352,12 @@ DWORD getInterfaceStatsByName(const char *name, PMIB_IFROW entry)
 #elif defined(HAVE_SYS_SYSCTL_H) && defined(NET_RT_IFLIST)
     {
         int mib[] = {CTL_NET, PF_ROUTE, 0, AF_INET, NET_RT_IFLIST, if_nametoindex(name)};
-#define MIB_LEN (sizeof(mib) / sizeof(mib[0]))
-
         size_t needed;
         char *buf = NULL, *end;
         struct if_msghdr *ifm;
         struct if_data ifdata;
 
-        if(sysctl(mib, MIB_LEN, NULL, &needed, NULL, 0) == -1)
+        if(sysctl(mib, ARRAY_SIZE(mib), NULL, &needed, NULL, 0) == -1)
         {
             ERR ("failed to get size of iflist\n");
             goto done;
@@ -366,7 +368,7 @@ DWORD getInterfaceStatsByName(const char *name, PMIB_IFROW entry)
             ret = ERROR_OUTOFMEMORY;
             goto done;
         }
-        if(sysctl(mib, MIB_LEN, buf, &needed, NULL, 0) == -1)
+        if(sysctl(mib, ARRAY_SIZE(mib), buf, &needed, NULL, 0) == -1)
         {
             ERR ("failed to get iflist\n");
             goto done;
@@ -510,16 +512,16 @@ DWORD WINAPI GetIcmpStatistics(PMIB_ICMP stats)
         }
         if (kc) kstat_close( kc );
     }
-#elif defined(HAVE_SYS_SYSCTL_H) && defined(ICMPCTL_STATS) && defined(HAVE_STRUCT_ICMPSTAT_ICPS_INHIST)
+#elif defined(HAVE_SYS_SYSCTL_H) && defined(ICMPCTL_STATS) && (defined(HAVE_STRUCT_ICMPSTAT_ICPS_INHIST) || defined(HAVE_STRUCT_ICMPSTAT_ICPS_OUTHIST))
     {
         int mib[] = {CTL_NET, PF_INET, IPPROTO_ICMP, ICMPCTL_STATS};
-#define MIB_LEN (sizeof(mib) / sizeof(mib[0]))
         struct icmpstat icmp_stat;
         size_t needed  = sizeof(icmp_stat);
         int i;
 
-        if(sysctl(mib, MIB_LEN, &icmp_stat, &needed, NULL, 0) != -1)
+        if(sysctl(mib, ARRAY_SIZE(mib), &icmp_stat, &needed, NULL, 0) != -1)
         {
+#ifdef HAVE_STRUCT_ICMPSTAT_ICPS_INHIST
             /*in stats */
             stats->stats.icmpInStats.dwMsgs = icmp_stat.icps_badcode + icmp_stat.icps_checksum + icmp_stat.icps_tooshort + icmp_stat.icps_badlen;
             for(i = 0; i <= ICMP_MAXTYPE; i++)
@@ -538,6 +540,7 @@ DWORD WINAPI GetIcmpStatistics(PMIB_ICMP stats)
             stats->stats.icmpInStats.dwTimestampReps = icmp_stat.icps_inhist[ICMP_TSTAMPREPLY];
             stats->stats.icmpInStats.dwAddrMasks = icmp_stat.icps_inhist[ICMP_MASKREQ];
             stats->stats.icmpInStats.dwAddrMaskReps = icmp_stat.icps_inhist[ICMP_MASKREPLY];
+#endif
 
 #ifdef HAVE_STRUCT_ICMPSTAT_ICPS_OUTHIST
             /* out stats */
@@ -666,7 +669,7 @@ DWORD WINAPI GetIcmpStatisticsEx(PMIB_ICMP_EX stats, DWORD family)
                         continue;
                     }
 
-                    for (i = 0; i < sizeof(icmpinstatlist)/sizeof(icmpinstatlist[0]); i++)
+                    for (i = 0; i < ARRAY_SIZE(icmpinstatlist); i++)
                     {
                         if (!strcasecmp(buf, icmpinstatlist[i].name))
                         {
@@ -688,7 +691,7 @@ DWORD WINAPI GetIcmpStatisticsEx(PMIB_ICMP_EX stats, DWORD family)
                         continue;
                     }
 
-                    for (i = 0; i < sizeof(icmpoutstatlist)/sizeof(icmpoutstatlist[0]); i++)
+                    for (i = 0; i < ARRAY_SIZE(icmpoutstatlist); i++)
                     {
                         if (!strcasecmp(buf, icmpoutstatlist[i].name))
                         {
@@ -819,7 +822,7 @@ DWORD WINAPI GetIpStatisticsEx(PMIB_IPSTATS stats, DWORD family)
                     if ((ptr = strchr(value, '\n')))
                         *ptr='\0';
 
-                    for (i = 0; i < sizeof(ipstatlist)/sizeof(ipstatlist[0]); i++)
+                    for (i = 0; i < ARRAY_SIZE(ipstatlist); i++)
                         if (!strcasecmp(buf, ipstatlist[i].name))
                         {
                             if (sscanf(value, "%d", &res)) *ipstatlist[i].elem = res;
@@ -919,7 +922,6 @@ DWORD WINAPI GetIpStatisticsEx(PMIB_IPSTATS stats, DWORD family)
 #elif defined(HAVE_SYS_SYSCTL_H) && defined(IPCTL_STATS) && (defined(HAVE_STRUCT_IPSTAT_IPS_TOTAL) || defined(HAVE_STRUCT_IP_STATS_IPS_TOTAL))
     {
         int mib[] = {CTL_NET, PF_INET, IPPROTO_IP, IPCTL_STATS};
-#define MIB_LEN (sizeof(mib) / sizeof(mib[0]))
         int ip_ttl, ip_forwarding;
 #if defined(HAVE_STRUCT_IPSTAT_IPS_TOTAL)
         struct ipstat ip_stat;
@@ -929,7 +931,7 @@ DWORD WINAPI GetIpStatisticsEx(PMIB_IPSTATS stats, DWORD family)
         size_t needed;
 
         needed = sizeof(ip_stat);
-        if(sysctl(mib, MIB_LEN, &ip_stat, &needed, NULL, 0) == -1)
+        if(sysctl(mib, ARRAY_SIZE(mib), &ip_stat, &needed, NULL, 0) == -1)
         {
             ERR ("failed to get ipstat\n");
             return ERROR_NOT_SUPPORTED;
@@ -1100,7 +1102,6 @@ DWORD WINAPI GetTcpStatisticsEx(PMIB_TCPSTATS stats, DWORD family)
 #define TCPTV_REXMTMAX 128
 #endif
         int mib[] = {CTL_NET, PF_INET, IPPROTO_TCP, TCPCTL_STATS};
-#define MIB_LEN (sizeof(mib) / sizeof(mib[0]))
 #define hz 1000
 #if defined(HAVE_STRUCT_TCPSTAT_TCPS_CONNATTEMPT)
         struct tcpstat tcp_stat;
@@ -1109,7 +1110,7 @@ DWORD WINAPI GetTcpStatisticsEx(PMIB_TCPSTATS stats, DWORD family)
 #endif
         size_t needed = sizeof(tcp_stat);
 
-        if(sysctl(mib, MIB_LEN, &tcp_stat, &needed, NULL, 0) != -1)
+        if(sysctl(mib, ARRAY_SIZE(mib), &tcp_stat, &needed, NULL, 0) != -1)
         {
             stats->u.RtoAlgorithm = MIB_TCP_RTO_VANJ;
             stats->dwRtoMin = TCPTV_MIN;
@@ -1211,7 +1212,7 @@ DWORD WINAPI GetUdpStatisticsEx(PMIB_UDPSTATS stats, DWORD family)
                     if ((ptr = strchr(value, '\n')))
                         *ptr='\0';
 
-                    for (i = 0; i < sizeof(udpstatlist)/sizeof(udpstatlist[0]); i++)
+                    for (i = 0; i < ARRAY_SIZE(udpstatlist); i++)
                         if (!strcasecmp(buf, udpstatlist[i].name))
                         {
                             if (sscanf(value, "%d", &res)) *udpstatlist[i].elem = res;
@@ -1283,12 +1284,11 @@ DWORD WINAPI GetUdpStatisticsEx(PMIB_UDPSTATS stats, DWORD family)
 #elif defined(HAVE_SYS_SYSCTL_H) && defined(UDPCTL_STATS) && defined(HAVE_STRUCT_UDPSTAT_UDPS_IPACKETS)
     {
         int mib[] = {CTL_NET, PF_INET, IPPROTO_UDP, UDPCTL_STATS};
-#define MIB_LEN (sizeof(mib) / sizeof(mib[0]))
         struct udpstat udp_stat;
         MIB_UDPTABLE *udp_table;
         size_t needed = sizeof(udp_stat);
 
-        if(sysctl(mib, MIB_LEN, &udp_stat, &needed, NULL, 0) != -1)
+        if(sysctl(mib, ARRAY_SIZE(mib), &udp_stat, &needed, NULL, 0) != -1)
         {
             stats->dwInDatagrams = udp_stat.udps_ipackets;
             stats->dwOutDatagrams = udp_stat.udps_opackets;
@@ -1739,14 +1739,13 @@ DWORD WINAPI AllocateAndGetIpNetTableFromStack(PMIB_IPNETTABLE *ppIpNetTable, BO
 #elif defined(HAVE_SYS_SYSCTL_H) && defined(NET_RT_DUMP)
     {
       int mib[] = {CTL_NET, PF_ROUTE, 0, AF_INET, NET_RT_FLAGS, RTF_LLINFO};
-#define MIB_LEN (sizeof(mib) / sizeof(mib[0]))
       size_t needed;
       char *buf = NULL, *lim, *next;
       struct rt_msghdr *rtm;
       struct sockaddr_inarp *sinarp;
       struct sockaddr_dl *sdl;
 
-      if (sysctl (mib, MIB_LEN,  NULL, &needed, NULL, 0) == -1)
+      if (sysctl (mib, ARRAY_SIZE(mib),  NULL, &needed, NULL, 0) == -1)
       {
          ERR ("failed to get arp table\n");
          ret = ERROR_NOT_SUPPORTED;
@@ -1760,7 +1759,7 @@ DWORD WINAPI AllocateAndGetIpNetTableFromStack(PMIB_IPNETTABLE *ppIpNetTable, BO
           goto done;
       }
 
-      if (sysctl (mib, MIB_LEN, buf, &needed, NULL, 0) == -1)
+      if (sysctl (mib, ARRAY_SIZE(mib), buf, &needed, NULL, 0) == -1)
       {
          ret = ERROR_NOT_SUPPORTED;
          goto done;
@@ -2049,11 +2048,11 @@ static unsigned int find_owning_pid( struct pid_map *map, unsigned int num_entri
 #elif defined(HAVE_PROC_PIDINFO)
     struct proc_fdinfo *fds;
     struct socket_fdinfo sock;
-    unsigned int i, j, n, fd_len;
+    unsigned int i, j, n;
 
     for (i = 0; i < num_entries; i++)
     {
-        fd_len = proc_pidinfo( map[i].unix_pid, PROC_PIDLISTFDS, 0, NULL, 0 );
+        int fd_len = proc_pidinfo( map[i].unix_pid, PROC_PIDLISTFDS, 0, NULL, 0 );
         if (fd_len <= 0) continue;
 
         fds = HeapAlloc( GetProcessHeap(), 0, fd_len );
@@ -2565,6 +2564,248 @@ DWORD build_udp_table( UDP_TABLE_CLASS class, void **tablep, BOOL order, HANDLE 
     }
     else HeapFree( heap, flags, table );
     if (size) *size = get_udp_table_sizes( class, count, NULL );
+    TRACE( "returning ret %u table %p\n", ret, table );
+    return ret;
+}
+
+static DWORD get_udp6_table_sizes( UDP_TABLE_CLASS class, DWORD row_count, DWORD *row_size )
+{
+    DWORD table_size;
+
+    switch (class)
+    {
+    case UDP_TABLE_BASIC:
+    {
+        table_size = FIELD_OFFSET(MIB_UDP6TABLE, table[row_count]);
+        if (row_size) *row_size = sizeof(MIB_UDP6ROW);
+        break;
+    }
+    case UDP_TABLE_OWNER_PID:
+    {
+        table_size = FIELD_OFFSET(MIB_UDP6TABLE_OWNER_PID, table[row_count]);
+        if (row_size) *row_size = sizeof(MIB_UDP6ROW_OWNER_PID);
+        break;
+    }
+    case UDP_TABLE_OWNER_MODULE:
+    {
+        table_size = FIELD_OFFSET(MIB_UDP6TABLE_OWNER_MODULE, table[row_count]);
+        if (row_size) *row_size = sizeof(MIB_UDP6ROW_OWNER_MODULE);
+        break;
+    }
+    default:
+        ERR("unhandled class %u\n", class);
+        return 0;
+    }
+    return table_size;
+}
+
+static MIB_UDP6TABLE *append_udp6_row( UDP_TABLE_CLASS class, HANDLE heap, DWORD flags,
+                                       MIB_UDP6TABLE *table, DWORD *count,
+                                       const MIB_UDP6ROW_OWNER_MODULE *row, DWORD row_size )
+{
+    if (table->dwNumEntries >= *count)
+    {
+        MIB_UDP6TABLE *new_table;
+        DWORD new_count = table->dwNumEntries * 2, new_table_size;
+
+        new_table_size = get_udp6_table_sizes( class, new_count, NULL );
+        if (!(new_table = HeapReAlloc( heap, flags, table, new_table_size )))
+        {
+            HeapFree( heap, 0, table );
+            return NULL;
+        }
+        *count = new_count;
+        table = new_table;
+    }
+    memcpy( (char *)table->table + (table->dwNumEntries * row_size), row, row_size );
+    table->dwNumEntries++;
+    return table;
+}
+
+static int compare_udp6_rows(const void *a, const void *b)
+{
+    const MIB_UDP6ROW *rowA = a;
+    const MIB_UDP6ROW *rowB = b;
+    int ret;
+
+    if ((ret = memcmp(&rowA->dwLocalAddr, &rowB->dwLocalAddr, sizeof(rowA->dwLocalAddr)) != 0)) return ret;
+    if ((ret = rowA->dwLocalScopeId - rowB->dwLocalScopeId) != 0) return ret;
+    return rowA->dwLocalPort - rowB->dwLocalPort;
+}
+
+struct ipv6_addr_scope
+{
+    IN6_ADDR addr;
+    DWORD scope;
+};
+
+static struct ipv6_addr_scope *get_ipv6_addr_scope_table(unsigned int *size)
+{
+    struct ipv6_addr_scope *table = NULL;
+    unsigned int table_size = 0;
+
+    if (!(table = HeapAlloc( GetProcessHeap(), 0, sizeof(table[0]) )))
+        return NULL;
+
+#ifdef __linux__
+    {
+        FILE *fp;
+        char buf[512], *ptr;
+
+        if (!(fp = fopen( "/proc/net/if_inet6", "r" )))
+            goto failed;
+
+        while ((ptr = fgets( buf, sizeof(buf), fp )))
+        {
+            WORD a[8];
+            DWORD scope;
+            struct ipv6_addr_scope *new_table;
+            struct ipv6_addr_scope *entry;
+            unsigned int i;
+
+            if (sscanf( ptr, "%4hx%4hx%4hx%4hx%4hx%4hx%4hx%4hx %*s %*s %x",
+                &a[0], &a[1], &a[2], &a[3], &a[4], &a[5], &a[6], &a[7], &scope ) != 9)
+                continue;
+
+            table_size++;
+            if (!(new_table = HeapReAlloc( GetProcessHeap(), 0, table, table_size * sizeof(table[0]) )))
+            {
+                fclose(fp);
+                goto failed;
+            }
+
+            table = new_table;
+            entry = &table[table_size - 1];
+
+            i = 0;
+            while (i < 8)
+            {
+                entry->addr.u.Word[i] = htons(a[i]);
+                i++;
+            }
+
+            entry->scope = htons(scope);
+        }
+
+        fclose(fp);
+    }
+#else
+    FIXME( "not implemented\n" );
+    goto failed;
+#endif
+
+    *size = table_size;
+    return table;
+
+failed:
+    HeapFree( GetProcessHeap(), 0, table );
+    return NULL;
+}
+
+static DWORD find_ipv6_addr_scope(const IN6_ADDR *addr, const struct ipv6_addr_scope *table, unsigned int size)
+{
+    const BYTE multicast_scope_mask = 0x0F;
+    const BYTE multicast_scope_shift = 0;
+    unsigned int i = 0;
+
+    if (WS_IN6_IS_ADDR_UNSPECIFIED(addr))
+        return 0;
+
+    if (WS_IN6_IS_ADDR_MULTICAST(addr))
+        return htons((addr->u.Byte[1] & multicast_scope_mask) >> multicast_scope_shift);
+
+    if (!table)
+        return -1;
+
+    while (i < size)
+    {
+        if (memcmp(&table[i].addr, addr, sizeof(table[i].addr)) == 0)
+            return table[i].scope;
+        i++;
+    }
+
+    return -1;
+}
+
+DWORD build_udp6_table( UDP_TABLE_CLASS class, void **tablep, BOOL order, HANDLE heap, DWORD flags,
+                        DWORD *size )
+{
+    MIB_UDP6TABLE *table;
+    MIB_UDP6ROW_OWNER_MODULE row;
+    DWORD ret = NO_ERROR, count = 16, table_size, row_size;
+
+    if (!(table_size = get_udp6_table_sizes( class, count, &row_size )))
+        return ERROR_INVALID_PARAMETER;
+
+    if (!(table = HeapAlloc( heap, flags, table_size )))
+         return ERROR_OUTOFMEMORY;
+
+    table->dwNumEntries = 0;
+    memset( &row, 0, sizeof(row) );
+
+#ifdef __linux__
+    {
+        FILE *fp;
+
+        if ((fp = fopen( "/proc/net/udp6", "r" )))
+        {
+            char buf[512], *ptr;
+            struct pid_map *map = NULL;
+            unsigned int num_entries = 0;
+            struct ipv6_addr_scope *addr_scopes;
+            unsigned int addr_scopes_size = 0;
+            unsigned int dummy;
+            int inode;
+
+            addr_scopes = get_ipv6_addr_scope_table(&addr_scopes_size);
+
+            if (class >= UDP_TABLE_OWNER_PID) map = get_pid_map( &num_entries );
+
+            /* skip header line */
+            ptr = fgets( buf, sizeof(buf), fp );
+            while ((ptr = fgets( buf, sizeof(buf), fp )))
+            {
+                DWORD in6_addr32[4];
+
+                if (sscanf( ptr, "%u: %8x%8x%8x%8x:%x %*s %*s %*s %*s %*s %*s %*s %d", &dummy,
+                    &in6_addr32[0], &in6_addr32[1], &in6_addr32[2], &in6_addr32[3],
+                    &row.dwLocalPort, &inode ) != 7)
+                    continue;
+                memcpy(&row.ucLocalAddr, in6_addr32, sizeof(row.ucLocalAddr));
+                row.dwLocalScopeId = find_ipv6_addr_scope((const IN6_ADDR *)&row.ucLocalAddr, addr_scopes, addr_scopes_size);
+                row.dwLocalPort = htons( row.dwLocalPort );
+
+                if (class >= UDP_TABLE_OWNER_PID)
+                    row.dwOwningPid = find_owning_pid( map, num_entries, inode );
+                if (class >= UDP_TABLE_OWNER_MODULE)
+                {
+                    row.liCreateTimestamp.QuadPart = 0; /* FIXME */
+                    row.u.dwFlags = 0;
+                    memset( &row.OwningModuleInfo, 0, sizeof(row.OwningModuleInfo) );
+                }
+                if (!(table = append_udp6_row( class, heap, flags, table, &count, &row, row_size )))
+                    break;
+            }
+            HeapFree( GetProcessHeap(), 0, map );
+            HeapFree( GetProcessHeap(), 0, addr_scopes );
+            fclose( fp );
+        }
+        else ret = ERROR_NOT_SUPPORTED;
+    }
+#else
+    FIXME( "not implemented\n" );
+    ret = ERROR_NOT_SUPPORTED;
+#endif
+
+    if (!table) return ERROR_OUTOFMEMORY;
+    if (!ret)
+    {
+        if (order && table->dwNumEntries)
+            qsort( table->table, table->dwNumEntries, row_size, compare_udp6_rows );
+        *tablep = table;
+    }
+    else HeapFree( heap, flags, table );
+    if (size) *size = get_udp6_table_sizes( class, count, NULL );
     TRACE( "returning ret %u table %p\n", ret, table );
     return ret;
 }

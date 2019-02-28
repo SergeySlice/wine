@@ -557,7 +557,7 @@ HRESULT dxbc_add_section(struct dxbc *dxbc, DWORD tag, const char *data, DWORD d
     return S_OK;
 }
 
-HRESULT dxbc_init(struct dxbc *dxbc, UINT size)
+HRESULT dxbc_init(struct dxbc *dxbc, unsigned int size)
 {
     TRACE("dxbc %p, size %u.\n", dxbc, size);
 
@@ -1154,7 +1154,7 @@ static BOOL expr_compatible_data_types(struct hlsl_type *t1, struct hlsl_type *t
 
 static enum hlsl_base_type expr_common_base_type(enum hlsl_base_type t1, enum hlsl_base_type t2)
 {
-    enum hlsl_base_type types[] =
+    static const enum hlsl_base_type types[] =
     {
         HLSL_TYPE_BOOL,
         HLSL_TYPE_INT,
@@ -1165,7 +1165,7 @@ static enum hlsl_base_type expr_common_base_type(enum hlsl_base_type t1, enum hl
     };
     int t1_idx = -1, t2_idx = -1, i;
 
-    for (i = 0; i < sizeof(types) / sizeof(types[0]); ++i)
+    for (i = 0; i < ARRAY_SIZE(types); ++i)
     {
         /* Always convert away from HLSL_TYPE_HALF */
         if (t1 == types[i])
@@ -1943,7 +1943,7 @@ static const char *debug_node_type(enum hlsl_ir_node_type type)
         "HLSL_IR_SWIZZLE",
     };
 
-    if (type >= sizeof(names) / sizeof(names[0]))
+    if (type >= ARRAY_SIZE(names))
         return "Unexpected node type";
     return names[type];
 }
@@ -2138,8 +2138,11 @@ static void debug_dump_ir_constructor(const struct hlsl_ir_constructor *construc
 
 static const char *debug_writemask(DWORD writemask)
 {
-    char string[5], components[] = {'x', 'y', 'z', 'w'};
+    static const char components[] = {'x', 'y', 'z', 'w'};
+    char string[5];
     unsigned int i = 0, pos = 0;
+
+    assert(!(writemask & ~BWRITERSP_WRITEMASK_ALL));
 
     while (writemask)
     {
@@ -2176,7 +2179,7 @@ static void debug_dump_ir_swizzle(const struct hlsl_ir_swizzle *swizzle)
     }
     else
     {
-        char c[] = {'x', 'y', 'z', 'w'};
+        static const char c[] = {'x', 'y', 'z', 'w'};
 
         for (i = 0; i < swizzle->node.data_type->dimx; ++i)
             TRACE("%c", c[(swizzle->swizzle >> i * 2) & 0x3]);

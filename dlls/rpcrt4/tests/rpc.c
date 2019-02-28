@@ -149,10 +149,8 @@ static void TestDceErrorInqText (void)
                          */
     DWORD dwCount;
 
-    dwCount = FormatMessageA (FORMAT_MESSAGE_FROM_SYSTEM | 
-              FORMAT_MESSAGE_IGNORE_INSERTS,
-              NULL, RPC_S_NOT_RPC_ERROR, 0, bufferInvalid,
-              sizeof(bufferInvalid)/sizeof(bufferInvalid[0]), NULL);
+    dwCount = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL,
+            RPC_S_NOT_RPC_ERROR, 0, bufferInvalid, ARRAY_SIZE(bufferInvalid), NULL);
 
     /* A random sample of DceErrorInqText */
     /* 0 is success */
@@ -250,10 +248,8 @@ static void test_rpc_ncacn_ip_tcp(void)
     ok(status == RPC_S_OK, "RpcServerListen failed (%u)\n", status);
 
     status = RpcServerListen(1, 20, TRUE);
-todo_wine {
     ok(status == RPC_S_ALREADY_LISTENING,
        "wrong RpcServerListen error (%u)\n", status);
-}
 
     status = RpcStringBindingComposeA(NULL, ncacn_ip_tcp, address,
                                      endpoint, NULL, &binding);
@@ -301,9 +297,7 @@ todo_wine {
     ok(status == RPC_S_OK, "RpcServerUnregisterIf failed (%u)\n", status);
 
     status = RpcMgmtWaitServerListen();
-todo_wine {
     ok(status == RPC_S_OK, "RpcMgmtWaitServerListen failed (%u)\n", status);
-}
 
     status = RpcStringFreeA(&binding);
     ok(status == RPC_S_OK, "RpcStringFree failed (%u)\n", status);
@@ -655,15 +649,15 @@ static void test_RpcStringBindingParseA(void)
     ok(options == NULL, "options was %p instead of NULL\n", options);
 }
 
-static void test_I_RpcExceptionFilter(void)
+static void test_RpcExceptionFilter(const char *func_name)
 {
     ULONG exception;
     int retval;
-    int (WINAPI *pI_RpcExceptionFilter)(ULONG) = (void *)GetProcAddress(GetModuleHandleA("rpcrt4.dll"), "I_RpcExceptionFilter");
+    int (WINAPI *pRpcExceptionFilter)(ULONG) = (void *)GetProcAddress(GetModuleHandleA("rpcrt4.dll"), func_name);
 
-    if (!pI_RpcExceptionFilter)
+    if (!pRpcExceptionFilter)
     {
-        win_skip("I_RpcExceptionFilter not exported\n");
+        win_skip("%s not exported\n", func_name);
         return;
     }
 
@@ -674,7 +668,7 @@ static void test_I_RpcExceptionFilter(void)
         if (exception == 0x40000005) exception = 0x80000000;
         if (exception == 0x80000005) exception = 0xc0000000;
 
-        retval = pI_RpcExceptionFilter(exception);
+        retval = pRpcExceptionFilter(exception);
         switch (exception)
         {
         case STATUS_DATATYPE_MISALIGNMENT:
@@ -685,17 +679,17 @@ static void test_I_RpcExceptionFilter(void)
         case STATUS_INSTRUCTION_MISALIGNMENT:
         case STATUS_STACK_OVERFLOW:
         case STATUS_POSSIBLE_DEADLOCK:
-            ok(retval == EXCEPTION_CONTINUE_SEARCH, "I_RpcExceptionFilter(0x%x) should have returned %d instead of %d\n",
-               exception, EXCEPTION_CONTINUE_SEARCH, retval);
+            ok(retval == EXCEPTION_CONTINUE_SEARCH, "%s(0x%x) should have returned %d instead of %d\n",
+               func_name, exception, EXCEPTION_CONTINUE_SEARCH, retval);
             break;
         case STATUS_GUARD_PAGE_VIOLATION:
         case STATUS_IN_PAGE_ERROR:
         case STATUS_HANDLE_NOT_CLOSABLE:
-            trace("I_RpcExceptionFilter(0x%x) returned %d\n", exception, retval);
+            trace("%s(0x%x) returned %d\n", func_name, exception, retval);
             break;
         default:
-            ok(retval == EXCEPTION_EXECUTE_HANDLER, "I_RpcExceptionFilter(0x%x) should have returned %d instead of %d\n",
-               exception, EXCEPTION_EXECUTE_HANDLER, retval);
+            ok(retval == EXCEPTION_EXECUTE_HANDLER, "%s(0x%x) should have returned %d instead of %d\n",
+               func_name, exception, EXCEPTION_EXECUTE_HANDLER, retval);
         }
     }
 }
@@ -1150,7 +1144,7 @@ static HRESULT set_firewall( enum firewall_op op )
     hr = INetFwPolicy_get_CurrentProfile( policy, &profile );
     if (hr != S_OK) goto done;
 
-    INetFwProfile_get_AuthorizedApplications( profile, &apps );
+    hr = INetFwProfile_get_AuthorizedApplications( profile, &apps );
     ok( hr == S_OK, "got %08x\n", hr );
     if (hr != S_OK) goto done;
 
@@ -1204,7 +1198,8 @@ START_TEST( rpc )
     test_towers();
     test_I_RpcMapWin32Status();
     test_RpcStringBindingParseA();
-    test_I_RpcExceptionFilter();
+    test_RpcExceptionFilter("I_RpcExceptionFilter");
+    test_RpcExceptionFilter("RpcExceptionFilter");
     test_RpcStringBindingFromBinding();
     test_UuidCreate();
     test_UuidCreateSequential();

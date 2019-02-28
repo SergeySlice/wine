@@ -1,9 +1,10 @@
 TESTDLL   = quartz.dll
-IMPORTS   = oleaut32 ole32 advapi32
+IMPORTS   = oleaut32 ole32 advapi32 user32
 
 C_SRCS = \
 	avisplitter.c \
 	dsoundrender.c \
+	filesource.c \
 	filtergraph.c \
 	filtermapper.c \
 	memallocator.c \
@@ -12,4 +13,6 @@ C_SRCS = \
 	referenceclock.c \
 	videorenderer.c
 
-IDL_SRCS = fil_data.idl
+
+RC_SRCS = \
+	rsrc.rc

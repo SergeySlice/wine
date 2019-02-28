@@ -23,7 +23,7 @@
 @ cdecl _ismbbpunct(long) ucrtbase._ismbbpunct
 @ stub _ismbbpunct_l
 @ cdecl _ismbbtrail(long) ucrtbase._ismbbtrail
-@ stub _ismbbtrail_l
+@ cdecl _ismbbtrail_l(long ptr) ucrtbase._ismbbtrail_l
 @ cdecl _ismbcalnum(long) ucrtbase._ismbcalnum
 @ stub _ismbcalnum_l
 @ cdecl _ismbcalpha(long) ucrtbase._ismbcalpha
@@ -39,13 +39,13 @@
 @ cdecl _ismbckata(long) ucrtbase._ismbckata
 @ stub _ismbckata_l
 @ cdecl _ismbcl0(long) ucrtbase._ismbcl0
-@ stub _ismbcl0_l
+@ cdecl _ismbcl0_l(long ptr) ucrtbase._ismbcl0_l
 @ cdecl _ismbcl1(long) ucrtbase._ismbcl1
-@ stub _ismbcl1_l
+@ cdecl _ismbcl1_l(long ptr) ucrtbase._ismbcl1_l
 @ cdecl _ismbcl2(long) ucrtbase._ismbcl2
-@ stub _ismbcl2_l
+@ cdecl _ismbcl2_l(long ptr) ucrtbase._ismbcl2_l
 @ cdecl _ismbclegal(long) ucrtbase._ismbclegal
-@ stub _ismbclegal_l
+@ cdecl _ismbclegal_l(long ptr) ucrtbase._ismbclegal_l
 @ cdecl _ismbclower(long) ucrtbase._ismbclower
 @ stub _ismbclower_l
 @ cdecl _ismbcprint(long) ucrtbase._ismbcprint
@@ -67,10 +67,10 @@
 @ cdecl _mbbtype(long long) ucrtbase._mbbtype
 @ stub _mbbtype_l
 @ stub _mbcasemap
-@ cdecl _mbccpy(ptr str) ucrtbase._mbccpy
-@ stub _mbccpy_l
-@ stub _mbccpy_s
-@ stub _mbccpy_s_l
+@ cdecl _mbccpy(ptr ptr) ucrtbase._mbccpy
+@ cdecl _mbccpy_l(ptr ptr ptr) ucrtbase._mbccpy_l
+@ cdecl _mbccpy_s(ptr long ptr ptr) ucrtbase._mbccpy_s
+@ cdecl _mbccpy_s_l(ptr long ptr ptr ptr) ucrtbase._mbccpy_s_l
 @ cdecl _mbcjistojms(long) ucrtbase._mbcjistojms
 @ stub _mbcjistojms_l
 @ cdecl _mbcjmstojis(long) ucrtbase._mbcjmstojis
@@ -112,7 +112,7 @@
 @ cdecl _mbsinc(str) ucrtbase._mbsinc
 @ stub _mbsinc_l
 @ cdecl _mbslen(str) ucrtbase._mbslen
-@ stub _mbslen_l
+@ cdecl _mbslen_l(str ptr) ucrtbase._mbslen_l
 @ cdecl _mbslwr(str) ucrtbase._mbslwr
 @ stub _mbslwr_l
 @ cdecl _mbslwr_s(str long) ucrtbase._mbslwr_s
@@ -161,8 +161,8 @@
 @ stub _mbsnicoll_l
 @ cdecl _mbsninc(str long) ucrtbase._mbsninc
 @ stub _mbsninc_l
-@ stub _mbsnlen
-@ stub _mbsnlen_l
+@ cdecl _mbsnlen(str long) ucrtbase._mbsnlen
+@ cdecl _mbsnlen_l(str long ptr) ucrtbase._mbsnlen_l
 @ cdecl _mbsnset(ptr long long) ucrtbase._mbsnset
 @ stub _mbsnset_l
 @ stub _mbsnset_s

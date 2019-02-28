@@ -85,7 +85,7 @@ static void _dump_DSCAPS(DWORD xmask) {
     };
     unsigned int     i;
 
-    for (i=0;i<sizeof(flags)/sizeof(flags[0]);i++)
+    for (i = 0; i < ARRAY_SIZE(flags); i++)
         if ((flags[i].mask & xmask) == flags[i].mask)
             TRACE("%s ",flags[i].name);
 }
@@ -113,7 +113,7 @@ static void _dump_DSBCAPS(DWORD xmask) {
     };
     unsigned int     i;
 
-    for (i=0;i<sizeof(flags)/sizeof(flags[0]);i++)
+    for (i = 0; i < ARRAY_SIZE(flags); i++)
         if ((flags[i].mask & xmask) == flags[i].mask)
             TRACE("%s ",flags[i].name);
 }
@@ -189,7 +189,7 @@ static HRESULT DirectSoundDevice_Create(DirectSoundDevice ** ppDevice)
 static ULONG DirectSoundDevice_AddRef(DirectSoundDevice * device)
 {
     ULONG ref = InterlockedIncrement(&(device->ref));
-    TRACE("(%p) ref was %d\n", device, ref - 1);
+    TRACE("(%p) ref %d\n", device, ref);
     return ref;
 }
 
@@ -197,17 +197,15 @@ static ULONG DirectSoundDevice_Release(DirectSoundDevice * device)
 {
     HRESULT hr;
     ULONG ref = InterlockedDecrement(&(device->ref));
-    TRACE("(%p) ref was %u\n", device, ref + 1);
+    TRACE("(%p) ref %d\n", device, ref);
     if (!ref) {
         int i;
 
         SetEvent(device->sleepev);
         if (device->thread) {
-            WaitForSingleObject(device->thread_finished, INFINITE);
+            WaitForSingleObject(device->thread, INFINITE);
             CloseHandle(device->thread);
-            CloseHandle(device->thread_finished);
         }
-        CloseHandle(device->sleepev);
 
         EnterCriticalSection(&DSOUND_renderers_lock);
         list_remove(&device->entry);
@@ -232,7 +230,9 @@ static ULONG DirectSoundDevice_Release(DirectSoundDevice * device)
             IAudioRenderClient_Release(device->render);
         if(device->volume)
             IAudioStreamVolume_Release(device->volume);
-
+        if(device->mmdevice)
+            IMMDevice_Release(device->mmdevice);
+        CloseHandle(device->sleepev);
         HeapFree(GetProcessHeap(), 0, device->tmp_buffer);
         HeapFree(GetProcessHeap(), 0, device->cp_buffer);
         HeapFree(GetProcessHeap(), 0, device->buffer);
@@ -382,7 +382,6 @@ static HRESULT DirectSoundDevice_Initialize(DirectSoundDevice ** ppDevice, LPCGU
 
     ZeroMemory(&device->volpan, sizeof(device->volpan));
 
-    device->thread_finished = CreateEventW(0, 0, 0, 0);
     device->thread = CreateThread(0, 0, DSOUND_mixthread, device, 0, 0);
     SetThreadPriority(device->thread, THREAD_PRIORITY_TIME_CRITICAL);
 

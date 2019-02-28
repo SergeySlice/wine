@@ -340,7 +340,7 @@ static DWORD create_netconn_socket(server_t *server, netconn_t *netconn, DWORD t
     return ERROR_SUCCESS;
 }
 
-DWORD create_netconn(BOOL useSSL, server_t *server, DWORD security_flags, BOOL mask_errors, DWORD timeout, netconn_t **ret)
+DWORD create_netconn(server_t *server, DWORD security_flags, BOOL mask_errors, DWORD timeout, netconn_t **ret)
 {
     netconn_t *netconn;
     int result;
@@ -392,9 +392,9 @@ void free_netconn(netconn_t *netconn)
         heap_free(netconn->extra_buf);
         netconn->extra_buf = NULL;
         netconn->extra_len = 0;
-        if (SecIsValidHandle(&netconn->ssl_ctx))
-            DeleteSecurityContext(&netconn->ssl_ctx);
     }
+    if (SecIsValidHandle(&netconn->ssl_ctx))
+        DeleteSecurityContext(&netconn->ssl_ctx);
 
     close_netconn(netconn);
     heap_free(netconn);
@@ -639,7 +639,7 @@ static BOOL send_ssl_chunk(netconn_t *conn, const void *msg, size_t size)
         {conn->ssl_sizes.cbTrailer, SECBUFFER_STREAM_TRAILER, conn->ssl_buf+conn->ssl_sizes.cbHeader+size},
         {0, SECBUFFER_EMPTY, NULL}
     };
-    SecBufferDesc buf_desc = {SECBUFFER_VERSION, sizeof(bufs)/sizeof(*bufs), bufs};
+    SecBufferDesc buf_desc = {SECBUFFER_VERSION, ARRAY_SIZE(bufs), bufs};
     SECURITY_STATUS res;
 
     memcpy(bufs[1].pvBuffer, msg, size);
@@ -698,7 +698,7 @@ static BOOL read_ssl_chunk(netconn_t *conn, void *buf, SIZE_T buf_size, BOOL blo
 {
     const SIZE_T ssl_buf_size = conn->ssl_sizes.cbHeader+conn->ssl_sizes.cbMaximumMessage+conn->ssl_sizes.cbTrailer;
     SecBuffer bufs[4];
-    SecBufferDesc buf_desc = {SECBUFFER_VERSION, sizeof(bufs)/sizeof(*bufs), bufs};
+    SecBufferDesc buf_desc = {SECBUFFER_VERSION, ARRAY_SIZE(bufs), bufs};
     SSIZE_T size, buf_len = 0;
     int i;
     SECURITY_STATUS res;
@@ -781,7 +781,7 @@ static BOOL read_ssl_chunk(netconn_t *conn, void *buf, SIZE_T buf_size, BOOL blo
         }
     } while(res != SEC_E_OK);
 
-    for(i=0; i < sizeof(bufs)/sizeof(*bufs); i++) {
+    for(i = 0; i < ARRAY_SIZE(bufs); i++) {
         if(bufs[i].BufferType == SECBUFFER_DATA) {
             size = min(buf_size, bufs[i].cbBuffer);
             memcpy(buf, bufs[i].pvBuffer, size);
@@ -798,7 +798,7 @@ static BOOL read_ssl_chunk(netconn_t *conn, void *buf, SIZE_T buf_size, BOOL blo
         }
     }
 
-    for(i=0; i < sizeof(bufs)/sizeof(*bufs); i++) {
+    for(i = 0; i < ARRAY_SIZE(bufs); i++) {
         if(bufs[i].BufferType == SECBUFFER_EXTRA) {
             conn->extra_buf = heap_alloc(bufs[i].cbBuffer);
             if(!conn->extra_buf)
@@ -867,32 +867,6 @@ DWORD NETCON_recv(netconn_t *connection, void *buf, size_t len, BOOL blocking, i
         *recvd = size;
         return res;
     }
-}
-
-/******************************************************************************
- * NETCON_query_data_available
- * Returns the number of bytes of peeked data plus the number of bytes of
- * queued, but unread data.
- */
-BOOL NETCON_query_data_available(netconn_t *connection, DWORD *available)
-{
-    *available = 0;
-
-    if(!connection->secure)
-    {
-        ULONG unread;
-        int retval = ioctlsocket(connection->socket, FIONREAD, &unread);
-        if (!retval)
-        {
-            TRACE("%d bytes of queued, but unread data\n", unread);
-            *available += unread;
-        }
-    }
-    else
-    {
-        *available = connection->peek_len;
-    }
-    return TRUE;
 }
 
 BOOL NETCON_is_alive(netconn_t *netconn)

@@ -20,6 +20,7 @@
  */
 
 #include "config.h"
+#include "wine/port.h"
 #include "d3d9_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3d9);
@@ -93,10 +94,9 @@ static ULONG WINAPI d3d9_surface_Release(IDirect3DSurface9 *iface)
 
     if (!surface->resource.refcount)
     {
-        ERR("Surface doesn't have any references.\n");
+        WARN("Surface does not have any references.\n");
         return 0;
     }
-
 
     refcount = InterlockedDecrement(&surface->resource.refcount);
     TRACE("%p decreasing refcount to %u.\n", iface, refcount);
@@ -224,8 +224,8 @@ static HRESULT WINAPI d3d9_surface_GetDesc(IDirect3DSurface9 *iface, D3DSURFACE_
 
     desc->Format = d3dformat_from_wined3dformat(wined3d_desc.format);
     desc->Type = D3DRTYPE_SURFACE;
-    desc->Usage = wined3d_desc.usage & WINED3DUSAGE_MASK;
-    desc->Pool = wined3d_desc.pool;
+    desc->Usage = d3dusage_from_wined3dusage(wined3d_desc.usage, wined3d_desc.bind_flags);
+    desc->Pool = d3dpool_from_wined3daccess(wined3d_desc.access, wined3d_desc.usage);
     desc->MultiSampleType = wined3d_desc.multisample_type;
     desc->MultiSampleQuality = wined3d_desc.multisample_quality;
     desc->Width = wined3d_desc.width;
@@ -246,18 +246,11 @@ static HRESULT WINAPI d3d9_surface_LockRect(IDirect3DSurface9 *iface,
             iface, locked_rect, wine_dbgstr_rect(rect), flags);
 
     if (rect)
-    {
-        box.left = rect->left;
-        box.top = rect->top;
-        box.right = rect->right;
-        box.bottom = rect->bottom;
-        box.front = 0;
-        box.back = 1;
-    }
+        wined3d_box_set(&box, rect->left, rect->top, rect->right, rect->bottom, 0, 1);
 
     wined3d_mutex_lock();
     hr = wined3d_resource_map(wined3d_texture_get_resource(surface->wined3d_texture), surface->sub_resource_idx,
-            &map_desc, rect ? &box : NULL, flags);
+            &map_desc, rect ? &box : NULL, wined3dmapflags_from_d3dmapflags(flags, 0));
     wined3d_mutex_unlock();
 
     if (SUCCEEDED(hr))
@@ -266,6 +259,8 @@ static HRESULT WINAPI d3d9_surface_LockRect(IDirect3DSurface9 *iface,
         locked_rect->pBits = map_desc.data;
     }
 
+    if (hr == E_INVALIDARG)
+        return D3DERR_INVALIDCALL;
     return hr;
 }
 
@@ -278,6 +273,8 @@ static HRESULT WINAPI d3d9_surface_UnlockRect(IDirect3DSurface9 *iface)
 
     wined3d_mutex_lock();
     hr = wined3d_resource_unmap(wined3d_texture_get_resource(surface->wined3d_texture), surface->sub_resource_idx);
+    if (SUCCEEDED(hr) && surface->texture)
+        d3d9_texture_flag_auto_gen_mipmap(surface->texture);
     wined3d_mutex_unlock();
 
     if (hr == WINEDDERR_NOTLOCKED)
@@ -315,6 +312,8 @@ static HRESULT WINAPI d3d9_surface_ReleaseDC(IDirect3DSurface9 *iface, HDC dc)
 
     wined3d_mutex_lock();
     hr = wined3d_texture_release_dc(surface->wined3d_texture, surface->sub_resource_idx, dc);
+    if (SUCCEEDED(hr) && surface->texture)
+        d3d9_texture_flag_auto_gen_mipmap(surface->texture);
     wined3d_mutex_unlock();
 
     return hr;
@@ -348,7 +347,7 @@ static void STDMETHODCALLTYPE surface_wined3d_object_destroyed(void *parent)
 {
     struct d3d9_surface *surface = parent;
     d3d9_resource_cleanup(&surface->resource);
-    HeapFree(GetProcessHeap(), 0, surface);
+    heap_free(surface);
 }
 
 static const struct wined3d_parent_ops d3d9_surface_wined3d_parent_ops =

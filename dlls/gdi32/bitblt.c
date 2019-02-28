@@ -40,13 +40,6 @@ static inline BOOL rop_uses_src( DWORD rop )
     return ((rop >> 2) & 0x330000) != (rop & 0x330000);
 }
 
-static inline void swap_ints( int *i, int *j )
-{
-    int tmp = *i;
-    *i = *j;
-    *j = tmp;
-}
-
 BOOL intersect_vis_rectangles( struct bitblt_coords *dst, struct bitblt_coords *src )
 {
     RECT rect;
@@ -64,14 +57,32 @@ BOOL intersect_vis_rectangles( struct bitblt_coords *dst, struct bitblt_coords *
     {
         /* map source rectangle into destination coordinates */
         rect = src->visrect;
-        offset_rect( &rect, -min( src->x, src->x + src->width + 1),
-                     -min( src->y, src->y + src->height + 1) );
-        rect.left   = dst->x + rect.left * dst->width / abs(src->width);
-        rect.top    = dst->y + rect.top * dst->height / abs(src->height);
-        rect.right  = dst->x + rect.right * dst->width / abs(src->width);
-        rect.bottom = dst->y + rect.bottom * dst->height / abs(src->height);
-        if (rect.left > rect.right) swap_ints( &rect.left, &rect.right );
-        if (rect.top > rect.bottom) swap_ints( &rect.top, &rect.bottom );
+        offset_rect( &rect,
+                     -src->x - (src->width < 0 ? 1 : 0),
+                     -src->y - (src->height < 0 ? 1 : 0));
+        rect.left   = rect.left * dst->width / src->width;
+        rect.top    = rect.top * dst->height / src->height;
+        rect.right  = rect.right * dst->width / src->width;
+        rect.bottom = rect.bottom * dst->height / src->height;
+        order_rect( &rect );
+
+        /* when the source rectangle needs to flip and it doesn't fit in the source device
+           area, the destination area isn't flipped. So, adjust destination coordinates */
+        if (src->width < 0 && dst->width > 0 &&
+            (src->x + src->width + 1 < src->visrect.left || src->x > src->visrect.right))
+            dst->x += (dst->width - rect.right) - rect.left;
+        else if (src->width > 0 && dst->width < 0 &&
+                 (src->x < src->visrect.left || src->x + src->width > src->visrect.right))
+            dst->x -= rect.right - (dst->width - rect.left);
+
+        if (src->height < 0 && dst->height > 0 &&
+            (src->y + src->height + 1 < src->visrect.top || src->y > src->visrect.bottom))
+            dst->y += (dst->height - rect.bottom) - rect.top;
+        else if (src->height > 0 && dst->height < 0 &&
+                 (src->y < src->visrect.top || src->y + src->height > src->visrect.bottom))
+            dst->y -= rect.bottom - (dst->height - rect.top);
+
+        offset_rect( &rect, dst->x, dst->y );
 
         /* avoid rounding errors */
         rect.left--;
@@ -82,14 +93,14 @@ BOOL intersect_vis_rectangles( struct bitblt_coords *dst, struct bitblt_coords *
 
         /* map destination rectangle back to source coordinates */
         rect = dst->visrect;
-        offset_rect( &rect, -min( dst->x, dst->x + dst->width + 1),
-                     -min( dst->y, dst->y + dst->height + 1) );
-        rect.left   = src->x + rect.left * src->width / abs(dst->width);
-        rect.top    = src->y + rect.top * src->height / abs(dst->height);
-        rect.right  = src->x + rect.right * src->width / abs(dst->width);
-        rect.bottom = src->y + rect.bottom * src->height / abs(dst->height);
-        if (rect.left > rect.right) swap_ints( &rect.left, &rect.right );
-        if (rect.top > rect.bottom) swap_ints( &rect.top, &rect.bottom );
+        offset_rect( &rect,
+                     -dst->x - (dst->width < 0 ? 1 : 0),
+                     -dst->y - (dst->height < 0 ? 1 : 0));
+        rect.left   = src->x + rect.left * src->width / dst->width;
+        rect.top    = src->y + rect.top * src->height / dst->height;
+        rect.right  = src->x + rect.right * src->width / dst->width;
+        rect.bottom = src->y + rect.bottom * src->height / dst->height;
+        order_rect( &rect );
 
         /* avoid rounding errors */
         rect.left--;
@@ -221,7 +232,7 @@ static DWORD blend_bits( const BITMAPINFO *src_info, const struct gdi_image_bits
     return blend_bitmapinfo( src_info, src_bits->ptr, src, dst_info, dst_bits->ptr, dst, blend );
 }
 
-static RGBQUAD get_dc_rgb_color( DC *dc, COLORREF color )
+static RGBQUAD get_dc_rgb_color( DC *dc, int color_table_size, COLORREF color )
 {
     RGBQUAD ret = { 0, 0, 0, 0 };
 
@@ -238,8 +249,11 @@ static RGBQUAD get_dc_rgb_color( DC *dc, COLORREF color )
     }
     if (color >> 16 == 0x10ff)  /* DIBINDEX */
     {
-        /* FIXME: need to propagate the index into the conversion functions */
-        WARN( "monochrome blit uses DIBINDEX %x\n", color );
+        if (color_table_size)
+        {
+            if (LOWORD(color) >= color_table_size) color = 0x10ff0000;  /* fallback to index 0 */
+            *(DWORD *)&ret = color;
+        }
         return ret;
     }
     ret.rgbRed   = GetRValue( color );
@@ -249,10 +263,10 @@ static RGBQUAD get_dc_rgb_color( DC *dc, COLORREF color )
 }
 
 /* helper to retrieve either both colors or only the background color for monochrome blits */
-void get_mono_dc_colors( DC *dc, BITMAPINFO *info, int count )
+void get_mono_dc_colors( DC *dc, int color_table_size, BITMAPINFO *info, int count )
 {
-    info->bmiColors[count - 1] = get_dc_rgb_color( dc, dc->backgroundColor );
-    if (count > 1) info->bmiColors[0] = get_dc_rgb_color( dc, dc->textColor );
+    info->bmiColors[count - 1] = get_dc_rgb_color( dc, color_table_size, dc->backgroundColor );
+    if (count > 1) info->bmiColors[0] = get_dc_rgb_color( dc, color_table_size, dc->textColor );
     info->bmiHeader.biClrUsed = count;
 }
 
@@ -284,18 +298,12 @@ BOOL nulldrv_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
 
         /* 1-bpp source without a color table uses the destination DC colors */
         if (src_info->bmiHeader.biBitCount == 1 && !src_info->bmiHeader.biClrUsed)
-            get_mono_dc_colors( dc_dst, src_info, 2 );
+            get_mono_dc_colors( dc_dst, dst_info->bmiHeader.biClrUsed, src_info, 2 );
 
+        /* 1-bpp destination without a color table requires a fake 1-entry table
+         * that contains only the background color */
         if (dst_info->bmiHeader.biBitCount == 1 && !dst_colors)
-        {
-            /* 1-bpp destination without a color table requires a fake 1-entry table
-             * that contains only the background color; except with a 1-bpp source,
-             * in which case it uses the source colors */
-            if (src_info->bmiHeader.biBitCount > 1)
-                get_mono_dc_colors( dc_src, dst_info, 1 );
-            else
-                get_mono_dc_colors( dc_src, dst_info, 2 );
-        }
+            get_mono_dc_colors( dc_src, src_info->bmiHeader.biClrUsed, dst_info, 1 );
 
         if (!(err = convert_bits( src_info, src, dst_info, &bits )))
         {
@@ -846,6 +854,7 @@ BOOL WINAPI GdiTransparentBlt( HDC hdcDest, int xDest, int yDest, int widthDest,
     COLORREF oldBackground;
     COLORREF oldForeground;
     int oldStretchMode;
+    DIBSECTION dib;
 
     if(widthDest < 0 || heightDest < 0 || widthSrc < 0 || heightSrc < 0) {
         TRACE("Cannot mirror\n");
@@ -860,7 +869,21 @@ BOOL WINAPI GdiTransparentBlt( HDC hdcDest, int xDest, int yDest, int widthDest,
     if(oldStretchMode == BLACKONWHITE || oldStretchMode == WHITEONBLACK)
         SetStretchBltMode(hdcSrc, COLORONCOLOR);
     hdcWork = CreateCompatibleDC(hdcDest);
-    bmpWork = CreateCompatibleBitmap(hdcDest, widthDest, heightDest);
+    if ((GetObjectType( hdcDest ) != OBJ_MEMDC ||
+         GetObjectW( GetCurrentObject( hdcDest, OBJ_BITMAP ), sizeof(dib), &dib ) == sizeof(BITMAP)) &&
+        GetDeviceCaps( hdcDest, BITSPIXEL ) == 32)
+    {
+        /* screen DCs or DDBs are not supposed to have an alpha channel, so use a 24-bpp bitmap as copy */
+        BITMAPINFO info;
+        info.bmiHeader.biSize = sizeof(info.bmiHeader);
+        info.bmiHeader.biWidth = widthDest;
+        info.bmiHeader.biHeight = heightDest;
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 24;
+        info.bmiHeader.biCompression = BI_RGB;
+        bmpWork = CreateDIBSection( 0, &info, DIB_RGB_COLORS, NULL, NULL, 0 );
+    }
+    else bmpWork = CreateCompatibleBitmap(hdcDest, widthDest, heightDest);
     oldWork = SelectObject(hdcWork, bmpWork);
     if(!StretchBlt(hdcWork, 0, 0, widthDest, heightDest, hdcSrc, xSrc, ySrc, widthSrc, heightSrc, SRCCOPY)) {
         TRACE("Failed to stretch\n");

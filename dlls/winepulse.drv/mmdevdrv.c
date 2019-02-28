@@ -260,7 +260,7 @@ static inline ACImpl *impl_from_IAudioStreamVolume(IAudioStreamVolume *iface)
  * but that cannot be used because it uses pthread_create directly
  *
  * pa_threaded_mainloop_(un)lock -> pthread_mutex_(un)lock
- * pa_threaded_mainloop_signal -> pthread_cond_signal
+ * pa_threaded_mainloop_signal -> pthread_cond_broadcast
  * pa_threaded_mainloop_wait -> pthread_cond_wait
  */
 
@@ -277,7 +277,7 @@ static DWORD CALLBACK pulse_mainloop_thread(void *tmp) {
     pulse_ml = pa_mainloop_new();
     pa_mainloop_set_poll_func(pulse_ml, pulse_poll_func, NULL);
     pthread_mutex_lock(&pulse_lock);
-    pthread_cond_signal(&pulse_cond);
+    pthread_cond_broadcast(&pulse_cond);
     pa_mainloop_run(pulse_ml, &ret);
     pthread_mutex_unlock(&pulse_lock);
     pa_mainloop_free(pulse_ml);
@@ -307,14 +307,14 @@ static void pulse_contextcallback(pa_context *c, void *userdata)
             WARN("Context failed: %s\n", pa_strerror(pa_context_errno(c)));
             break;
     }
-    pthread_cond_signal(&pulse_cond);
+    pthread_cond_broadcast(&pulse_cond);
 }
 
 static void pulse_stream_state(pa_stream *s, void *user)
 {
     pa_stream_state_t state = pa_stream_get_state(s);
     TRACE("Stream state changed to %i\n", state);
-    pthread_cond_signal(&pulse_cond);
+    pthread_cond_broadcast(&pulse_cond);
 }
 
 static const enum pa_channel_position pulse_pos_from_wfx[] = {
@@ -469,7 +469,7 @@ static HRESULT pulse_connect(void)
     if (pulse_ctx)
         pa_context_unref(pulse_ctx);
 
-    GetModuleFileNameW(NULL, path, sizeof(path)/sizeof(*path));
+    GetModuleFileNameW(NULL, path, ARRAY_SIZE(path));
     name = strrchrW(path, '\\');
     if (!name)
         name = path;
@@ -537,7 +537,7 @@ static HRESULT pulse_test_connect(void)
 
     pa_mainloop_set_poll_func(pulse_ml, pulse_poll_func, NULL);
 
-    GetModuleFileNameW(NULL, path, sizeof(path)/sizeof(*path));
+    GetModuleFileNameW(NULL, path, ARRAY_SIZE(path));
     name = strrchrW(path, '\\');
     if (!name)
         name = path;
@@ -611,7 +611,7 @@ fail:
 static HRESULT pulse_stream_valid(ACImpl *This) {
     if (!This->stream)
         return AUDCLNT_E_NOT_INITIALIZED;
-    if (!This->stream || pa_stream_get_state(This->stream) != PA_STREAM_READY)
+    if (pa_stream_get_state(This->stream) != PA_STREAM_READY)
         return AUDCLNT_E_DEVICE_INVALIDATED;
     return S_OK;
 }
@@ -632,7 +632,7 @@ static void dump_attr(const pa_buffer_attr *attr) {
 static void pulse_op_cb(pa_stream *s, int success, void *user) {
     TRACE("Success: %i\n", success);
     *(int*)user = success;
-    pthread_cond_signal(&pulse_cond);
+    pthread_cond_broadcast(&pulse_cond);
 }
 
 static void pulse_attr_update(pa_stream *s, void *user) {
@@ -1283,7 +1283,7 @@ static HRESULT pulse_spec_from_waveformat(ACImpl *This, const WAVEFORMATEX *fmt)
         This->map.channels = fmt->nChannels;
         if (!mask || (mask & (SPEAKER_ALL|SPEAKER_RESERVED)))
             mask = get_channel_mask(fmt->nChannels);
-        for (j = 0; j < sizeof(pulse_pos_from_wfx)/sizeof(*pulse_pos_from_wfx) && i < fmt->nChannels; ++j) {
+        for (j = 0; j < ARRAY_SIZE(pulse_pos_from_wfx) && i < fmt->nChannels; ++j) {
             if (mask & (1 << j))
                 This->map.map[i++] = pulse_pos_from_wfx[j];
         }

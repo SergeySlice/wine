@@ -24,6 +24,8 @@
 #include <netfw.h>
 #include "wine/test.h"
 
+#include "dpnet_test.h"
+
 /* {CD0C3D4B-E15E-4CF2-9EA8-6E1D6548C5A5} */
 static const GUID appguid = { 0xcd0c3d4b, 0xe15e, 0x4cf2, { 0x9e, 0xa8, 0x6e, 0x1d, 0x65, 0x48, 0xc5, 0xa5 } };
 static WCHAR sessionname[] = {'w','i','n','e','g','a','m','e','s','s','e','r','v','e','r',0};
@@ -182,7 +184,7 @@ static void test_server_info(void)
     }
 }
 
-static BOOL is_process_elevated(void)
+BOOL is_process_elevated(void)
 {
     HANDLE token;
     if (OpenProcessToken( GetCurrentProcess(), TOKEN_QUERY, &token ))
@@ -198,7 +200,7 @@ static BOOL is_process_elevated(void)
     return FALSE;
 }
 
-static BOOL is_firewall_enabled(void)
+BOOL is_firewall_enabled(void)
 {
     HRESULT hr, init;
     INetFwMgr *mgr = NULL;
@@ -231,20 +233,11 @@ done:
     return (enabled == VARIANT_TRUE);
 }
 
-enum firewall_op
-{
-    APP_ADD,
-    APP_REMOVE
-};
-
-static HRESULT set_firewall( enum firewall_op op )
+HRESULT set_firewall( enum firewall_op op )
 {
     static const WCHAR dpnsvrW[] =
-        {'c',':','\\','w','i','n','d','o','w','s','\\','s','y','s','t','e','m','3','2','\\',
-         'd','p','n','s','v','r','.','e','x','e',0};
-    static const WCHAR dpnsvr_wow64W[] =
-        {'c',':','\\','w','i','n','d','o','w','s','\\','s','y','s','w','o','w','6','4','\\',
-         'd','p','n','s','v','r','.','e','x','e',0};
+        {'d','p','n','s','v','r','.','e','x','e',0};
+    static const WCHAR separator[] = {'\\',0};
     static const WCHAR clientW[] =
         {'d','p','n','e','t','_','c','l','i','e','n','t',0};
     static const WCHAR serverW[] =
@@ -256,13 +249,21 @@ static HRESULT set_firewall( enum firewall_op op )
     INetFwAuthorizedApplication *app = NULL;
     INetFwAuthorizedApplications *apps = NULL;
     BSTR name, image = SysAllocStringLen( NULL, MAX_PATH );
-    BOOL is_wow64;
+    WCHAR path[MAX_PATH];
 
     if (!GetModuleFileNameW( NULL, image, MAX_PATH ))
     {
         SysFreeString( image );
         return E_FAIL;
     }
+
+    if(!GetSystemDirectoryW(path, MAX_PATH))
+    {
+        SysFreeString( image );
+        return E_FAIL;
+    }
+    lstrcatW(path, separator);
+    lstrcatW(path, dpnsvrW);
 
     init = CoInitializeEx( 0, COINIT_APARTMENTTHREADED );
 
@@ -278,7 +279,7 @@ static HRESULT set_firewall( enum firewall_op op )
     hr = INetFwPolicy_get_CurrentProfile( policy, &profile );
     if (hr != S_OK) goto done;
 
-    INetFwProfile_get_AuthorizedApplications( profile, &apps );
+    hr = INetFwProfile_get_AuthorizedApplications( profile, &apps );
     ok( hr == S_OK, "got %08x\n", hr );
     if (hr != S_OK) goto done;
 
@@ -311,8 +312,7 @@ static HRESULT set_firewall( enum firewall_op op )
     if (hr != S_OK) goto done;
 
     SysFreeString( image );
-    IsWow64Process( GetCurrentProcess(), &is_wow64 );
-    image = is_wow64 ? SysAllocString( dpnsvr_wow64W ) : SysAllocString( dpnsvrW );
+    image = SysAllocString( path );
     hr = INetFwAuthorizedApplication_put_ProcessImageFileName( app, image );
     if (hr != S_OK) goto done;
 
@@ -341,7 +341,7 @@ done:
 }
 
 /* taken from programs/winetest/main.c */
-static BOOL is_stub_dll(const char *filename)
+BOOL is_stub_dll(const char *filename)
 {
     DWORD size, ver;
     BOOL isstub = FALSE;
@@ -370,10 +370,16 @@ START_TEST(server)
 {
     HRESULT hr;
     BOOL firewall_enabled;
+    char path[MAX_PATH];
 
-    if (!winetest_interactive &&
-        (is_stub_dll("c:\\windows\\system32\\dpnet.dll") ||
-         is_stub_dll("c:\\windows\\syswow64\\dpnet.dll")))
+    if(!GetSystemDirectoryA(path, MAX_PATH))
+    {
+        skip("Failed to get systems directory\n");
+        return;
+    }
+    strcat(path, "\\dpnet.dll");
+
+    if (!winetest_interactive && is_stub_dll(path))
     {
         win_skip("dpnet is a stub dll, skipping tests\n");
         return;

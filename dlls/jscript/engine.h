@@ -21,12 +21,13 @@
     X(and,        1, 0,0)                  \
     X(array,      1, 0,0)                  \
     X(assign,     1, 0,0)                  \
-    X(assign_call,1, ARG_UINT,   0)       \
+    X(assign_call,1, ARG_UINT,   0)        \
     X(bool,       1, ARG_INT,    0)        \
     X(bneg,       1, 0,0)                  \
     X(call,       1, ARG_UINT,   ARG_UINT) \
     X(call_member,1, ARG_UINT,   ARG_UINT) \
     X(carray,     1, ARG_UINT,   0)        \
+    X(carray_set, 1, ARG_UINT,   0)        \
     X(case,       0, ARG_ADDR,   0)        \
     X(cnd_nz,     0, ARG_ADDR,   0)        \
     X(cnd_z,      0, ARG_ADDR,   0)        \
@@ -34,7 +35,8 @@
     X(delete_ident,1,ARG_BSTR,   0)        \
     X(div,        1, 0,0)                  \
     X(double,     1, ARG_DBL,    0)        \
-    X(end_finally,1, 0,0)                  \
+    X(end_finally,0, 0,0)                  \
+    X(enter_catch,1, ARG_BSTR,   0)        \
     X(eq,         1, 0,0)                  \
     X(eq2,        1, 0,0)                  \
     X(forin,      0, ARG_ADDR,   0)        \
@@ -64,15 +66,15 @@
     X(new,        1, ARG_UINT,   0)        \
     X(new_obj,    1, 0,0)                  \
     X(null,       1, 0,0)                  \
-    X(obj_prop,   1, ARG_BSTR,   0)        \
+    X(obj_prop,   1, ARG_BSTR,   ARG_UINT) \
     X(or,         1, 0,0)                  \
     X(pop,        1, ARG_UINT,   0)        \
-    X(pop_except, 1, 0,0)                  \
+    X(pop_except, 0, ARG_ADDR,   0)        \
     X(pop_scope,  1, 0,0)                  \
     X(postinc,    1, ARG_INT,    0)        \
     X(preinc,     1, ARG_INT,    0)        \
-    X(push_except,1, ARG_ADDR,   ARG_BSTR) \
-    X(push_ret,   1, 0,0)                  \
+    X(push_acc,   1, 0,0)                  \
+    X(push_except,1, ARG_ADDR,   ARG_UINT) \
     X(push_scope, 1, 0,0)                  \
     X(regexp,     1, ARG_STR,    ARG_UINT) \
     X(rshift,     1, 0,0)                  \
@@ -87,7 +89,7 @@
     X(typeofid,   1, 0,0)                  \
     X(typeofident,1, 0,0)                  \
     X(refval,     1, 0,0)                  \
-    X(ret,        0, 0,0)                  \
+    X(ret,        0, ARG_UINT,   0)        \
     X(setret,     1, 0,0)                  \
     X(sub,        1, 0,0)                  \
     X(undefined,  1, 0,0)                  \
@@ -126,6 +128,12 @@ typedef struct {
         double dbl;
     } u;
 } instr_t;
+
+typedef enum {
+    PROPERTY_DEFINITION_VALUE,
+    PROPERTY_DEFINITION_GETTER,
+    PROPERTY_DEFINITION_SETTER
+} property_definition_type_t;
 
 typedef struct {
     BSTR name;

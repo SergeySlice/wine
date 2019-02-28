@@ -100,7 +100,7 @@ static ULONG WINAPI ddraw_palette_Release(IDirectDrawPalette *iface)
             IUnknown_Release(palette->ifaceToRelease);
         wined3d_mutex_unlock();
 
-        HeapFree(GetProcessHeap(), 0, palette);
+        heap_free(palette);
     }
 
     return ref;
@@ -158,7 +158,6 @@ static HRESULT WINAPI ddraw_palette_GetCaps(IDirectDrawPalette *iface, DWORD *ca
  * Returns:
  *  D3D_OK on success
  *  DDERR_INVALIDPARAMS if PalEnt is NULL
- *  For details, see IWineD3DDevice::SetEntries
  *
  *****************************************************************************/
 static HRESULT WINAPI ddraw_palette_SetEntries(IDirectDrawPalette *iface,
@@ -177,7 +176,7 @@ static HRESULT WINAPI ddraw_palette_SetEntries(IDirectDrawPalette *iface,
     hr = wined3d_palette_set_entries(palette->wined3d_palette, flags, start, count, entries);
 
     if (SUCCEEDED(hr) && palette->flags & DDPCAPS_PRIMARYSURFACE)
-        ddraw_surface_update_frontbuffer(palette->ddraw->primary, NULL, FALSE);
+        ddraw_surface_update_frontbuffer(palette->ddraw->primary, NULL, FALSE, 0);
 
     wined3d_mutex_unlock();
 
@@ -198,7 +197,6 @@ static HRESULT WINAPI ddraw_palette_SetEntries(IDirectDrawPalette *iface,
  * Returns:
  *  D3D_OK on success
  *  DDERR_INVALIDPARAMS if PalEnt is NULL
- *  For details, see IWineD3DDevice::SetEntries
  *
  *****************************************************************************/
 static HRESULT WINAPI ddraw_palette_GetEntries(IDirectDrawPalette *iface,

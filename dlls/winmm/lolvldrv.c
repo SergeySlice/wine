@@ -68,7 +68,6 @@ static BOOL drivers_loaded;
 static int MMDrvsHi;
 static WINE_MM_DRIVER	MMDrvs[8];
 static LPWINE_MLD	MM_MLDrvs[40];
-#define MAX_MM_MLDRVS	(sizeof(MM_MLDrvs) / sizeof(MM_MLDrvs[0]))
 
 static void MMDRV_Init(void);
 
@@ -146,9 +145,9 @@ LPWINE_MLD	MMDRV_Alloc(UINT size, UINT type, LPHANDLE hndl, DWORD* dwFlags,
     if (!mld)	return NULL;
 
     /* find an empty slot in MM_MLDrvs table */
-    for (i = 0; i < MAX_MM_MLDRVS; i++) if (!MM_MLDrvs[i]) break;
+    for (i = 0; i < ARRAY_SIZE(MM_MLDrvs); i++) if (!MM_MLDrvs[i]) break;
 
-    if (i == MAX_MM_MLDRVS) {
+    if (i == ARRAY_SIZE(MM_MLDrvs)) {
 	/* the MM_MLDrvs table could be made growable in the future if needed */
 	ERR("Too many open drivers\n");
         HeapFree(GetProcessHeap(), 0, mld);
@@ -182,7 +181,7 @@ void	MMDRV_Free(HANDLE hndl, LPWINE_MLD mld)
 
     if ((UINT_PTR)hndl & 0x8000) {
 	UINT_PTR idx = (UINT_PTR)hndl & ~0x8000;
-	if (idx < sizeof(MM_MLDrvs) / sizeof(MM_MLDrvs[0])) {
+	if (idx < ARRAY_SIZE(MM_MLDrvs)) {
 	    MM_MLDrvs[idx] = NULL;
 	    HeapFree(GetProcessHeap(), 0, mld);
 	    return;
@@ -262,7 +261,7 @@ LPWINE_MLD	MMDRV_Get(HANDLE _hndl, UINT type, BOOL bCanBeID)
 	hndl != (UINT16)-1 && hndl != (UINT)-1) {
 	if (hndl & 0x8000) {
 	    UINT idx = hndl & ~0x8000;
-	    if (idx < sizeof(MM_MLDrvs) / sizeof(MM_MLDrvs[0])) {
+	    if (idx < ARRAY_SIZE(MM_MLDrvs)) {
                 __TRY
                 {
                     mld = MM_MLDrvs[idx];
@@ -425,7 +424,7 @@ static	BOOL	MMDRV_Install(LPCSTR drvRegName, LPCSTR drvFileName, BOOL bIsMapper)
      * drivers !!
      * If not just increase size of MMDrvs
      */
-    assert(MMDrvsHi <= sizeof(MMDrvs)/sizeof(MMDrvs[0]));
+    assert(MMDrvsHi <= ARRAY_SIZE(MMDrvs));
 
     memset(lpDrv, 0, sizeof(*lpDrv));
 
@@ -590,7 +589,7 @@ void MMDRV_Exit(void)
     unsigned int i;
     TRACE("()\n");
 
-    for (i = 0; i < sizeof(MM_MLDrvs) / sizeof(MM_MLDrvs[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(MM_MLDrvs); i++)
     {
         if (MM_MLDrvs[i] != NULL)
         {
@@ -603,7 +602,7 @@ void MMDRV_Exit(void)
     }
 
     /* unload driver, in reverse order of loading */
-    i = sizeof(MMDrvs) / sizeof(MMDrvs[0]);
+    i = ARRAY_SIZE(MMDrvs);
     while (i-- > 0)
     {
         MMDRV_ExitPerType(&MMDrvs[i], MMDRV_AUX);

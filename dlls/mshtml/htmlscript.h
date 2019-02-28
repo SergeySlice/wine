@@ -16,7 +16,7 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-typedef struct {
+struct HTMLScriptElement {
     HTMLElement element;
 
     IHTMLScriptElement IHTMLScriptElement_iface;
@@ -28,14 +28,14 @@ typedef struct {
     READYSTATE readystate;
     WCHAR *src_text; /* sctipt text downloaded from src */
     BSCallback *binding; /* weak reference to current binding */
-} HTMLScriptElement;
+};
 
 typedef struct {
     struct list entry;
     HTMLScriptElement *script;
 } script_queue_entry_t;
 
-HRESULT script_elem_from_nsscript(HTMLDocumentNode*,nsIDOMHTMLScriptElement*,HTMLScriptElement**) DECLSPEC_HIDDEN;
+HRESULT script_elem_from_nsscript(nsIDOMHTMLScriptElement*,HTMLScriptElement**) DECLSPEC_HIDDEN;
 void bind_event_scripts(HTMLDocumentNode*) DECLSPEC_HIDDEN;
 HRESULT load_script(HTMLScriptElement*,const WCHAR*,BOOL) DECLSPEC_HIDDEN;
 

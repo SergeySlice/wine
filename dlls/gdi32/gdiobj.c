@@ -108,6 +108,7 @@ static const LOGPEN DCPen     = { PS_SOLID, { 0, 0 }, RGB(0,0,0) };
 #define NB_STOCK_OBJECTS (STOCK_LAST+2)
 
 static HGDIOBJ stock_objects[NB_STOCK_OBJECTS];
+static HGDIOBJ scaled_stock_objects[NB_STOCK_OBJECTS];
 
 static CRITICAL_SECTION gdi_section;
 static CRITICAL_SECTION_DEBUG critsect_debug =
@@ -502,7 +503,7 @@ static const struct DefaultFontInfo* get_default_fonts(UINT charset)
 {
         unsigned int n;
 
-        for(n=0;n<(sizeof(default_fonts)/sizeof(default_fonts[0]));n++)
+        for(n = 0; n < ARRAY_SIZE( default_fonts ); n++)
         {
                 if ( default_fonts[n].charset == charset )
                         return &default_fonts[n];
@@ -597,47 +598,81 @@ BOOL GDI_dec_ref_count( HGDIOBJ handle )
     return entry != NULL;
 }
 
+static const WCHAR dpi_key_name[] = {'C','o','n','t','r','o','l',' ','P','a','n','e','l','\\','D','e','s','k','t','o','p','\0'};
+static const WCHAR def_dpi_key_name[] = {'S','o','f','t','w','a','r','e','\\','F','o','n','t','s','\0'};
+static const WCHAR dpi_value_name[] = {'L','o','g','P','i','x','e','l','s','\0'};
+
 /******************************************************************************
- *      get_dpi   (internal)
+ *              get_reg_dword
+ *
+ * Read a DWORD value from the registry
+ */
+static BOOL get_reg_dword(HKEY base, const WCHAR *key_name, const WCHAR *value_name, DWORD *value)
+{
+    HKEY key;
+    DWORD type, data, size = sizeof(data);
+    BOOL ret = FALSE;
+
+    if (RegOpenKeyW(base, key_name, &key) == ERROR_SUCCESS)
+    {
+        if (RegQueryValueExW(key, value_name, NULL, &type, (void *)&data, &size) == ERROR_SUCCESS &&
+            type == REG_DWORD)
+        {
+            *value = data;
+            ret = TRUE;
+        }
+        RegCloseKey(key);
+    }
+    return ret;
+}
+
+/******************************************************************************
+ *              get_dpi
  *
  * get the dpi from the registry
  */
-static int get_dpi( void )
+DWORD get_dpi(void)
 {
-    static const WCHAR dpi_key_name[] = {'S','o','f','t','w','a','r','e','\\','F','o','n','t','s','\0'};
-    static const WCHAR dpi_value_name[] = {'L','o','g','P','i','x','e','l','s','\0'};
-    static int dpi = -1;
-    HKEY hkey;
+    DWORD dpi;
 
-    if (dpi != -1) return dpi;
-
-    if (RegOpenKeyW(HKEY_CURRENT_CONFIG, dpi_key_name, &hkey) == ERROR_SUCCESS)
-    {
-        DWORD type, size;
-        int new_dpi;
-
-        size = sizeof(new_dpi);
-        if (RegQueryValueExW(hkey, dpi_value_name, NULL, &type, (void *)&new_dpi, &size) == ERROR_SUCCESS)
-        {
-            if (type == REG_DWORD && new_dpi != 0)
-                dpi = new_dpi;
-        }
-        RegCloseKey(hkey);
-    }
-    if (dpi <= 0) dpi = 96;
-    return dpi;
+    if (get_reg_dword(HKEY_CURRENT_USER, dpi_key_name, dpi_value_name, &dpi))
+        return dpi;
+    if (get_reg_dword(HKEY_CURRENT_CONFIG, def_dpi_key_name, dpi_value_name, &dpi))
+        return dpi;
+    return 0;
 }
 
+/******************************************************************************
+ *              get_system_dpi
+ *
+ * Get the system DPI, based on the DPI awareness mode.
+ */
+DWORD get_system_dpi(void)
+{
+    static UINT (WINAPI *pGetDpiForSystem)(void);
+
+    if (!pGetDpiForSystem)
+    {
+        static const WCHAR user32W[] = {'u','s','e','r','3','2','.','d','l','l',0};
+        HMODULE user = GetModuleHandleW( user32W );
+        if (user) pGetDpiForSystem = (void *)GetProcAddress( user, "GetDpiForSystem" );
+    }
+    return pGetDpiForSystem ? pGetDpiForSystem() : 96;
+}
 
 static HFONT create_scaled_font( const LOGFONTW *deffont )
 {
     LOGFONTW lf;
-    LONG height;
+    static DWORD dpi;
+
+    if (!dpi)
+    {
+        dpi = get_dpi();
+        if (!dpi) dpi = 96;
+    }
 
     lf = *deffont;
-    height = abs(lf.lfHeight) * get_dpi() / 96;
-    lf.lfHeight = deffont->lfHeight < 0 ? -height : height;
-
+    lf.lfHeight = MulDiv( lf.lfHeight, dpi, 96 );
     return CreateFontIndirectW( &lf );
 }
 
@@ -679,10 +714,15 @@ BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, LPVOID reserved )
 
     /* language-dependent stock fonts */
     deffonts = get_default_fonts(get_default_charset());
-    stock_objects[SYSTEM_FONT]         = create_scaled_font( &deffonts->SystemFont );
-    stock_objects[DEVICE_DEFAULT_FONT] = create_scaled_font( &deffonts->DeviceDefaultFont );
+    stock_objects[SYSTEM_FONT]         = CreateFontIndirectW( &deffonts->SystemFont );
+    stock_objects[DEVICE_DEFAULT_FONT] = CreateFontIndirectW( &deffonts->DeviceDefaultFont );
     stock_objects[SYSTEM_FIXED_FONT]   = CreateFontIndirectW( &deffonts->SystemFixedFont );
-    stock_objects[DEFAULT_GUI_FONT]    = create_scaled_font( &deffonts->DefaultGuiFont );
+    stock_objects[DEFAULT_GUI_FONT]    = CreateFontIndirectW( &deffonts->DefaultGuiFont );
+
+    scaled_stock_objects[OEM_FIXED_FONT]    = create_scaled_font( &OEMFixedFont );
+    scaled_stock_objects[SYSTEM_FONT]       = create_scaled_font( &deffonts->SystemFont );
+    scaled_stock_objects[SYSTEM_FIXED_FONT] = create_scaled_font( &deffonts->SystemFixedFont );
+    scaled_stock_objects[DEFAULT_GUI_FONT]  = create_scaled_font( &deffonts->DefaultGuiFont );
 
     stock_objects[DC_BRUSH]     = CreateBrushIndirect( &DCBrush );
     stock_objects[DC_PEN]       = CreatePenIndirect( &DCPen );
@@ -690,15 +730,9 @@ BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, LPVOID reserved )
     /* clear the NOSYSTEM bit on all stock objects*/
     for (i = 0; i < NB_STOCK_OBJECTS; i++)
     {
-        if (!stock_objects[i])
-        {
-            if (i == 9) continue;  /* there's no stock object 9 */
-            ERR( "could not create stock object %d\n", i );
-            return FALSE;
-        }
-        __wine_make_gdi_object_system( stock_objects[i], TRUE );
+        if (stock_objects[i]) __wine_make_gdi_object_system( stock_objects[i], TRUE );
+        if (scaled_stock_objects[i]) __wine_make_gdi_object_system( scaled_stock_objects[i], TRUE );
     }
-
     return TRUE;
 }
 
@@ -1024,11 +1058,17 @@ void GDI_hdc_not_using_object(HGDIOBJ obj, HDC hdc)
  */
 HGDIOBJ WINAPI GetStockObject( INT obj )
 {
-    HGDIOBJ ret;
     if ((obj < 0) || (obj >= NB_STOCK_OBJECTS)) return 0;
-    ret = stock_objects[obj];
-    TRACE("returning %p\n", ret );
-    return ret;
+    switch (obj)
+    {
+    case OEM_FIXED_FONT:
+    case SYSTEM_FONT:
+    case SYSTEM_FIXED_FONT:
+    case DEFAULT_GUI_FONT:
+        if (get_system_dpi() != 96) return scaled_stock_objects[obj];
+        break;
+    }
+    return stock_objects[obj];
 }
 
 
@@ -1245,7 +1285,7 @@ INT WINAPI EnumObjects( HDC hdc, INT nObjType,
     {
     case OBJ_PEN:
         /* Enumerate solid pens */
-        for (i = 0; i < sizeof(solid_colors)/sizeof(solid_colors[0]); i++)
+        for (i = 0; i < ARRAY_SIZE( solid_colors ); i++)
         {
             pen.lopnStyle   = PS_SOLID;
             pen.lopnWidth.x = 1;
@@ -1260,7 +1300,7 @@ INT WINAPI EnumObjects( HDC hdc, INT nObjType,
 
     case OBJ_BRUSH:
         /* Enumerate solid brushes */
-        for (i = 0; i < sizeof(solid_colors)/sizeof(solid_colors[0]); i++)
+        for (i = 0; i < ARRAY_SIZE( solid_colors ); i++)
         {
             brush.lbStyle = BS_SOLID;
             brush.lbColor = solid_colors[i];

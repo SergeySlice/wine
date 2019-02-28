@@ -180,8 +180,9 @@ CONFIGRET WINAPI CM_Get_Device_ID_List_SizeW( PULONG  pulLen, PCWSTR  pszFilter,
 DWORD WINAPI CM_Get_Parent(PDEVINST pdnDevInst, DEVINST dnDevInst, ULONG ulFlags)
 {
     FIXME("%p 0x%08x 0x%08x stub\n", pdnDevInst, dnDevInst, ulFlags);
-    *pdnDevInst = dnDevInst;
-    return CR_SUCCESS;
+    if(pdnDevInst)
+        *pdnDevInst = 0;
+    return CR_NO_SUCH_DEVNODE;
 }
 
 /***********************************************************************
@@ -500,6 +501,16 @@ CONFIGRET WINAPI CM_Get_Class_Registry_PropertyW(LPGUID class, ULONG prop, PULON
 }
 
 /***********************************************************************
+ *             CM_Get_Sibling  (SETUPAPI.@)
+ */
+CONFIGRET WINAPI CM_Get_Sibling(
+    PDEVINST pdnDevInst, DEVINST DevInst, ULONG ulFlags)
+{
+    FIXME("%p 0x%08x 0x%08x: stub\n", pdnDevInst, DevInst, ulFlags);
+    return CR_FAILURE;
+}
+
+/***********************************************************************
  *             CM_Get_Sibling_Ex  (SETUPAPI.@)
  */
 CONFIGRET WINAPI CM_Get_Sibling_Ex(
@@ -611,18 +622,6 @@ BOOL WINAPI SetupDiDestroyDriverInfoList(HDEVINFO DeviceInfoSet, PSP_DEVINFO_DAT
 }
 
 /***********************************************************************
- *              SetupDiDeleteDeviceInfo  (SETUPAPI.@)
- */
-
-BOOL WINAPI SetupDiDeleteDeviceInfo(HDEVINFO DeviceInfoSet, PSP_DEVINFO_DATA DeviceInfoData)
- {
-    FIXME(": stub %p, %p\n", DeviceInfoSet, DeviceInfoData);
-
-    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-    return FALSE;
- }
-
-/***********************************************************************
  *              SetupDiDrawMiniIcon  (SETUPAPI.@)
  */
 INT WINAPI SetupDiDrawMiniIcon(HDC hdc, RECT rc, INT MiniIconIndex, DWORD Flags)
@@ -674,4 +673,26 @@ BOOL WINAPI SetupDiSetSelectedDevice(HDEVINFO SetupDiSetSelectedDevice, PSP_DEVI
     FIXME("(%p, %p) stub\n", SetupDiSetSelectedDevice, DeviceInfoData);
 
     return TRUE;
+}
+
+/***********************************************************************
+ *              SetupDiEnumDriverInfoA  (SETUPAPI.@)
+ */
+BOOL WINAPI SetupDiEnumDriverInfoA(HDEVINFO DeviceInfoSet, PSP_DEVINFO_DATA DeviceInfoData, DWORD DriverType, DWORD MemberIndex, PSP_DRVINFO_DATA_A DriverInfoData)
+{
+    FIXME("(%p, %p, 0x%x, %u, %p stub\n", DeviceInfoSet, DeviceInfoData, DriverType, MemberIndex, DriverInfoData);
+
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
+
+/***********************************************************************
+ *              SetupDiEnumDriverInfoW  (SETUPAPI.@)
+ */
+BOOL WINAPI SetupDiEnumDriverInfoW(HDEVINFO DeviceInfoSet, PSP_DEVINFO_DATA DeviceInfoData, DWORD DriverType, DWORD MemberIndex, PSP_DRVINFO_DATA_W DriverInfoData)
+{
+    FIXME("(%p, %p, 0x%x, %u, %p stub\n", DeviceInfoSet, DeviceInfoData, DriverType, MemberIndex, DriverInfoData);
+
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
 }

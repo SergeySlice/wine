@@ -21,6 +21,7 @@
 
 #include "wine/debug.h"
 #include "wine/rbtree.h"
+#include "wine/heap.h"
 
 #define COBJMACROS
 #include "winbase.h"
@@ -278,13 +279,6 @@ HRESULT WINAPI D3D10CoreCreateDevice(IDXGIFactory *factory, IDXGIAdapter *adapte
 HRESULT parse_dxbc(const char *data, SIZE_T data_size,
         HRESULT (*chunk_handler)(const char *data, DWORD data_size, DWORD tag, void *ctx), void *ctx) DECLSPEC_HIDDEN;
 
-static inline void *d3d10_calloc(SIZE_T count, SIZE_T size)
-{
-    if (count > ~(SIZE_T)0 / size)
-        return NULL;
-    return HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, count * size);
-}
-
 static inline void read_dword(const char **ptr, DWORD *d)
 {
     memcpy(d, *ptr, sizeof(*d));
@@ -302,7 +296,6 @@ static inline BOOL require_space(size_t offset, size_t count, size_t size, size_
     return !count || (data_size - offset) / count >= size;
 }
 
-void skip_dword_unknown(const char *location, const char **ptr, unsigned int count) DECLSPEC_HIDDEN;
 void write_dword_unknown(char **ptr, DWORD d) DECLSPEC_HIDDEN;
 
 #endif /* __WINE_D3D10_PRIVATE_H */

@@ -43,8 +43,8 @@ static void usage(void)
     WCHAR title[MAX_STRING_LEN];
     WCHAR usage[MAX_STRING_LEN];
 
-    LoadStringW(hInstance, STRING_DXDIAG_TOOL, title, sizeof(title)/sizeof(WCHAR));
-    LoadStringW(hInstance, STRING_USAGE, usage, sizeof(usage)/sizeof(WCHAR));
+    LoadStringW(hInstance, STRING_DXDIAG_TOOL, title, ARRAY_SIZE(title));
+    LoadStringW(hInstance, STRING_USAGE, usage, ARRAY_SIZE(usage));
 
     MessageBoxW(NULL, usage, title, MB_OK | MB_ICONWARNING);
 
@@ -110,6 +110,7 @@ static BOOL process_command_line(const WCHAR *cmdline, struct command_line_info 
     static const WCHAR whql_colonW[] = {'w','h','q','l',':',0};
     static const WCHAR offW[] = {'o','f','f',0};
     static const WCHAR onW[] = {'o','n',0};
+    static const WCHAR dontskipW[] = {'d','o','n','t','s','k','i','p',0};
 
     info->whql_check = FALSE;
     info->output_type = OUTPUT_NONE;
@@ -125,7 +126,7 @@ static BOOL process_command_line(const WCHAR *cmdline, struct command_line_info 
         {
             info->output_type = OUTPUT_TEXT;
             return process_file_name(cmdline, OUTPUT_TEXT, info->outfile,
-                                     sizeof(info->outfile)/sizeof(WCHAR));
+                                     ARRAY_SIZE(info->outfile));
         }
 
         cmdline++;
@@ -136,12 +137,12 @@ static BOOL process_command_line(const WCHAR *cmdline, struct command_line_info 
         case 't':
             info->output_type = OUTPUT_TEXT;
             return process_file_name(cmdline + 1, OUTPUT_TEXT, info->outfile,
-                                     sizeof(info->outfile)/sizeof(WCHAR));
+                                     ARRAY_SIZE(info->outfile));
         case 'X':
         case 'x':
             info->output_type = OUTPUT_XML;
             return process_file_name(cmdline + 1, OUTPUT_XML, info->outfile,
-                                     sizeof(info->outfile)/sizeof(WCHAR));
+                                     ARRAY_SIZE(info->outfile));
         case 'W':
         case 'w':
             if (strncmpiW(cmdline, whql_colonW, 5))
@@ -163,6 +164,14 @@ static BOOL process_command_line(const WCHAR *cmdline, struct command_line_info 
                 return FALSE;
 
             break;
+
+        case 'd':
+        case 'D':
+            if (strncmpiW(cmdline, dontskipW, 8))
+                return FALSE;
+            cmdline += 8;
+            break;
+
         default:
             return FALSE;
         }

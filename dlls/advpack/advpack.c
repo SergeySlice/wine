@@ -530,18 +530,12 @@ HRESULT WINAPI SetPerUserSecValuesA(PERUSERSECTIONA* pPerUser)
     if (!pPerUser)
         return E_INVALIDARG;
 
-    MultiByteToWideChar(CP_ACP, 0, pPerUser->szGUID, -1, perUserW.szGUID,
-                        sizeof(perUserW.szGUID) / sizeof(WCHAR));
-    MultiByteToWideChar(CP_ACP, 0, pPerUser->szDispName, -1, perUserW.szDispName,
-                        sizeof(perUserW.szDispName) / sizeof(WCHAR));
-    MultiByteToWideChar(CP_ACP, 0, pPerUser->szLocale, -1, perUserW.szLocale,
-                        sizeof(perUserW.szLocale) / sizeof(WCHAR));
-    MultiByteToWideChar(CP_ACP, 0, pPerUser->szStub, -1, perUserW.szStub,
-                        sizeof(perUserW.szStub) / sizeof(WCHAR));
-    MultiByteToWideChar(CP_ACP, 0, pPerUser->szVersion, -1, perUserW.szVersion,
-                        sizeof(perUserW.szVersion) / sizeof(WCHAR));
-    MultiByteToWideChar(CP_ACP, 0, pPerUser->szCompID, -1, perUserW.szCompID,
-                        sizeof(perUserW.szCompID) / sizeof(WCHAR));
+    MultiByteToWideChar(CP_ACP, 0, pPerUser->szGUID, -1, perUserW.szGUID, ARRAY_SIZE(perUserW.szGUID));
+    MultiByteToWideChar(CP_ACP, 0, pPerUser->szDispName, -1, perUserW.szDispName, ARRAY_SIZE(perUserW.szDispName));
+    MultiByteToWideChar(CP_ACP, 0, pPerUser->szLocale, -1, perUserW.szLocale, ARRAY_SIZE(perUserW.szLocale));
+    MultiByteToWideChar(CP_ACP, 0, pPerUser->szStub, -1, perUserW.szStub, ARRAY_SIZE(perUserW.szStub));
+    MultiByteToWideChar(CP_ACP, 0, pPerUser->szVersion, -1, perUserW.szVersion, ARRAY_SIZE(perUserW.szVersion));
+    MultiByteToWideChar(CP_ACP, 0, pPerUser->szCompID, -1, perUserW.szCompID, ARRAY_SIZE(perUserW.szCompID));
     perUserW.dwIsInstalled = pPerUser->dwIsInstalled;
     perUserW.bRollback = pPerUser->bRollback;
 
@@ -763,9 +757,9 @@ HRESULT WINAPI TranslateInfStringExA(HINF hInf, LPCSTR pszInfFilename,
     HRESULT res;
     DWORD len = 0;
 
-    TRACE("(%p, %s, %s, %s, %s, %d, %p, %p)\n", hInf, debugstr_a(pszInfFilename),
+    TRACE("(%p, %s, %s, %s, %p, %d, %p, %p)\n", hInf, debugstr_a(pszInfFilename),
           debugstr_a(pszTranslateSection), debugstr_a(pszTranslateKey),
-          debugstr_a(pszBuffer), dwBufferSize, pdwRequiredSize, pvReserved);
+          pszBuffer, dwBufferSize, pdwRequiredSize, pvReserved);
 
     if (!pszInfFilename || !pszTranslateSection ||
         !pszTranslateKey || !pdwRequiredSize)
@@ -843,9 +837,9 @@ HRESULT WINAPI TranslateInfStringExW(HINF hInf, LPCWSTR pszInfFilename,
                                      LPWSTR pszBuffer, DWORD dwBufferSize,
                                      PDWORD pdwRequiredSize, PVOID pvReserved)
 {
-    TRACE("(%p, %s, %s, %s, %s, %d, %p, %p)\n", hInf, debugstr_w(pszInfFilename),
+    TRACE("(%p, %s, %s, %s, %p, %d, %p, %p)\n", hInf, debugstr_w(pszInfFilename),
           debugstr_w(pszTranslateSection), debugstr_w(pszTranslateKey),
-          debugstr_w(pszBuffer), dwBufferSize, pdwRequiredSize, pvReserved);
+          pszBuffer, dwBufferSize, pdwRequiredSize, pvReserved);
 
     if (!hInf || !pszInfFilename || !pszTranslateSection || !pszTranslateKey)
         return E_INVALIDARG;

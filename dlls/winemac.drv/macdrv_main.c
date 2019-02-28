@@ -52,6 +52,8 @@ BOOL allow_vsync = TRUE;
 BOOL allow_set_gamma = TRUE;
 int left_option_is_alt = 0;
 int right_option_is_alt = 0;
+int left_command_is_ctrl = 0;
+int right_command_is_ctrl = 0;
 BOOL allow_software_rendering = FALSE;
 BOOL disable_window_decorations = FALSE;
 int allow_immovable_windows = TRUE;
@@ -60,6 +62,7 @@ int use_precise_scrolling = TRUE;
 int gl_surface_mode = GL_SURFACE_IN_FRONT_OPAQUE;
 int retina_enabled = FALSE;
 HMODULE macdrv_module = 0;
+int enable_app_nap = FALSE;
 
 CFDictionaryRef localized_strings;
 
@@ -89,7 +92,7 @@ const char* debugstr_cf(CFTypeRef t)
     if (!ret)
     {
         UniChar buf[200];
-        int len = min(CFStringGetLength(s), sizeof(buf)/sizeof(buf[0]));
+        int len = min(CFStringGetLength(s), ARRAY_SIZE(buf));
         CFStringGetCharacters(s, CFRangeMake(0, len), buf);
         ret = debugstr_wn(buf, len);
     }
@@ -171,6 +174,16 @@ static void setup_options(void)
     if (!get_config_key(hkey, appkey, "RightOptionIsAlt", buffer, sizeof(buffer)))
         right_option_is_alt = IS_OPTION_TRUE(buffer[0]);
 
+    if (!get_config_key(hkey, appkey, "LeftCommandIsCtrl", buffer, sizeof(buffer)))
+        left_command_is_ctrl = IS_OPTION_TRUE(buffer[0]);
+    if (!get_config_key(hkey, appkey, "RightCommandIsCtrl", buffer, sizeof(buffer)))
+        right_command_is_ctrl = IS_OPTION_TRUE(buffer[0]);
+
+    if (left_command_is_ctrl && right_command_is_ctrl && !left_option_is_alt && !right_option_is_alt)
+        WARN("Both Command keys have been mapped to Control. There is no way to "
+             "send an Alt key to Windows applications. Consider enabling "
+             "LeftOptionIsAlt or RightOptionIsAlt.\n");
+
     if (!get_config_key(hkey, appkey, "AllowSoftwareRendering", buffer, sizeof(buffer)))
         allow_software_rendering = IS_OPTION_TRUE(buffer[0]);
 
@@ -196,6 +209,9 @@ static void setup_options(void)
         else
             gl_surface_mode = GL_SURFACE_IN_FRONT_OPAQUE;
     }
+
+    if (!get_config_key(hkey, appkey, "EnableAppNap", buffer, sizeof(buffer)))
+        enable_app_nap = IS_OPTION_TRUE(buffer[0]);
 
     /* Don't use appkey.  The DPI and monitor sizes should be consistent for all
        processes in the prefix. */
@@ -238,7 +254,7 @@ static void load_strings(HINSTANCE instance)
         return;
     }
 
-    for (i = 0; i < sizeof(ids) / sizeof(ids[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(ids); i++)
     {
         LPCWSTR str;
         int len = LoadStringW(instance, ids[i], (LPWSTR)&str, 0);

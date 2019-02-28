@@ -23,6 +23,13 @@
 
 #include "config.h"
 
+#include <IOKit/pwr_mgt/IOPMLib.h>
+#define GetCurrentThread Mac_GetCurrentThread
+#define LoadResource Mac_LoadResource
+#include <CoreServices/CoreServices.h>
+#undef GetCurrentThread
+#undef LoadResource
+
 #include "macdrv.h"
 #include "winuser.h"
 #include "wine/unicode.h"
@@ -402,7 +409,8 @@ static void sync_window_region(struct macdrv_win_data *data, HRGN win_region)
            window, it's the same as there being no region.  It's potentially
            hard/slow to test this for arbitrary regions, so we just check for
            very simple regions. */
-        if (count == 1 && CGRectContainsRect(rects[0], cgrect_from_rect(data->whole_rect)))
+        if (count == 1 && CGRectContainsRect(rects[0],
+            CGRectOffset(cgrect_from_rect(data->whole_rect), -data->whole_rect.left, -data->whole_rect.top)))
         {
             TRACE("optimizing for simple region that contains Cocoa content rect\n");
             rects = NULL;
@@ -702,7 +710,7 @@ static void create_cocoa_window(struct macdrv_win_data *data)
     set_cocoa_window_properties(data);
 
     /* set the window text */
-    if (!InternalGetWindowText(data->hwnd, text, sizeof(text)/sizeof(WCHAR))) text[0] = 0;
+    if (!InternalGetWindowText(data->hwnd, text, ARRAY_SIZE(text))) text[0] = 0;
     macdrv_set_cocoa_window_title(data->cocoa_window, text, strlenW(text));
 
     /* set the window region */
@@ -865,14 +873,59 @@ static struct macdrv_win_data *macdrv_create_win_data(HWND hwnd, const RECT *win
 }
 
 
+/**********************************************************************
+ *              is_owned_by
+ */
+static BOOL is_owned_by(HWND hwnd, HWND maybe_owner)
+{
+    while (1)
+    {
+        HWND hwnd2 = GetWindow(hwnd, GW_OWNER);
+        if (!hwnd2)
+            hwnd2 = GetAncestor(hwnd, GA_ROOT);
+        if (!hwnd2 || hwnd2 == hwnd)
+            break;
+        if (hwnd2 == maybe_owner)
+            return TRUE;
+        hwnd = hwnd2;
+    }
+
+    return FALSE;
+}
+
+
+/**********************************************************************
+ *              is_all_the_way_front
+ */
+static BOOL is_all_the_way_front(HWND hwnd)
+{
+    BOOL topmost = (GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+    HWND prev = hwnd;
+
+    while ((prev = GetWindow(prev, GW_HWNDPREV)))
+    {
+        if (!topmost && (GetWindowLongW(prev, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0)
+            return TRUE;
+        if (!is_owned_by(prev, hwnd))
+            return FALSE;
+    }
+
+    return TRUE;
+}
+
+
 /***********************************************************************
  *              set_focus
  */
-static void set_focus(HWND hwnd)
+static void set_focus(HWND hwnd, BOOL raise)
 {
     struct macdrv_win_data *data;
 
     if (!(hwnd = GetAncestor(hwnd, GA_ROOT))) return;
+
+    if (raise && hwnd == GetForegroundWindow() && hwnd != GetDesktopWindow() && !is_all_the_way_front(hwnd))
+        SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+
     if (!(data = get_win_data(hwnd))) return;
 
     if (data->cocoa_window && data->on_screen)
@@ -925,7 +978,7 @@ static void show_window(struct macdrv_win_data *data)
         info.cbSize = sizeof(info);
         if (GetGUIThreadInfo(GetWindowThreadProcessId(data->hwnd, NULL), &info) && info.hwndFocus &&
             (data->hwnd == info.hwndFocus || IsChild(data->hwnd, info.hwndFocus)))
-            set_focus(info.hwndFocus);
+            set_focus(info.hwndFocus, FALSE);
         if (activate)
             activate_on_focus_time = 0;
     }
@@ -1066,6 +1119,21 @@ RGNDATA *get_region_data(HRGN hrgn, HDC hdc_lptodp)
 
 
 /***********************************************************************
+ *              sync_client_view_position
+ */
+static void sync_client_view_position(struct macdrv_win_data *data)
+{
+    if (data->cocoa_view != data->client_cocoa_view)
+    {
+        RECT rect = data->client_rect;
+        OffsetRect(&rect, -data->whole_rect.left, -data->whole_rect.top);
+        macdrv_set_view_frame(data->client_cocoa_view, cgrect_from_rect(rect));
+        TRACE("win %p/%p client %s\n", data->hwnd, data->client_cocoa_view, wine_dbgstr_rect(&rect));
+    }
+}
+
+
+/***********************************************************************
  *              sync_window_position
  *
  * Synchronize the Mac window position with the Windows one
@@ -1111,13 +1179,7 @@ static void sync_window_position(struct macdrv_win_data *data, UINT swp_flags, c
             macdrv_set_view_frame(data->cocoa_view, frame);
     }
 
-    if (data->cocoa_view != data->client_cocoa_view)
-    {
-        RECT rect = data->client_rect;
-        OffsetRect(&rect, -data->whole_rect.left, -data->whole_rect.top);
-        macdrv_set_view_frame(data->client_cocoa_view, cgrect_from_rect(rect));
-        TRACE("win %p/%p client %s\n", data->hwnd, data->client_cocoa_view, wine_dbgstr_rect(&rect));
-    }
+    sync_client_view_position(data);
 
     if (old_window_rect && old_whole_rect &&
         (IsRectEmpty(old_window_rect) != IsRectEmpty(&data->window_rect) ||
@@ -1509,13 +1571,44 @@ BOOL CDECL macdrv_CreateDesktopWindow(HWND hwnd)
 }
 
 
+static WNDPROC desktop_orig_wndproc;
+
+#define WM_WINE_NOTIFY_ACTIVITY WM_USER
+
+static LRESULT CALLBACK desktop_wndproc_wrapper( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
+{
+    switch (msg)
+    {
+    case WM_WINE_NOTIFY_ACTIVITY:
+    {
+        /* This wakes from display sleep, but doesn't affect the screen saver. */
+        static IOPMAssertionID assertion;
+        IOPMAssertionDeclareUserActivity(CFSTR("Wine user input"), kIOPMUserActiveLocal, &assertion);
+
+        /* This prevents the screen saver, but doesn't wake from display sleep. */
+        /* It's deprecated, but there's no better alternative. */
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        UpdateSystemActivity(UsrActivity);
+#pragma clang diagnostic pop
+        break;
+    }
+    }
+    return desktop_orig_wndproc( hwnd, msg, wp, lp );
+}
+
 /**********************************************************************
  *              CreateWindow   (MACDRV.@)
  */
 BOOL CDECL macdrv_CreateWindow(HWND hwnd)
 {
     if (hwnd == GetDesktopWindow())
+    {
+        desktop_orig_wndproc = (WNDPROC)SetWindowLongPtrW( GetDesktopWindow(),
+            GWLP_WNDPROC, (LONG_PTR)desktop_wndproc_wrapper );
+
         macdrv_init_clipboard();
+    }
     return TRUE;
 }
 
@@ -1532,6 +1625,7 @@ void CDECL macdrv_DestroyWindow(HWND hwnd)
     if (!(data = get_win_data(hwnd))) return;
 
     if (hwnd == GetCapture()) macdrv_SetCapture(0, 0);
+    if (data->drag_event) SetEvent(data->drag_event);
 
     destroy_cocoa_window(data);
     destroy_cocoa_view(data);
@@ -1556,7 +1650,7 @@ void CDECL macdrv_SetFocus(HWND hwnd)
 
     if (!thread_data) return;
     thread_data->dead_key_state = 0;
-    set_focus(hwnd);
+    set_focus(hwnd, TRUE);
 }
 
 
@@ -1574,6 +1668,8 @@ void CDECL macdrv_SetLayeredWindowAttributes(HWND hwnd, COLORREF key, BYTE alpha
     if (data)
     {
         data->layered = TRUE;
+        data->ulw_layered = FALSE;
+        if (data->surface) set_surface_use_alpha(data->surface, FALSE);
         if (data->cocoa_window)
         {
             sync_window_opacity(data, key, alpha, FALSE, flags);
@@ -1793,7 +1889,7 @@ BOOL CDECL macdrv_UpdateLayeredWindow(HWND hwnd, const UPDATELAYEREDWINDOWINFO *
     char buffer[FIELD_OFFSET(BITMAPINFO, bmiColors[256])];
     BITMAPINFO *bmi = (BITMAPINFO *)buffer;
     void *src_bits, *dst_bits;
-    RECT rect;
+    RECT rect, src_rect;
     HDC hdc = 0;
     HBITMAP dib;
     BOOL ret = FALSE;
@@ -1855,11 +1951,13 @@ BOOL CDECL macdrv_UpdateLayeredWindow(HWND hwnd, const UPDATELAYEREDWINDOWINFO *
         surface->funcs->unlock(surface);
         PatBlt(hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, BLACKNESS);
     }
+    src_rect = rect;
+    if (info->pptSrc) OffsetRect( &src_rect, info->pptSrc->x, info->pptSrc->y );
+    DPtoLP( info->hdcSrc, (POINT *)&src_rect, 2 );
+
     if (!(ret = GdiAlphaBlend(hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
-                              info->hdcSrc,
-                              rect.left + (info->pptSrc ? info->pptSrc->x : 0),
-                              rect.top + (info->pptSrc ? info->pptSrc->y : 0),
-                              rect.right - rect.left, rect.bottom - rect.top,
+                              info->hdcSrc, src_rect.left, src_rect.top,
+                              src_rect.right - src_rect.left, src_rect.bottom - src_rect.top,
                               blend)))
         goto done;
 
@@ -2122,10 +2220,15 @@ void CDECL macdrv_WindowPosChanged(HWND hwnd, HWND insert_after, UINT swp_flags,
     }
 
     /* check if we are currently processing an event relevant to this window */
-    if (!thread_data || !thread_data->current_event ||
-        !data->cocoa_window || thread_data->current_event->window != data->cocoa_window ||
-        (thread_data->current_event->type != WINDOW_FRAME_CHANGED &&
-         thread_data->current_event->type != WINDOW_DID_UNMINIMIZE))
+    if (thread_data && thread_data->current_event &&
+        data->cocoa_window && thread_data->current_event->window == data->cocoa_window &&
+        (thread_data->current_event->type == WINDOW_FRAME_CHANGED ||
+         thread_data->current_event->type == WINDOW_DID_UNMINIMIZE))
+    {
+        if (thread_data->current_event->type == WINDOW_FRAME_CHANGED)
+            sync_client_view_position(data);
+    }
+    else
     {
         sync_window_position(data, swp_flags, &old_window_rect, &old_whole_rect);
         if (data->cocoa_window)
@@ -2244,7 +2347,7 @@ void macdrv_window_frame_changed(HWND hwnd, const macdrv_event *event)
         TRACE("%p resizing from (%dx%d) to (%dx%d)\n", hwnd, data->window_rect.right - data->window_rect.left,
               data->window_rect.bottom - data->window_rect.top, width, height);
 
-    being_dragged = data->being_dragged;
+    being_dragged = data->drag_event != NULL;
     release_win_data(data);
 
     if (event->window_frame_changed.fullscreen)
@@ -2458,10 +2561,12 @@ void macdrv_window_restore_requested(HWND hwnd, const macdrv_event *event)
  *
  * Handler for WINDOW_DRAG_BEGIN events.
  */
-void macdrv_window_drag_begin(HWND hwnd)
+void macdrv_window_drag_begin(HWND hwnd, const macdrv_event *event)
 {
     DWORD style = GetWindowLongW(hwnd, GWL_STYLE);
     struct macdrv_win_data *data;
+    HANDLE drag_event = NULL;
+    BOOL loop = TRUE;
     MSG msg;
 
     TRACE("win %p\n", hwnd);
@@ -2470,22 +2575,46 @@ void macdrv_window_drag_begin(HWND hwnd)
     if (!(style & WS_VISIBLE)) return;
 
     if (!(data = get_win_data(hwnd))) return;
-    if (data->being_dragged) goto done;
+    if (data->drag_event) goto done;
 
-    data->being_dragged = TRUE;
+    drag_event = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (!drag_event) goto done;
+
+    data->drag_event = drag_event;
     release_win_data(data);
+
+    if (!event->window_drag_begin.no_activate && can_activate_window(hwnd) && GetForegroundWindow() != hwnd)
+    {
+        /* ask whether the window wants to be activated */
+        LRESULT ma = SendMessageW(hwnd, WM_MOUSEACTIVATE, (WPARAM)GetAncestor(hwnd, GA_ROOT),
+                                  MAKELONG(HTCAPTION, WM_LBUTTONDOWN));
+        if (ma != MA_NOACTIVATEANDEAT && ma != MA_NOACTIVATE)
+        {
+            TRACE("setting foreground window to %p\n", hwnd);
+            SetForegroundWindow(hwnd);
+        }
+    }
 
     ClipCursor(NULL);
     SendMessageW(hwnd, WM_ENTERSIZEMOVE, 0, 0);
     ReleaseCapture();
 
-    while (GetMessageW(&msg, 0, 0, 0))
+    while (loop)
     {
-        if (msg.message == WM_EXITSIZEMOVE)
+        while (!PeekMessageW(&msg, 0, 0, 0, PM_REMOVE))
         {
-            SendMessageW(hwnd, WM_EXITSIZEMOVE, 0, 0);
-            break;
+            DWORD result = MsgWaitForMultipleObjectsEx(1, &drag_event, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            if (result == WAIT_OBJECT_0)
+            {
+                loop = FALSE;
+                break;
+            }
         }
+        if (!loop)
+            break;
+
+        if (msg.message == WM_QUIT)
+            break;
 
         if (!CallMsgFilterW(&msg, MSGF_SIZE) && msg.message != WM_KEYDOWN &&
             msg.message != WM_MOUSEMOVE && msg.message != WM_LBUTTONDOWN && msg.message != WM_LBUTTONUP)
@@ -2495,13 +2624,16 @@ void macdrv_window_drag_begin(HWND hwnd)
         }
     }
 
+    SendMessageW(hwnd, WM_EXITSIZEMOVE, 0, 0);
+
     TRACE("done\n");
 
     if ((data = get_win_data(hwnd)))
-        data->being_dragged = FALSE;
+        data->drag_event = NULL;
 
 done:
     release_win_data(data);
+    if (drag_event) CloseHandle(drag_event);
 }
 
 
@@ -2513,20 +2645,13 @@ done:
 void macdrv_window_drag_end(HWND hwnd)
 {
     struct macdrv_win_data *data;
-    BOOL being_dragged;
 
     TRACE("win %p\n", hwnd);
 
     if (!(data = get_win_data(hwnd))) return;
-    being_dragged = data->being_dragged;
+    if (data->drag_event)
+        SetEvent(data->drag_event);
     release_win_data(data);
-
-    if (being_dragged)
-    {
-        /* Post this rather than sending it, so that the message loop in
-           macdrv_window_drag_begin() will see it. */
-        PostMessageW(hwnd, WM_EXITSIZEMOVE, 0, 0);
-    }
 }
 
 

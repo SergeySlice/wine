@@ -55,6 +55,7 @@ static LONG g_styleInitialFocusT1, g_styleInitialFocusT2;
 static BOOL g_bInitialFocusInitDlgResult, g_bReceivedCommand;
 
 static BOOL g_terminated;
+static BOOL g_button1Clicked;
 
 typedef struct {
     INT_PTR id;
@@ -161,7 +162,7 @@ static BOOL CreateWindows (HINSTANCE hinst)
          */
         if (p->id >= numwnds)
         {
-            if (p->id >=  sizeof(hwnd)/sizeof(hwnd[0]))
+            if (p->id >=  ARRAY_SIZE(hwnd))
             {
                 trace ("Control %ld is out of range\n", p->id);
                 return FALSE;
@@ -474,6 +475,10 @@ static LRESULT CALLBACK main_window_procA (HWND hwnd, UINT uiMsg, WPARAM wParam,
                 g_terminated = TRUE;
                 return 0;
             }
+            else if ((wParam == 100 || wParam == 0xFFFF) && lParam)
+            {
+                g_button1Clicked = TRUE;
+            }
             break;
     }
 
@@ -539,6 +544,26 @@ static LRESULT CALLBACK testDlgWinProc (HWND hwnd, UINT uiMsg, WPARAM wParam,
     return DefDlgProcA (hwnd, uiMsg, wParam, lParam);
 }
 
+static LRESULT CALLBACK test_control_procA(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    switch(msg)
+    {
+        case WM_CREATE:
+        {
+            static const short sample[] = { 10,1,2,3,4,5 };
+            CREATESTRUCTA *cs = (CREATESTRUCTA *)lparam;
+            short *data = cs->lpCreateParams;
+            ok(!memcmp(data, sample, sizeof(sample)), "data mismatch: %d,%d,%d,%d,%d\n", data[0], data[1], data[2], data[3], data[4]);
+        }
+        return 0;
+
+    default:
+        break;
+    }
+
+    return DefWindowProcA(hwnd, msg, wparam, lparam);
+}
+
 static BOOL RegisterWindowClasses (void)
 {
     WNDCLASSA cls;
@@ -558,7 +583,10 @@ static BOOL RegisterWindowClasses (void)
 
     cls.lpfnWndProc = main_window_procA;
     cls.lpszClassName = "IsDialogMessageWindowClass";
+    if (!RegisterClassA (&cls)) return FALSE;
 
+    cls.lpfnWndProc = test_control_procA;
+    cls.lpszClassName = "TESTCONTROL";
     if (!RegisterClassA (&cls)) return FALSE;
 
     GetClassInfoA(0, "#32770", &cls);
@@ -787,6 +815,34 @@ static void test_IsDialogMessage(void)
     ok (!IsDialogMessageA(msg.hwnd, &msg), "expected failure\n");
 
     UnhookWindowsHookEx(hook);
+    DestroyWindow(g_hwndMain);
+
+    g_hwndMain = CreateWindowA("IsDialogMessageWindowClass", "IsDialogMessageWindowClass", WS_OVERLAPPEDWINDOW,
+                               CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, NULL, NULL, g_hinst, 0);
+    SetFocus(g_hwndButton1);
+    g_button1Clicked = FALSE;
+    FormEnterMsg(&msg, g_hwndButton1);
+    ok(IsDialogMessageA(g_hwndMain, &msg), "Did not handle the ENTER\n");
+    ok(g_button1Clicked, "Did not receive button 1 click notification\n");
+
+    g_button1Clicked = FALSE;
+    FormEnterMsg(&msg, g_hwndMain);
+    ok(IsDialogMessageA(g_hwndMain, &msg), "Did not handle the ENTER\n");
+    ok(g_button1Clicked, "Did not receive button 1 click notification\n");
+
+    g_button1Clicked = FALSE;
+    FormEnterMsg(&msg, g_hwndButton2);
+    ok(IsDialogMessageA(g_hwndMain, &msg), "Did not handle the ENTER\n");
+    ok(g_button1Clicked, "Did not receive button 1 click notification\n");
+
+    /* Button with id larger than 0xFFFF should also work */
+    g_button1Clicked = FALSE;
+    FormEnterMsg(&msg, g_hwndMain);
+    SetWindowLongPtrW(g_hwndButton1, GWLP_ID, 0x1FFFF);
+    ok(IsDialogMessageA(g_hwndMain, &msg), "Did not handle the ENTER\n");
+    ok(g_button1Clicked, "Did not receive button 1 click notification\n");
+
+    DestroyWindow(g_hwndMain);
 }
 
 
@@ -846,6 +902,56 @@ static INT_PTR CALLBACK focusDlgWinProc (HWND hDlg, UINT uiMsg, WPARAM wParam,
                g_hwndInitialFocusT1 = (HWND)lParam;
        }
        return FALSE;
+    }
+
+    return FALSE;
+}
+
+static INT_PTR CALLBACK EmptyProcUserTemplate(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    switch(uMsg) {
+    case WM_INITDIALOG:
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static INT_PTR CALLBACK focusChildDlgWinProc (HWND hwnd, UINT uiMsg, WPARAM wParam,
+        LPARAM lParam)
+{
+    static HWND hChildDlg;
+
+    switch (uiMsg)
+    {
+    case WM_INITDIALOG:
+    {
+        RECT rectHwnd;
+        struct  {
+            DLGTEMPLATE tmplate;
+            WORD menu,class,title;
+        } temp;
+
+        SetFocus( GetDlgItem(hwnd, 200) );
+
+        GetClientRect(hwnd,&rectHwnd);
+        temp.tmplate.style = WS_CHILD | WS_CLIPSIBLINGS | WS_VISIBLE | DS_CONTROL | DS_3DLOOK;
+        temp.tmplate.dwExtendedStyle = 0;
+        temp.tmplate.cdit = 0;
+        temp.tmplate.x = 0;
+        temp.tmplate.y = 0;
+        temp.tmplate.cx = 0;
+        temp.tmplate.cy = 0;
+        temp.menu = temp.class = temp.title = 0;
+
+        hChildDlg = CreateDialogIndirectParamA(g_hinst, &temp.tmplate,
+                  hwnd, (DLGPROC)EmptyProcUserTemplate, 0);
+        ok(hChildDlg != 0, "Failed to create test dialog.\n");
+
+        return FALSE;
+    }
+    case WM_CLOSE:
+        DestroyWindow(hChildDlg);
+        return TRUE;
     }
 
     return FALSE;
@@ -1037,6 +1143,29 @@ static void test_focus(void)
 
         DestroyWindow(hDlg);
     }
+
+    /* Test 6:
+     * Select textbox's text on creation when WM_INITDIALOG creates a child dialog. */
+    {
+        HWND hDlg;
+        HRSRC hResource;
+        HANDLE hTemplate;
+        DLGTEMPLATE* pTemplate;
+        HWND edit;
+
+        hResource = FindResourceA(g_hinst,"FOCUS_TEST_DIALOG_3", (LPCSTR)RT_DIALOG);
+        hTemplate = LoadResource(g_hinst, hResource);
+        pTemplate = LockResource(hTemplate);
+
+        hDlg = CreateDialogIndirectParamA(g_hinst, pTemplate, NULL, focusChildDlgWinProc, 0);
+        ok(hDlg != 0, "Failed to create test dialog.\n");
+        edit = GetDlgItem(hDlg, 200);
+
+        ok(GetFocus() == edit, "Focus not set to edit, focus=%p, dialog=%p, edit=%p\n",
+                GetFocus(), hDlg, edit);
+
+        DestroyWindow(hDlg);
+    }
 }
 
 static void test_GetDlgItemText(void)
@@ -1045,16 +1174,54 @@ static void test_GetDlgItemText(void)
     BOOL ret;
 
     strcpy(string, "Overwrite Me");
-    ret = GetDlgItemTextA(NULL, 0, string, sizeof(string)/sizeof(string[0]));
+    ret = GetDlgItemTextA(NULL, 0, string, ARRAY_SIZE(string));
     ok(!ret, "GetDlgItemText(NULL) shouldn't have succeeded\n");
 
     ok(string[0] == '\0' || broken(!strcmp(string, "Overwrite Me")),
        "string retrieved using GetDlgItemText should have been NULL terminated\n");
 }
 
+static INT_PTR CALLBACK getdlgitem_test_dialog_proc(HWND hdlg, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    if (msg == WM_INITDIALOG)
+    {
+        char text[64];
+        LONG_PTR val;
+        HWND hwnd;
+        BOOL ret;
+
+        hwnd = GetDlgItem(hdlg, -1);
+        ok(hwnd != NULL, "Expected dialog item.\n");
+
+        *text = 0;
+        ret = GetDlgItemTextA(hdlg, -1, text, ARRAY_SIZE(text));
+        ok(ret && !strcmp(text, "Text1"), "Unexpected item text.\n");
+
+        val = GetWindowLongA(hwnd, GWLP_ID);
+        ok(val == -1, "Unexpected id.\n");
+
+        val = GetWindowLongPtrA(hwnd, GWLP_ID);
+        ok(val == -1, "Unexpected id %ld.\n", val);
+
+        hwnd = GetDlgItem(hdlg, -2);
+        ok(hwnd != NULL, "Expected dialog item.\n");
+
+        val = GetWindowLongA(hwnd, GWLP_ID);
+        ok(val == -2, "Unexpected id.\n");
+
+        val = GetWindowLongPtrA(hwnd, GWLP_ID);
+        ok(val == -2, "Unexpected id %ld.\n", val);
+
+        EndDialog(hdlg, 0xdead);
+    }
+
+    return FALSE;
+}
+
 static void test_GetDlgItem(void)
 {
     HWND hwnd, child1, child2, hwnd2;
+    INT_PTR retval;
     BOOL ret;
 
     hwnd = CreateWindowA("button", "parent", WS_VISIBLE, 0, 0, 100, 100, NULL, 0, g_hinst, NULL);
@@ -1101,6 +1268,9 @@ static void test_GetDlgItem(void)
     DestroyWindow(child1);
     DestroyWindow(child2);
     DestroyWindow(hwnd);
+
+    retval = DialogBoxParamA(g_hinst, "GETDLGITEM_TEST_DIALOG", NULL, getdlgitem_test_dialog_proc, 0);
+    ok(retval == 0xdead, "Unexpected return value.\n");
 }
 
 static INT_PTR CALLBACK DestroyDlgWinProc (HWND hDlg, UINT uiMsg,
@@ -1236,8 +1406,441 @@ static INT_PTR CALLBACK TestControlStyleDlgProc(HWND hdlg, UINT msg,
     return FALSE;
 }
 
-static void test_DialogBoxParamA(void)
+static const WCHAR testtextW[] = {'W','n','d','T','e','x','t',0};
+static const char *testtext = "WndText";
+
+enum defdlgproc_text
 {
+    DLGPROCTEXT_SNDMSGA = 0,
+    DLGPROCTEXT_SNDMSGW,
+    DLGPROCTEXT_DLGPROCA,
+    DLGPROCTEXT_DLGPROCW,
+    DLGPROCTEXT_SETTEXTA,
+    DLGPROCTEXT_SETTEXTW,
+};
+
+static const char *testmodes[] =
+{
+    "SNDMSGA",
+    "SNDMSGW",
+    "DLGPROCA",
+    "DLGPROCW",
+    "SETTEXTA",
+    "SETTEXTW",
+};
+
+static INT_PTR CALLBACK test_aw_conversion_dlgprocA(HWND hdlg, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    int mode = HandleToULong(GetPropA(hdlg, "test_mode"));
+    WCHAR *text = (WCHAR *)lparam;
+    char *textA = (char *)lparam;
+
+    switch (msg)
+    {
+    case WM_SETTEXT:
+    case WM_WININICHANGE:
+    case WM_DEVMODECHANGE:
+    case CB_DIR:
+    case LB_DIR:
+    case LB_ADDFILE:
+    case EM_REPLACESEL:
+        switch (mode)
+        {
+        case DLGPROCTEXT_DLGPROCA:
+            ok(textA == testtext, "%s: %s, unexpected text %s.\n", IsWindowUnicode(hdlg) ? "U" : "A",
+                testmodes[mode], textA);
+            break;
+        case DLGPROCTEXT_DLGPROCW:
+            ok(text == testtextW, "%s: %s, unexpected text %s.\n", IsWindowUnicode(hdlg) ? "U" : "A", testmodes[mode],
+                wine_dbgstr_w(text));
+            break;
+        case DLGPROCTEXT_SNDMSGA:
+        case DLGPROCTEXT_SETTEXTA:
+            if (IsWindowUnicode(hdlg))
+            {
+                ok(text != testtextW && !lstrcmpW(text, testtextW),
+                    "U: %s, unexpected text %s.\n", testmodes[mode], wine_dbgstr_w(text));
+            }
+            else
+                ok(textA == testtext, "A: %s, unexpected text %s.\n", testmodes[mode], textA);
+            break;
+        case DLGPROCTEXT_SNDMSGW:
+        case DLGPROCTEXT_SETTEXTW:
+            if (IsWindowUnicode(hdlg))
+                ok(text == testtextW, "U: %s, unexpected text %s.\n", testmodes[mode], wine_dbgstr_w(text));
+            else
+                ok(textA != testtext && !strcmp(textA, testtext), "A: %s, unexpected text %s.\n",
+                    testmodes[mode], textA);
+            break;
+        }
+        break;
+    };
+
+    return DefWindowProcW(hdlg, msg, wparam, lparam);
+}
+
+static INT_PTR CALLBACK test_aw_conversion_dlgprocW(HWND hdlg, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    int mode = HandleToULong(GetPropA(hdlg, "test_mode"));
+    WCHAR *text = (WCHAR *)lparam;
+    char *textA = (char *)lparam;
+
+    switch (msg)
+    {
+    case WM_SETTEXT:
+    case WM_WININICHANGE:
+    case WM_DEVMODECHANGE:
+    case CB_DIR:
+    case LB_DIR:
+    case LB_ADDFILE:
+    case EM_REPLACESEL:
+        switch (mode)
+        {
+        case DLGPROCTEXT_DLGPROCA:
+            ok(textA == testtext, "%s: %s, unexpected text %s.\n", IsWindowUnicode(hdlg) ? "U" : "A",
+                testmodes[mode], textA);
+            break;
+        case DLGPROCTEXT_DLGPROCW:
+            ok(text == testtextW, "%s: %s, unexpected text %s.\n", IsWindowUnicode(hdlg) ? "U" : "A", testmodes[mode],
+                wine_dbgstr_w(text));
+            break;
+        case DLGPROCTEXT_SNDMSGA:
+        case DLGPROCTEXT_SETTEXTA:
+            if (IsWindowUnicode(hdlg))
+                ok(text != testtextW && !lstrcmpW(text, testtextW),
+                    "U: %s, unexpected text %s.\n", testmodes[mode], wine_dbgstr_w(text));
+            else
+                ok(textA == testtext, "A: %s, unexpected text %s.\n", testmodes[mode], textA);
+            break;
+        case DLGPROCTEXT_SNDMSGW:
+        case DLGPROCTEXT_SETTEXTW:
+            if (IsWindowUnicode(hdlg))
+                ok(text == testtextW, "U: %s, unexpected text %s.\n", testmodes[mode], wine_dbgstr_w(text));
+            else
+                ok(textA != testtext && !strcmp(textA, testtext), "A: %s, unexpected text %s.\n",
+                    testmodes[mode], textA);
+            break;
+        }
+        break;
+    }
+
+    return DefWindowProcA(hdlg, msg, wparam, lparam);
+}
+
+static void dlg_test_aw_message(HWND hdlg, UINT msg)
+{
+    SetPropA(hdlg, "test_mode", ULongToHandle(DLGPROCTEXT_SNDMSGA));
+    SendMessageA(hdlg, msg, 0, (LPARAM)testtext);
+
+    SetPropA(hdlg, "test_mode", ULongToHandle(DLGPROCTEXT_SNDMSGW));
+    SendMessageW(hdlg, msg, 0, (LPARAM)testtextW);
+
+    SetPropA(hdlg, "test_mode", ULongToHandle(DLGPROCTEXT_DLGPROCA));
+    DefDlgProcA(hdlg, msg, 0, (LPARAM)testtext);
+
+    SetPropA(hdlg, "test_mode", ULongToHandle(DLGPROCTEXT_DLGPROCW));
+    DefDlgProcW(hdlg, msg, 0, (LPARAM)testtextW);
+}
+
+static INT_PTR CALLBACK test_aw_conversion_dlgproc(HWND hdlg, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    ULONG_PTR dlgproc, originalproc;
+    WCHAR buffW[64];
+    char buff[64];
+    BOOL ret;
+    INT len;
+
+    switch (msg)
+    {
+    case WM_INITDIALOG:
+        ok(IsWindowUnicode(hdlg), "Expected unicode window.\n");
+
+        dlg_test_aw_message(hdlg, WM_WININICHANGE);
+        dlg_test_aw_message(hdlg, WM_DEVMODECHANGE);
+        dlg_test_aw_message(hdlg, CB_DIR);
+        dlg_test_aw_message(hdlg, LB_DIR);
+        dlg_test_aw_message(hdlg, LB_ADDFILE);
+        dlg_test_aw_message(hdlg, EM_REPLACESEL);
+        dlg_test_aw_message(hdlg, WM_SETTEXT);
+
+        /* WM_SETTEXT/WM_GETTEXT */
+        originalproc = GetWindowLongPtrW(hdlg, DWLP_DLGPROC);
+        ok(originalproc == (ULONG_PTR)test_aw_conversion_dlgproc, "Unexpected dlg proc %#lx.\n", originalproc);
+
+        dlgproc = GetWindowLongPtrA(hdlg, DWLP_DLGPROC);
+        ok(dlgproc != (ULONG_PTR)test_aw_conversion_dlgproc, "Unexpected dlg proc %#lx.\n", dlgproc);
+
+        dlgproc = SetWindowLongPtrA(hdlg, DWLP_DLGPROC, (UINT_PTR)test_aw_conversion_dlgprocA);
+        ok(IsWindowUnicode(hdlg), "Expected unicode window.\n");
+
+        dlgproc = GetWindowLongPtrW(hdlg, DWLP_DLGPROC);
+        ok(dlgproc != (ULONG_PTR)test_aw_conversion_dlgprocA, "Unexpected dlg proc %#lx.\n", dlgproc);
+
+        dlgproc = GetWindowLongPtrA(hdlg, DWLP_DLGPROC);
+        ok(dlgproc == (ULONG_PTR)test_aw_conversion_dlgprocA, "Unexpected dlg proc %#lx.\n", dlgproc);
+
+        SetPropA(hdlg, "test_mode", ULongToHandle(DLGPROCTEXT_SETTEXTA));
+        ret = SetWindowTextA(hdlg, testtext);
+    todo_wine
+        ok(ret, "Failed to set window text.\n");
+
+        SetPropA(hdlg, "test_mode", ULongToHandle(DLGPROCTEXT_SETTEXTW));
+        ret = SetWindowTextW(hdlg, testtextW);
+    todo_wine
+        ok(ret, "Failed to set window text.\n");
+
+        memset(buff, 'A', sizeof(buff));
+        len = GetWindowTextA(hdlg, buff, sizeof(buff));
+        ok(buff[0] == 0 && buff[1] == 'A' && len == 0, "Unexpected window text %#x, %#x, len %d\n",
+           (BYTE)buff[0], (BYTE)buff[1], len);
+
+        memset(buffW, 0xff, sizeof(buffW));
+        len = GetWindowTextW(hdlg, buffW, 64);
+        ok(!lstrcmpW(buffW, testtextW) && len == 0, "Unexpected window text %s, len %d\n", wine_dbgstr_w(buffW), len);
+
+        dlg_test_aw_message(hdlg, WM_WININICHANGE);
+        dlg_test_aw_message(hdlg, WM_DEVMODECHANGE);
+        dlg_test_aw_message(hdlg, CB_DIR);
+        dlg_test_aw_message(hdlg, LB_DIR);
+        dlg_test_aw_message(hdlg, LB_ADDFILE);
+        dlg_test_aw_message(hdlg, EM_REPLACESEL);
+        dlg_test_aw_message(hdlg, WM_SETTEXT);
+
+        dlgproc = SetWindowLongPtrW(hdlg, DWLP_DLGPROC, (UINT_PTR)test_aw_conversion_dlgprocW);
+        ok(IsWindowUnicode(hdlg), "Expected unicode window.\n");
+
+        dlgproc = GetWindowLongPtrW(hdlg, DWLP_DLGPROC);
+        ok(dlgproc == (ULONG_PTR)test_aw_conversion_dlgprocW, "Unexpected dlg proc %#lx.\n", dlgproc);
+
+        dlgproc = GetWindowLongPtrA(hdlg, DWLP_DLGPROC);
+        ok(dlgproc != (ULONG_PTR)test_aw_conversion_dlgprocW, "Unexpected dlg proc %#lx.\n", dlgproc);
+
+        SetPropA(hdlg, "test_mode", ULongToHandle(DLGPROCTEXT_SETTEXTA));
+        ret = SetWindowTextA(hdlg, testtext);
+    todo_wine
+        ok(ret, "Failed to set window text.\n");
+
+        SetPropA(hdlg, "test_mode", ULongToHandle(DLGPROCTEXT_SETTEXTW));
+        ret = SetWindowTextW(hdlg, testtextW);
+    todo_wine
+        ok(ret, "Failed to set window text.\n");
+
+        memset(buff, 'A', sizeof(buff));
+        len = GetWindowTextA(hdlg, buff, sizeof(buff));
+        ok(buff[0] == 0 && buff[1] == 'A' && len == 0, "Unexpected window text %#x, %#x, len %d\n",
+           (BYTE)buff[0], (BYTE)buff[1], len);
+
+        memset(buffW, 0xff, sizeof(buffW));
+        len = GetWindowTextW(hdlg, buffW, ARRAY_SIZE(buffW));
+        ok(buffW[0] == 'W' && buffW[1] == 0xffff && len == 0, "Unexpected window text %#x, %#x, len %d\n",
+            buffW[0], buffW[1], len);
+
+        dlg_test_aw_message(hdlg, WM_WININICHANGE);
+        dlg_test_aw_message(hdlg, WM_DEVMODECHANGE);
+        dlg_test_aw_message(hdlg, CB_DIR);
+        dlg_test_aw_message(hdlg, LB_DIR);
+        dlg_test_aw_message(hdlg, LB_ADDFILE);
+        dlg_test_aw_message(hdlg, EM_REPLACESEL);
+        dlg_test_aw_message(hdlg, WM_SETTEXT);
+
+        SetWindowLongPtrA(hdlg, DWLP_DLGPROC, originalproc);
+        EndDialog(hdlg, -123);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static INT_PTR CALLBACK test_aw_conversion_dlgproc2(HWND hdlg, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    ULONG_PTR dlgproc, originalproc;
+    WCHAR buffW[64];
+    char buff[64];
+    BOOL ret;
+    INT len;
+
+    switch (msg)
+    {
+    case WM_INITDIALOG:
+        ok(!IsWindowUnicode(hdlg), "Unexpected unicode window.\n");
+
+        dlg_test_aw_message(hdlg, WM_WININICHANGE);
+        dlg_test_aw_message(hdlg, WM_DEVMODECHANGE);
+        dlg_test_aw_message(hdlg, CB_DIR);
+        dlg_test_aw_message(hdlg, LB_DIR);
+        dlg_test_aw_message(hdlg, LB_ADDFILE);
+        dlg_test_aw_message(hdlg, EM_REPLACESEL);
+        dlg_test_aw_message(hdlg, WM_SETTEXT);
+
+        originalproc = GetWindowLongPtrW(hdlg, DWLP_DLGPROC);
+        ok(originalproc != (ULONG_PTR)test_aw_conversion_dlgproc2, "Unexpected dlg proc %#lx.\n", originalproc);
+
+        dlgproc = GetWindowLongPtrA(hdlg, DWLP_DLGPROC);
+        ok(dlgproc == (ULONG_PTR)test_aw_conversion_dlgproc2, "Unexpected dlg proc %#lx.\n", dlgproc);
+
+        dlgproc = SetWindowLongPtrA(hdlg, DWLP_DLGPROC, (UINT_PTR)test_aw_conversion_dlgprocW);
+        ok(!IsWindowUnicode(hdlg), "Unexpected unicode window.\n");
+
+        dlgproc = GetWindowLongPtrW(hdlg, DWLP_DLGPROC);
+        ok(dlgproc != (ULONG_PTR)test_aw_conversion_dlgprocW, "Unexpected dlg proc %#lx.\n", dlgproc);
+
+        dlgproc = GetWindowLongPtrA(hdlg, DWLP_DLGPROC);
+        ok(dlgproc == (ULONG_PTR)test_aw_conversion_dlgprocW, "Unexpected dlg proc %#lx.\n", dlgproc);
+
+        SetPropA(hdlg, "test_mode", ULongToHandle(DLGPROCTEXT_SETTEXTA));
+        ret = SetWindowTextA(hdlg, testtext);
+    todo_wine
+        ok(ret, "Failed to set window text.\n");
+
+        SetPropA(hdlg, "test_mode", ULongToHandle(DLGPROCTEXT_SETTEXTW));
+        ret = SetWindowTextW(hdlg, testtextW);
+    todo_wine
+        ok(ret, "Failed to set window text.\n");
+
+        memset(buff, 'A', sizeof(buff));
+        len = GetWindowTextA(hdlg, buff, sizeof(buff));
+        ok(!strcmp(buff, testtext) && len == 0, "Unexpected window text %s, len %d\n", buff, len);
+
+        memset(buffW, 0xff, sizeof(buffW));
+        len = GetWindowTextW(hdlg, buffW, 64);
+        ok(buffW[0] == 0 && buffW[1] == 0xffff && len == 0, "Unexpected window text %s, len %d\n",
+            wine_dbgstr_w(buffW), len);
+
+        dlg_test_aw_message(hdlg, WM_WININICHANGE);
+        dlg_test_aw_message(hdlg, WM_DEVMODECHANGE);
+        dlg_test_aw_message(hdlg, CB_DIR);
+        dlg_test_aw_message(hdlg, LB_DIR);
+        dlg_test_aw_message(hdlg, LB_ADDFILE);
+        dlg_test_aw_message(hdlg, EM_REPLACESEL);
+        dlg_test_aw_message(hdlg, WM_SETTEXT);
+
+        dlgproc = SetWindowLongPtrW(hdlg, DWLP_DLGPROC, (UINT_PTR)test_aw_conversion_dlgprocA);
+        ok(!IsWindowUnicode(hdlg), "Unexpected unicode window.\n");
+
+        dlgproc = GetWindowLongPtrW(hdlg, DWLP_DLGPROC);
+        ok(dlgproc == (ULONG_PTR)test_aw_conversion_dlgprocA, "Unexpected dlg proc %#lx.\n", dlgproc);
+
+        dlgproc = GetWindowLongPtrA(hdlg, DWLP_DLGPROC);
+        ok(dlgproc != (ULONG_PTR)test_aw_conversion_dlgprocA, "Unexpected dlg proc %#lx.\n", dlgproc);
+
+        SetPropA(hdlg, "test_mode", ULongToHandle(DLGPROCTEXT_SETTEXTA));
+        ret = SetWindowTextA(hdlg, testtext);
+    todo_wine
+        ok(ret, "Failed to set window text.\n");
+
+        SetPropA(hdlg, "test_mode", ULongToHandle(DLGPROCTEXT_SETTEXTW));
+        ret = SetWindowTextW(hdlg, testtextW);
+    todo_wine
+        ok(ret, "Failed to set window text.\n");
+
+        memset(buff, 'A', sizeof(buff));
+        len = GetWindowTextA(hdlg, buff, sizeof(buff));
+        ok(!strcmp(buff, testtext) && len == 0, "Unexpected window text %s, len %d\n", buff, len);
+
+        memset(buffW, 0xff, sizeof(buffW));
+        len = GetWindowTextW(hdlg, buffW, ARRAY_SIZE(buffW));
+        ok(buffW[0] == 0 && buffW[1] == 0xffff && len == 0, "Unexpected window text %#x, %#x, len %d\n",
+            buffW[0], buffW[1], len);
+
+        dlg_test_aw_message(hdlg, WM_WININICHANGE);
+        dlg_test_aw_message(hdlg, WM_DEVMODECHANGE);
+        dlg_test_aw_message(hdlg, CB_DIR);
+        dlg_test_aw_message(hdlg, LB_DIR);
+        dlg_test_aw_message(hdlg, LB_ADDFILE);
+        dlg_test_aw_message(hdlg, EM_REPLACESEL);
+        dlg_test_aw_message(hdlg, WM_SETTEXT);
+
+        SetWindowLongPtrA(hdlg, DWLP_DLGPROC, originalproc);
+        EndDialog(hdlg, -123);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static LRESULT CALLBACK test_aw_conversion_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    WNDPROC oldproc = (WNDPROC)GetWindowLongPtrA(hwnd, GWLP_USERDATA);
+    int mode = HandleToULong(GetPropA(hwnd, "test_mode"));
+    WCHAR *text = (WCHAR *)lparam;
+    char *textA = (char *)lparam;
+
+    switch (msg)
+    {
+    case WM_SETTEXT:
+    case WM_WININICHANGE:
+    case WM_DEVMODECHANGE:
+    case CB_DIR:
+    case LB_DIR:
+    case LB_ADDFILE:
+    case EM_REPLACESEL:
+        switch (mode)
+        {
+        case DLGPROCTEXT_SNDMSGA:
+            if (IsWindowUnicode(hwnd))
+                ok(text != testtextW && !lstrcmpW(text, testtextW),
+                    "U: %s, unexpected text %s.\n", testmodes[mode], wine_dbgstr_w(text));
+            else
+                ok(textA == testtext, "A: %s, unexpected text %s.\n", testmodes[mode], textA);
+            break;
+        case DLGPROCTEXT_SNDMSGW:
+            if (IsWindowUnicode(hwnd))
+                ok(text == testtextW, "U: %s, unexpected text %s.\n", testmodes[mode], wine_dbgstr_w(text));
+            else
+                ok(textA != testtext && !strcmp(textA, testtext), "A: %s, unexpected text %s.\n",
+                    testmodes[mode], textA);
+            break;
+        default:
+            ok(0, "Unexpected test mode %d.\n", mode);
+        }
+        break;
+    }
+
+    return IsWindowUnicode(hwnd) ? CallWindowProcW(oldproc, hwnd, msg, wparam, lparam) :
+        CallWindowProcA(oldproc, hwnd, msg, wparam, lparam);
+}
+
+static INT_PTR CALLBACK test_aw_conversion_dlgproc3(HWND hdlg, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    BOOL is_unicode = !!lparam;
+    LONG_PTR oldproc;
+
+    switch (msg)
+    {
+    case WM_INITDIALOG:
+        ok(is_unicode == IsWindowUnicode(hdlg), "Unexpected unicode window property.\n");
+
+        oldproc = SetWindowLongPtrA(hdlg, GWLP_WNDPROC, (LONG_PTR)test_aw_conversion_wndproc);
+        SetWindowLongPtrA(hdlg, GWLP_USERDATA, oldproc);
+        ok(!IsWindowUnicode(hdlg), "Unexpected unicode window.\n");
+
+        dlg_test_aw_message(hdlg, WM_WININICHANGE);
+        dlg_test_aw_message(hdlg, WM_DEVMODECHANGE);
+        dlg_test_aw_message(hdlg, CB_DIR);
+        dlg_test_aw_message(hdlg, LB_DIR);
+        dlg_test_aw_message(hdlg, LB_ADDFILE);
+        dlg_test_aw_message(hdlg, EM_REPLACESEL);
+        dlg_test_aw_message(hdlg, WM_SETTEXT);
+
+        SetWindowLongPtrW(hdlg, GWLP_WNDPROC, (LONG_PTR)test_aw_conversion_wndproc);
+        ok(IsWindowUnicode(hdlg), "Expected unicode window.\n");
+
+        dlg_test_aw_message(hdlg, WM_WININICHANGE);
+        dlg_test_aw_message(hdlg, WM_DEVMODECHANGE);
+        dlg_test_aw_message(hdlg, CB_DIR);
+        dlg_test_aw_message(hdlg, LB_DIR);
+        dlg_test_aw_message(hdlg, LB_ADDFILE);
+        dlg_test_aw_message(hdlg, EM_REPLACESEL);
+        dlg_test_aw_message(hdlg, WM_SETTEXT);
+
+        SetWindowLongPtrA(hdlg, GWLP_WNDPROC, oldproc);
+        EndDialog(hdlg, -123);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static void test_DialogBoxParam(void)
+{
+    static const WCHAR nameW[] = {'T','E','S','T','_','E','M','P','T','Y','_','D','I','A','L','O','G',0};
     INT_PTR ret;
     HWND hwnd_invalid = (HWND)0x4444;
 
@@ -1272,6 +1875,11 @@ static void test_DialogBoxParamA(void)
        "got %d, expected ERROR_RESOURCE_NAME_NOT_FOUND\n",GetLastError());
 
     SetLastError(0xdeadbeef);
+    ret = DialogBoxParamA(GetModuleHandleA(NULL), "TEST_DIALOG_INVALID_CLASS", 0, DestroyDlgWinProc, 0);
+    ok(ret == -1, "DialogBoxParamA returned %ld, expected -1\n", ret);
+    ok(GetLastError() == 0, "got %d\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
     ret = DefDlgProcA(0, WM_ERASEBKGND, 0, 0);
     ok(ret == 0, "DefDlgProcA returned %ld, expected 0\n", ret);
     ok(GetLastError() == ERROR_INVALID_WINDOW_HANDLE ||
@@ -1284,7 +1892,21 @@ static void test_DialogBoxParamA(void)
     ret = DialogBoxParamA(GetModuleHandleA(NULL), "TEST_EMPTY_DIALOG", 0, TestDefButtonDlgProc, 0);
     ok(ret == IDOK, "Expected IDOK\n");
 
-    DialogBoxParamA(GetModuleHandleA(NULL), "TEST_EMPTY_DIALOG", 0, TestReturnKeyDlgProc, 0);
+    ret = DialogBoxParamA(GetModuleHandleA(NULL), "TEST_EMPTY_DIALOG", 0, TestReturnKeyDlgProc, 0);
+    ok(ret == 0, "Unexpected ret value %ld.\n", ret);
+
+    /* WM_SETTEXT handling in case of A/W dialog procedures vs A/W dialog window.  */
+    ret = DialogBoxParamW(GetModuleHandleA(NULL), nameW, 0, test_aw_conversion_dlgproc, 0);
+    ok(ret == -123, "Unexpected ret value %ld.\n", ret);
+
+    ret = DialogBoxParamA(GetModuleHandleA(NULL), "TEST_EMPTY_DIALOG", 0, test_aw_conversion_dlgproc2, 0);
+    ok(ret == -123, "Unexpected ret value %ld.\n", ret);
+
+    ret = DialogBoxParamW(GetModuleHandleA(NULL), nameW, 0, test_aw_conversion_dlgproc3, 1);
+    ok(ret == -123, "Unexpected ret value %ld.\n", ret);
+
+    ret = DialogBoxParamA(GetModuleHandleA(NULL), "TEST_EMPTY_DIALOG", 0, test_aw_conversion_dlgproc3, 0);
+    ok(ret == -123, "Unexpected ret value %ld.\n", ret);
 }
 
 static void test_DisabledDialogTest(void)
@@ -1522,21 +2144,77 @@ static void test_timer_message(void)
     DialogBoxA(g_hinst, "RADIO_TEST_DIALOG", NULL, timer_message_dlg_proc);
 }
 
+static LRESULT CALLBACK msgbox_hook_proc(INT code, WPARAM wParam, LPARAM lParam)
+{
+    if (code == HCBT_ACTIVATE)
+    {
+        HWND msgbox = (HWND)wParam, msghwnd;
+        char text[64];
+
+        if (msgbox)
+        {
+            text[0] = 0;
+            GetWindowTextA(msgbox, text, sizeof(text));
+            ok(!strcmp(text, "MSGBOX caption"), "Unexpected window text \"%s\"\n", text);
+
+            msghwnd = GetDlgItem(msgbox, 0xffff);
+            ok(msghwnd != NULL, "Expected static control\n");
+
+            text[0] = 0;
+            GetWindowTextA(msghwnd, text, sizeof(text));
+            ok(!strcmp(text, "Text"), "Unexpected window text \"%s\"\n", text);
+
+            SendDlgItemMessageA(msgbox, IDCANCEL, WM_LBUTTONDOWN, 0, 0);
+            SendDlgItemMessageA(msgbox, IDCANCEL, WM_LBUTTONUP, 0, 0);
+        }
+    }
+
+    return CallNextHookEx(NULL, code, wParam, lParam);
+}
+
+static void test_MessageBox(void)
+{
+    HHOOK hook;
+    int ret;
+
+    hook = SetWindowsHookExA(WH_CBT, msgbox_hook_proc, NULL, GetCurrentThreadId());
+
+    ret = MessageBoxA(NULL, "Text", "MSGBOX caption", MB_OKCANCEL);
+    ok(ret == IDCANCEL, "got %d\n", ret);
+
+    UnhookWindowsHookEx(hook);
+}
+
+static INT_PTR CALLBACK custom_test_dialog_proc(HWND hdlg, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    if (msg == WM_INITDIALOG)
+        EndDialog(hdlg, 0);
+
+    return FALSE;
+}
+
+static void test_dialog_custom_data(void)
+{
+    DialogBoxA(g_hinst, "CUSTOM_TEST_DIALOG", NULL, custom_test_dialog_proc);
+}
+
 START_TEST(dialog)
 {
     g_hinst = GetModuleHandleA (0);
 
     if (!RegisterWindowClasses()) assert(0);
 
+    test_dialog_custom_data();
     test_GetNextDlgItem();
     test_IsDialogMessage();
     test_WM_NEXTDLGCTL();
     test_focus();
     test_GetDlgItem();
     test_GetDlgItemText();
-    test_DialogBoxParamA();
+    test_DialogBoxParam();
     test_DisabledDialogTest();
     test_MessageBoxFontTest();
     test_SaveRestoreFocus();
     test_timer_message();
+    test_MessageBox();
 }

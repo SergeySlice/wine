@@ -150,6 +150,7 @@ const char *debug_dxgi_format(DXGI_FORMAT format)
         WINE_D3D_TO_STR(DXGI_FORMAT_BC7_TYPELESS);
         WINE_D3D_TO_STR(DXGI_FORMAT_BC7_UNORM);
         WINE_D3D_TO_STR(DXGI_FORMAT_BC7_UNORM_SRGB);
+        WINE_D3D_TO_STR(DXGI_FORMAT_B4G4R4A4_UNORM);
         default:
             FIXME("Unrecognized DXGI_FORMAT %#x.\n", format);
             return "unrecognized";
@@ -164,6 +165,47 @@ const char *debug_float4(const float *values)
         return "(null)";
     return wine_dbg_sprintf("{%.8e, %.8e, %.8e, %.8e}",
             values[0], values[1], values[2], values[3]);
+}
+
+void d3d11_primitive_topology_from_wined3d_primitive_type(enum wined3d_primitive_type primitive_type,
+        unsigned int patch_vertex_count, D3D11_PRIMITIVE_TOPOLOGY *topology)
+{
+    if (primitive_type <= WINED3D_PT_TRIANGLESTRIP_ADJ)
+    {
+        *topology = (D3D11_PRIMITIVE_TOPOLOGY)primitive_type;
+        return;
+    }
+
+    if (primitive_type == WINED3D_PT_PATCH)
+    {
+        *topology = D3D11_PRIMITIVE_TOPOLOGY_1_CONTROL_POINT_PATCHLIST + patch_vertex_count - 1;
+        return;
+    }
+
+    *topology = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
+}
+
+void wined3d_primitive_type_from_d3d11_primitive_topology(D3D11_PRIMITIVE_TOPOLOGY topology,
+        enum wined3d_primitive_type *type, unsigned int *patch_vertex_count)
+{
+    if (topology <= D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP_ADJ)
+    {
+        *type = (enum wined3d_primitive_type)topology;
+        *patch_vertex_count = 0;
+        return;
+    }
+
+    if (D3D11_PRIMITIVE_TOPOLOGY_1_CONTROL_POINT_PATCHLIST <= topology
+            && topology <= D3D11_PRIMITIVE_TOPOLOGY_32_CONTROL_POINT_PATCHLIST)
+    {
+        *type = WINED3D_PT_PATCH;
+        *patch_vertex_count = topology - D3D11_PRIMITIVE_TOPOLOGY_1_CONTROL_POINT_PATCHLIST + 1;
+        return;
+    }
+
+    WARN("Invalid primitive topology %#x.\n", topology);
+    *type = WINED3D_PT_UNDEFINED;
+    *patch_vertex_count = 0;
 }
 
 DXGI_FORMAT dxgi_format_from_wined3dformat(enum wined3d_format_id format)
@@ -270,6 +312,7 @@ DXGI_FORMAT dxgi_format_from_wined3dformat(enum wined3d_format_id format)
         case WINED3DFMT_BC7_TYPELESS: return DXGI_FORMAT_BC7_TYPELESS;
         case WINED3DFMT_BC7_UNORM: return DXGI_FORMAT_BC7_UNORM;
         case WINED3DFMT_BC7_UNORM_SRGB: return DXGI_FORMAT_BC7_UNORM_SRGB;
+        case WINED3DFMT_B4G4R4A4_UNORM: return DXGI_FORMAT_B4G4R4A4_UNORM;
         default:
             FIXME("Unhandled wined3d format %#x.\n", format);
             return DXGI_FORMAT_UNKNOWN;
@@ -380,6 +423,7 @@ enum wined3d_format_id wined3dformat_from_dxgi_format(DXGI_FORMAT format)
         case DXGI_FORMAT_BC7_TYPELESS: return WINED3DFMT_BC7_TYPELESS;
         case DXGI_FORMAT_BC7_UNORM: return WINED3DFMT_BC7_UNORM;
         case DXGI_FORMAT_BC7_UNORM_SRGB: return WINED3DFMT_BC7_UNORM_SRGB;
+        case DXGI_FORMAT_B4G4R4A4_UNORM: return WINED3DFMT_B4G4R4A4_UNORM;
         default:
             FIXME("Unhandled DXGI_FORMAT %#x.\n", format);
             return WINED3DFMT_UNKNOWN;
@@ -397,21 +441,9 @@ unsigned int wined3d_getdata_flags_from_d3d11_async_getdata_flags(unsigned int d
     return WINED3DGETDATA_FLUSH;
 }
 
-DWORD wined3d_usage_from_d3d11(UINT bind_flags, enum D3D11_USAGE usage)
+DWORD wined3d_usage_from_d3d11(enum D3D11_USAGE usage)
 {
-    static const DWORD handled = D3D11_BIND_SHADER_RESOURCE
-            | D3D11_BIND_RENDER_TARGET
-            | D3D11_BIND_DEPTH_STENCIL;
     DWORD wined3d_usage = 0;
-
-    if (bind_flags & D3D11_BIND_SHADER_RESOURCE)
-        wined3d_usage |= WINED3DUSAGE_TEXTURE;
-    if (bind_flags & D3D11_BIND_RENDER_TARGET)
-        wined3d_usage |= WINED3DUSAGE_RENDERTARGET;
-    if (bind_flags & D3D11_BIND_DEPTH_STENCIL)
-        wined3d_usage |= WINED3DUSAGE_DEPTHSTENCIL;
-    if (bind_flags & ~handled)
-        FIXME("Unhandled bind flags %#x.\n", bind_flags & ~handled);
 
     if (usage == D3D11_USAGE_DYNAMIC)
         wined3d_usage |= WINED3DUSAGE_DYNAMIC;
@@ -554,6 +586,94 @@ UINT d3d10_resource_misc_flags_from_d3d11_resource_misc_flags(UINT resource_misc
     return d3d10_resource_misc_flags;
 }
 
+static BOOL d3d11_bind_flags_are_gpu_read_only(UINT bind_flags)
+{
+    static const BOOL read_only_bind_flags = D3D11_BIND_VERTEX_BUFFER
+            | D3D11_BIND_INDEX_BUFFER | D3D11_BIND_CONSTANT_BUFFER
+            | D3D11_BIND_SHADER_RESOURCE;
+
+    return !(bind_flags & ~read_only_bind_flags);
+}
+
+BOOL validate_d3d11_resource_access_flags(D3D11_RESOURCE_DIMENSION resource_dimension,
+        D3D11_USAGE usage, UINT bind_flags, UINT cpu_access_flags, D3D_FEATURE_LEVEL feature_level)
+{
+    const BOOL is_texture = resource_dimension != D3D11_RESOURCE_DIMENSION_BUFFER;
+
+    switch (usage)
+    {
+        case D3D11_USAGE_DEFAULT:
+            if ((bind_flags == D3D11_BIND_SHADER_RESOURCE && feature_level >= D3D_FEATURE_LEVEL_11_0)
+                    || (is_texture && bind_flags == D3D11_BIND_RENDER_TARGET)
+                    || bind_flags == D3D11_BIND_UNORDERED_ACCESS)
+                break;
+            if (cpu_access_flags)
+            {
+                WARN("Default resources are not CPU accessible.\n");
+                return FALSE;
+            }
+            break;
+
+        case D3D11_USAGE_IMMUTABLE:
+            if (!bind_flags)
+            {
+                WARN("Bind flags must be non-zero for immutable resources.\n");
+                return FALSE;
+            }
+            if (!d3d11_bind_flags_are_gpu_read_only(bind_flags))
+            {
+                WARN("Immutable resources cannot be writable by GPU.\n");
+                return FALSE;
+            }
+
+            if (cpu_access_flags)
+            {
+                WARN("Immutable resources are not CPU accessible.\n");
+                return FALSE;
+            }
+            break;
+
+        case D3D11_USAGE_DYNAMIC:
+            if (!bind_flags)
+            {
+                WARN("Bind flags must be non-zero for dynamic resources.\n");
+                return FALSE;
+            }
+            if (!d3d11_bind_flags_are_gpu_read_only(bind_flags))
+            {
+                WARN("Dynamic resources cannot be writable by GPU.\n");
+                return FALSE;
+            }
+
+            if (cpu_access_flags != D3D11_CPU_ACCESS_WRITE)
+            {
+                WARN("CPU access must be D3D11_CPU_ACCESS_WRITE for dynamic resources.\n");
+                return FALSE;
+            }
+            break;
+
+        case D3D11_USAGE_STAGING:
+            if (bind_flags)
+            {
+                WARN("Invalid bind flags %#x for staging resources.\n", bind_flags);
+                return FALSE;
+            }
+
+            if (!cpu_access_flags)
+            {
+                WARN("CPU access must be non-zero for staging resources.\n");
+                return FALSE;
+            }
+            break;
+
+        default:
+            WARN("Invalid usage %#x.\n", usage);
+            return FALSE;
+    }
+
+    return TRUE;
+}
+
 struct wined3d_resource *wined3d_resource_from_d3d11_resource(ID3D11Resource *resource)
 {
     D3D11_RESOURCE_DIMENSION dimension;
@@ -565,6 +685,10 @@ struct wined3d_resource *wined3d_resource_from_d3d11_resource(ID3D11Resource *re
         case D3D11_RESOURCE_DIMENSION_BUFFER:
             return wined3d_buffer_get_resource(unsafe_impl_from_ID3D11Buffer(
                     (ID3D11Buffer *)resource)->wined3d_buffer);
+
+        case D3D11_RESOURCE_DIMENSION_TEXTURE1D:
+            return wined3d_texture_get_resource(unsafe_impl_from_ID3D11Texture1D(
+                    (ID3D11Texture1D *)resource)->wined3d_texture);
 
         case D3D11_RESOURCE_DIMENSION_TEXTURE2D:
             return wined3d_texture_get_resource(unsafe_impl_from_ID3D11Texture2D(
@@ -592,9 +716,17 @@ struct wined3d_resource *wined3d_resource_from_d3d10_resource(ID3D10Resource *re
             return wined3d_buffer_get_resource(unsafe_impl_from_ID3D10Buffer(
                     (ID3D10Buffer *)resource)->wined3d_buffer);
 
+        case D3D10_RESOURCE_DIMENSION_TEXTURE1D:
+            return wined3d_texture_get_resource(unsafe_impl_from_ID3D10Texture1D(
+                    (ID3D10Texture1D *)resource)->wined3d_texture);
+
         case D3D10_RESOURCE_DIMENSION_TEXTURE2D:
             return wined3d_texture_get_resource(unsafe_impl_from_ID3D10Texture2D(
                     (ID3D10Texture2D *)resource)->wined3d_texture);
+
+        case D3D10_RESOURCE_DIMENSION_TEXTURE3D:
+            return wined3d_texture_get_resource(unsafe_impl_from_ID3D10Texture3D(
+                    (ID3D10Texture3D *)resource)->wined3d_texture);
 
         default:
             FIXME("Unhandled resource dimension %#x.\n", dimension);
@@ -606,21 +738,24 @@ DWORD wined3d_map_flags_from_d3d11_map_type(D3D11_MAP map_type)
 {
     switch (map_type)
     {
+        case D3D11_MAP_WRITE:
+            return WINED3D_MAP_WRITE;
+
         case D3D11_MAP_READ_WRITE:
-            return 0;
+            return WINED3D_MAP_READ | WINED3D_MAP_WRITE;
 
         case D3D11_MAP_READ:
-            return WINED3D_MAP_READONLY;
+            return WINED3D_MAP_READ;
 
         case D3D11_MAP_WRITE_DISCARD:
-            return WINED3D_MAP_DISCARD;
+            return WINED3D_MAP_WRITE | WINED3D_MAP_DISCARD;
 
         case D3D11_MAP_WRITE_NO_OVERWRITE:
-            return WINED3D_MAP_NOOVERWRITE;
+            return WINED3D_MAP_WRITE | WINED3D_MAP_NOOVERWRITE;
 
         default:
             FIXME("Unhandled map_type %#x.\n", map_type);
-            return 0;
+            return WINED3D_MAP_READ | WINED3D_MAP_WRITE;
     }
 }
 
@@ -640,6 +775,21 @@ DWORD wined3d_clear_flags_from_d3d11_clear_flags(UINT clear_flags)
     }
 
     return wined3d_clear_flags;
+}
+
+unsigned int wined3d_access_from_d3d11(D3D11_USAGE usage, UINT cpu_access)
+{
+    unsigned int access;
+
+    access = usage == D3D11_USAGE_STAGING ? WINED3D_RESOURCE_ACCESS_CPU : WINED3D_RESOURCE_ACCESS_GPU;
+    if (cpu_access & D3D11_CPU_ACCESS_WRITE)
+        access |= WINED3D_RESOURCE_ACCESS_MAP_W;
+    if (cpu_access & D3D11_CPU_ACCESS_READ)
+        access |= WINED3D_RESOURCE_ACCESS_MAP_R;
+    if (cpu_access &= ~(D3D11_CPU_ACCESS_WRITE | D3D11_CPU_ACCESS_READ))
+        FIXME("Unhandled CPU access flags %#x.\n", cpu_access);
+
+    return access;
 }
 
 HRESULT d3d_get_private_data(struct wined3d_private_store *store,
@@ -718,82 +868,6 @@ HRESULT d3d_set_private_data_interface(struct wined3d_private_store *store,
     hr = wined3d_private_store_set_private_data(store,
             guid, object, sizeof(object), WINED3DSPD_IUNKNOWN);
     wined3d_mutex_unlock();
-
-    return hr;
-}
-
-void skip_dword_unknown(const char **ptr, unsigned int count)
-{
-    unsigned int i;
-    DWORD d;
-
-    FIXME("Skipping %u unknown DWORDs:\n", count);
-    for (i = 0; i < count; ++i)
-    {
-        read_dword(ptr, &d);
-        FIXME("\t0x%08x\n", d);
-    }
-}
-
-HRESULT parse_dxbc(const char *data, SIZE_T data_size,
-        HRESULT (*chunk_handler)(const char *data, DWORD data_size, DWORD tag, void *ctx), void *ctx)
-{
-    const char *ptr = data;
-    HRESULT hr = S_OK;
-    DWORD chunk_count;
-    DWORD total_size;
-    unsigned int i;
-    DWORD tag;
-
-    read_dword(&ptr, &tag);
-    TRACE("tag: %s.\n", debugstr_an((const char *)&tag, 4));
-
-    if (tag != TAG_DXBC)
-    {
-        WARN("Wrong tag.\n");
-        return E_INVALIDARG;
-    }
-
-    /* checksum? */
-    skip_dword_unknown(&ptr, 4);
-
-    skip_dword_unknown(&ptr, 1);
-
-    read_dword(&ptr, &total_size);
-    TRACE("total size: %#x\n", total_size);
-
-    read_dword(&ptr, &chunk_count);
-    TRACE("chunk count: %#x\n", chunk_count);
-
-    for (i = 0; i < chunk_count; ++i)
-    {
-        DWORD chunk_tag, chunk_size;
-        const char *chunk_ptr;
-        DWORD chunk_offset;
-
-        read_dword(&ptr, &chunk_offset);
-        TRACE("chunk %u at offset %#x\n", i, chunk_offset);
-
-        if (chunk_offset >= data_size || !require_space(chunk_offset, 2, sizeof(DWORD), data_size))
-        {
-            WARN("Invalid chunk offset %#x (data size %#lx).\n", chunk_offset, data_size);
-            return E_FAIL;
-        }
-
-        chunk_ptr = data + chunk_offset;
-
-        read_dword(&chunk_ptr, &chunk_tag);
-        read_dword(&chunk_ptr, &chunk_size);
-
-        if (!require_space(chunk_ptr - data, 1, chunk_size, data_size))
-        {
-            WARN("Invalid chunk size %#x (data size %#lx, chunk offset %#x).\n", chunk_size, data_size, chunk_offset);
-            return E_FAIL;
-        }
-
-        hr = chunk_handler(chunk_ptr, chunk_size, chunk_tag, ctx);
-        if (FAILED(hr)) break;
-    }
 
     return hr;
 }

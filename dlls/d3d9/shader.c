@@ -18,6 +18,7 @@
  */
 
 #include "config.h"
+#include "wine/port.h"
 #include "d3d9_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3d9);
@@ -126,7 +127,7 @@ static const IDirect3DVertexShader9Vtbl d3d9_vertexshader_vtbl =
 
 static void STDMETHODCALLTYPE d3d9_vertexshader_wined3d_object_destroyed(void *parent)
 {
-    HeapFree(GetProcessHeap(), 0, parent);
+    heap_free(parent);
 }
 
 static const struct wined3d_parent_ops d3d9_vertexshader_wined3d_parent_ops =
@@ -143,9 +144,7 @@ HRESULT vertexshader_init(struct d3d9_vertexshader *shader, struct d3d9_device *
     shader->IDirect3DVertexShader9_iface.lpVtbl = &d3d9_vertexshader_vtbl;
 
     desc.byte_code = byte_code;
-    desc.input_signature.element_count = 0;
-    desc.output_signature.element_count = 0;
-    desc.max_version = 3;
+    desc.byte_code_size = ~(size_t)0;
 
     wined3d_mutex_lock();
     hr = wined3d_shader_create_vs(device->wined3d_device, &desc, shader,
@@ -277,7 +276,7 @@ static const IDirect3DPixelShader9Vtbl d3d9_pixelshader_vtbl =
 
 static void STDMETHODCALLTYPE d3d9_pixelshader_wined3d_object_destroyed(void *parent)
 {
-    HeapFree(GetProcessHeap(), 0, parent);
+    heap_free(parent);
 }
 
 static const struct wined3d_parent_ops d3d9_pixelshader_wined3d_parent_ops =
@@ -294,9 +293,7 @@ HRESULT pixelshader_init(struct d3d9_pixelshader *shader, struct d3d9_device *de
     shader->IDirect3DPixelShader9_iface.lpVtbl = &d3d9_pixelshader_vtbl;
 
     desc.byte_code = byte_code;
-    desc.input_signature.element_count = 0;
-    desc.output_signature.element_count = 0;
-    desc.max_version = 3;
+    desc.byte_code_size = ~(size_t)0;
 
     wined3d_mutex_lock();
     hr = wined3d_shader_create_ps(device->wined3d_device, &desc, shader,

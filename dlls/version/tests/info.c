@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2004 Stefan Leichter
+ * Copyright (C) 2017 Akihiro Sagawa
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -23,7 +24,10 @@
 #include "windef.h"
 #include "winbase.h"
 #include "winerror.h"
+#include "winnls.h"
+#include "winuser.h"
 #include "winver.h"
+#include "verrsrc.h"
 #include "wine/test.h"
 
 #define MY_LAST_ERROR ((DWORD)-1)
@@ -544,7 +548,7 @@ static void test_VerQueryValueA(void)
     ok(len == 0, "VerQueryValue returned %u, expected 0\n", len);
     ok(p != (char *)0xdeadbeef, "not expected 0xdeadbeef\n");
 
-    for (i = 0; i < sizeof(value_name)/sizeof(value_name[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(value_name); i++)
     {
 	sprintf(buf, "\\StringFileInfo\\%08x\\%s", translation, value_name[i]);
         p = (char *)0xdeadbeef;
@@ -624,6 +628,110 @@ static void test_extra_block(void)
     HeapFree(GetProcessHeap(), 0, ver);
 }
 
+static void test_GetFileVersionInfoEx(void)
+{
+    char *ver, *p;
+    BOOL ret;
+    UINT size, translation, i;
+    HMODULE mod;
+    BOOL (WINAPI *pGetFileVersionInfoExW)(DWORD, LPCWSTR, DWORD, DWORD, LPVOID);
+    DWORD (WINAPI *pGetFileVersionInfoSizeExW)(DWORD, LPCWSTR, LPDWORD);
+    const LANGID lang = GetUserDefaultUILanguage();
+    const LANGID english = MAKELANGID(LANG_ENGLISH, SUBLANG_DEFAULT);
+    const WORD unicode = 1200; /* = UNICODE */
+    const WCHAR kernel32W[] = {'k','e','r','n','e','l','3','2','.','d','l','l',0};
+    const DWORD test_flags[] = {
+        0, FILE_VER_GET_LOCALISED, FILE_VER_GET_NEUTRAL,
+        FILE_VER_GET_LOCALISED | FILE_VER_GET_NEUTRAL,
+        0xdeadbeef, /* invalid value (ignored) */
+    };
+    char desc[MAX_PATH];
+
+    mod = GetModuleHandleA("kernel32.dll");
+    assert(mod);
+
+    if (!FindResourceExA(mod, (LPCSTR)RT_VERSION, (LPCSTR)VS_VERSION_INFO, lang) &&
+        !FindResourceExA(mod, (LPCSTR)RT_VERSION, (LPCSTR)VS_VERSION_INFO,
+                         MAKELANGID(PRIMARYLANGID(lang),SUBLANG_NEUTRAL)))
+    {
+        skip("Translation is not available\n");
+        return;
+    }
+
+    size = GetFileVersionInfoSizeW(kernel32W, NULL);
+    ok(size, "GetFileVersionInfoSize(kernel32) error %u\n", GetLastError());
+
+    ver = HeapAlloc(GetProcessHeap(), 0, size);
+    assert(ver);
+
+    ret = GetFileVersionInfoW(kernel32W, 0, size, ver);
+    ok(ret, "GetFileVersionInfo error %u\n", GetLastError());
+
+    ret = VerQueryValueA(ver, "\\VarFileInfo\\Translation", (void **)&p, &size);
+    translation = *(UINT *)p;
+    ok(ret, "VerQueryValue error %u\n", GetLastError());
+    ok(size == 4, "VerQueryValue returned %u, expected 4\n", size);
+
+    /* test default version resource */
+    ok(LOWORD(translation) == lang, "got %u, expected lang is %u\n",
+       LOWORD(translation), lang);
+    ok(HIWORD(translation) == unicode, "got %u, expected codepage is %u\n",
+       HIWORD(translation), unicode);
+
+    HeapFree(GetProcessHeap(), 0, ver);
+
+    mod = GetModuleHandleA("version.dll");
+    assert(mod);
+
+    /* prefer W-version as A-version is not available on Windows 7 */
+    pGetFileVersionInfoExW = (void *)GetProcAddress(mod, "GetFileVersionInfoExW");
+    pGetFileVersionInfoSizeExW = (void *)GetProcAddress(mod, "GetFileVersionInfoSizeExW");
+    if (!pGetFileVersionInfoExW && !pGetFileVersionInfoSizeExW)
+    {
+        win_skip("GetFileVersionInfoEx family is not available\n");
+        return;
+    }
+
+    for (i = 0; i < ARRAY_SIZE(test_flags); i++)
+    {
+        size = pGetFileVersionInfoSizeExW(test_flags[i], kernel32W, NULL);
+        ok(size, "[%u] GetFileVersionInfoSizeEx(kernel32) error %u\n", i, GetLastError());
+
+        ver = HeapAlloc(GetProcessHeap(), 0, size);
+        assert(ver);
+
+        ret = pGetFileVersionInfoExW(test_flags[i], kernel32W, 0, size, ver);
+        ok(ret, "[%u] GetFileVersionInfoEx error %u\n", i, GetLastError());
+
+        ret = VerQueryValueA(ver, "\\VarFileInfo\\Translation", (void **)&p, &size);
+        ok(ret, "[%u] VerQueryValue error %u\n", i, GetLastError());
+        ok(size == 4, "[%u] VerQueryValue returned %u, expected 4\n", i, size);
+        translation = *(UINT *)p;
+
+        /* test MUI version resource */
+        if (test_flags[i] & FILE_VER_GET_LOCALISED)
+            ok(LOWORD(translation) == lang, "[%u] got %u, expected lang is %u\n",
+               i, LOWORD(translation), lang);
+        else
+            ok(LOWORD(translation) == english, "[%u] got %u, expected lang is %u\n",
+               i, LOWORD(translation), english);
+        ok(HIWORD(translation) == unicode, "[%u] got %u, expected codepage is %u\n",
+           i, HIWORD(translation), unicode);
+
+        /* test string info using translation info */
+        size = 0;
+        sprintf(desc, "\\StringFileInfo\\%04x%04x\\FileDescription",
+                LOWORD(translation), HIWORD(translation));
+        ret = VerQueryValueA(ver, desc, (void **)&p, &size);
+        ok(ret, "[%u] VerQueryValue error %u\n", i, GetLastError());
+        ok(size == strlen(p) + 1, "[%u] VerQueryValue returned %u\n", i, size);
+
+        HeapFree(GetProcessHeap(), 0, ver);
+    }
+
+    return;
+}
+
 START_TEST(info)
 {
     test_info_size();
@@ -631,4 +739,5 @@ START_TEST(info)
     test_32bit_win();
     test_VerQueryValueA();
     test_extra_block();
+    test_GetFileVersionInfoEx();
 }

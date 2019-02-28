@@ -142,10 +142,57 @@ enum {
 };
 #endif
 
+#if MAC_OS_X_VERSION_MAX_ALLOWED < 1090
+/* Defined in <Security/CipherSuite.h> in the 10.9 SDK or later. */
+enum {
+    TLS_PSK_WITH_RC4_128_SHA                  = 0x008A,
+    TLS_PSK_WITH_3DES_EDE_CBC_SHA             = 0x008B,
+    TLS_PSK_WITH_AES_128_CBC_SHA              = 0x008C,
+    TLS_PSK_WITH_AES_256_CBC_SHA              = 0x008D,
+    TLS_DHE_PSK_WITH_RC4_128_SHA              = 0x008E,
+    TLS_DHE_PSK_WITH_3DES_EDE_CBC_SHA         = 0x008F,
+    TLS_DHE_PSK_WITH_AES_128_CBC_SHA          = 0x0090,
+    TLS_DHE_PSK_WITH_AES_256_CBC_SHA          = 0x0091,
+    TLS_RSA_PSK_WITH_RC4_128_SHA              = 0x0092,
+    TLS_RSA_PSK_WITH_3DES_EDE_CBC_SHA         = 0x0093,
+    TLS_RSA_PSK_WITH_AES_128_CBC_SHA          = 0x0094,
+    TLS_RSA_PSK_WITH_AES_256_CBC_SHA          = 0x0095,
+    TLS_PSK_WITH_NULL_SHA                     = 0x002C,
+    TLS_DHE_PSK_WITH_NULL_SHA                 = 0x002D,
+    TLS_RSA_PSK_WITH_NULL_SHA                 = 0x002E,
+    TLS_PSK_WITH_AES_128_GCM_SHA256           = 0x00A8,
+    TLS_PSK_WITH_AES_256_GCM_SHA384           = 0x00A9,
+    TLS_DHE_PSK_WITH_AES_128_GCM_SHA256       = 0x00AA,
+    TLS_DHE_PSK_WITH_AES_256_GCM_SHA384       = 0x00AB,
+    TLS_RSA_PSK_WITH_AES_128_GCM_SHA256       = 0x00AC,
+    TLS_RSA_PSK_WITH_AES_256_GCM_SHA384       = 0x00AD,
+    TLS_PSK_WITH_AES_128_CBC_SHA256           = 0x00AE,
+    TLS_PSK_WITH_AES_256_CBC_SHA384           = 0x00AF,
+    TLS_PSK_WITH_NULL_SHA256                  = 0x00B0,
+    TLS_PSK_WITH_NULL_SHA384                  = 0x00B1,
+    TLS_DHE_PSK_WITH_AES_128_CBC_SHA256       = 0x00B2,
+    TLS_DHE_PSK_WITH_AES_256_CBC_SHA384       = 0x00B3,
+    TLS_DHE_PSK_WITH_NULL_SHA256              = 0x00B4,
+    TLS_DHE_PSK_WITH_NULL_SHA384              = 0x00B5,
+    TLS_RSA_PSK_WITH_AES_128_CBC_SHA256       = 0x00B6,
+    TLS_RSA_PSK_WITH_AES_256_CBC_SHA384       = 0x00B7,
+    TLS_RSA_PSK_WITH_NULL_SHA256              = 0x00B8,
+    TLS_RSA_PSK_WITH_NULL_SHA384              = 0x00B9,
+};
+#endif
+
+enum schan_mode {
+    schan_mode_NONE,
+    schan_mode_READ,
+    schan_mode_WRITE,
+    schan_mode_HANDSHAKE,
+};
 
 struct mac_session {
     SSLContextRef context;
     struct schan_transport *transport;
+    enum schan_mode mode;
+    CRITICAL_SECTION cs;
 };
 
 
@@ -163,6 +210,7 @@ enum {
     schan_kx_DH_RSA,
     schan_kx_DHE_DSS_EXPORT,
     schan_kx_DHE_DSS,
+    schan_kx_DHE_PSK,
     schan_kx_DHE_RSA_EXPORT,
     schan_kx_DHE_RSA,
     schan_kx_ECDH_anon,
@@ -172,7 +220,9 @@ enum {
     schan_kx_ECDHE_RSA,
     schan_kx_FORTEZZA_DMS,
     schan_kx_NULL,
+    schan_kx_PSK,
     schan_kx_RSA_EXPORT,
+    schan_kx_RSA_PSK,
     schan_kx_RSA,
 };
 
@@ -309,6 +359,23 @@ static const struct cipher_suite cipher_suites[] = {
     CIPHER_SUITE(TLS, DH_anon, 3DES_EDE_CBC, SHA),
     CIPHER_SUITE(TLS, DH_anon, AES_128_CBC, SHA256),
     CIPHER_SUITE(TLS, DH_anon, AES_256_CBC, SHA256),
+
+    CIPHER_SUITE(TLS, PSK, RC4_128, SHA),
+    CIPHER_SUITE(TLS, PSK, 3DES_EDE_CBC, SHA),
+    CIPHER_SUITE(TLS, PSK, AES_128_CBC, SHA),
+    CIPHER_SUITE(TLS, PSK, AES_256_CBC, SHA),
+    CIPHER_SUITE(TLS, DHE_PSK, RC4_128, SHA),
+    CIPHER_SUITE(TLS, DHE_PSK, 3DES_EDE_CBC, SHA),
+    CIPHER_SUITE(TLS, DHE_PSK, AES_128_CBC, SHA),
+    CIPHER_SUITE(TLS, DHE_PSK, AES_256_CBC, SHA),
+    CIPHER_SUITE(TLS, RSA_PSK, RC4_128, SHA),
+    CIPHER_SUITE(TLS, RSA_PSK, 3DES_EDE_CBC, SHA),
+    CIPHER_SUITE(TLS, RSA_PSK, AES_128_CBC, SHA),
+    CIPHER_SUITE(TLS, RSA_PSK, AES_256_CBC, SHA),
+    CIPHER_SUITE(TLS, PSK, NULL, SHA),
+    CIPHER_SUITE(TLS, DHE_PSK, NULL, SHA),
+    CIPHER_SUITE(TLS, RSA_PSK, NULL, SHA),
+
     CIPHER_SUITE(TLS, RSA, AES_128_GCM, SHA256),
     CIPHER_SUITE(TLS, RSA, AES_256_GCM, SHA384),
     CIPHER_SUITE(TLS, DHE_RSA, AES_128_GCM, SHA256),
@@ -321,6 +388,26 @@ static const struct cipher_suite cipher_suites[] = {
     CIPHER_SUITE(TLS, DH_DSS, AES_256_GCM, SHA384),
     CIPHER_SUITE(TLS, DH_anon, AES_128_GCM, SHA256),
     CIPHER_SUITE(TLS, DH_anon, AES_256_GCM, SHA384),
+
+    CIPHER_SUITE(TLS, PSK, AES_128_GCM, SHA256),
+    CIPHER_SUITE(TLS, PSK, AES_256_GCM, SHA384),
+    CIPHER_SUITE(TLS, DHE_PSK, AES_128_GCM, SHA256),
+    CIPHER_SUITE(TLS, DHE_PSK, AES_256_GCM, SHA384),
+    CIPHER_SUITE(TLS, RSA_PSK, AES_128_GCM, SHA256),
+    CIPHER_SUITE(TLS, RSA_PSK, AES_256_GCM, SHA384),
+    CIPHER_SUITE(TLS, PSK, AES_128_CBC, SHA256),
+    CIPHER_SUITE(TLS, PSK, AES_256_CBC, SHA384),
+    CIPHER_SUITE(TLS, PSK, NULL, SHA256),
+    CIPHER_SUITE(TLS, PSK, NULL, SHA384),
+    CIPHER_SUITE(TLS, DHE_PSK, AES_128_CBC, SHA256),
+    CIPHER_SUITE(TLS, DHE_PSK, AES_256_CBC, SHA384),
+    CIPHER_SUITE(TLS, DHE_PSK, NULL, SHA256),
+    CIPHER_SUITE(TLS, DHE_PSK, NULL, SHA384),
+    CIPHER_SUITE(TLS, RSA_PSK, AES_128_CBC, SHA256),
+    CIPHER_SUITE(TLS, RSA_PSK, AES_256_CBC, SHA384),
+    CIPHER_SUITE(TLS, RSA_PSK, NULL, SHA256),
+    CIPHER_SUITE(TLS, RSA_PSK, NULL, SHA384),
+
     CIPHER_SUITE(TLS, ECDHE_ECDSA, AES_128_CBC, SHA256),
     CIPHER_SUITE(TLS, ECDHE_ECDSA, AES_256_CBC, SHA384),
     CIPHER_SUITE(TLS, ECDH_ECDSA, AES_128_CBC, SHA256),
@@ -349,7 +436,7 @@ static const struct cipher_suite cipher_suites[] = {
 static const struct cipher_suite* get_cipher_suite(SSLCipherSuite cipher_suite)
 {
     int i;
-    for (i = 0; i < sizeof(cipher_suites)/sizeof(cipher_suites[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(cipher_suites); i++)
     {
         if (cipher_suites[i].suite == cipher_suite)
             return &cipher_suites[i];
@@ -492,16 +579,18 @@ static ALG_ID schan_get_kx_algid(const struct cipher_suite* c)
     {
     case schan_kx_DHE_DSS_EXPORT:
     case schan_kx_DHE_DSS:
+    case schan_kx_DHE_PSK:
     case schan_kx_DHE_RSA_EXPORT:
     case schan_kx_DHE_RSA:          return CALG_DH_EPHEM;
     case schan_kx_ECDH_anon:
     case schan_kx_ECDH_ECDSA:
-    case schan_kx_ECDH_RSA:
+    case schan_kx_ECDH_RSA:         return CALG_ECDH;
     case schan_kx_ECDHE_ECDSA:
-    case schan_kx_ECDHE_RSA:        return CALG_ECDH;
+    case schan_kx_ECDHE_RSA:        return CALG_ECDH_EPHEM;
     case schan_kx_NULL:             return 0;
     case schan_kx_RSA:
-    case schan_kx_RSA_EXPORT:       return CALG_RSA_KEYX;
+    case schan_kx_RSA_EXPORT:
+    case schan_kx_RSA_PSK:          return CALG_RSA_KEYX;
 
     case schan_kx_DH_anon_EXPORT:
     case schan_kx_DH_anon:
@@ -510,6 +599,7 @@ static ALG_ID schan_get_kx_algid(const struct cipher_suite* c)
     case schan_kx_DH_RSA_EXPORT:
     case schan_kx_DH_RSA:
     case schan_kx_FORTEZZA_DMS:
+    case schan_kx_PSK:
         FIXME("Don't know CALG for key exchange algorithm %d for cipher suite %#x, returning 0\n", c->kx_alg, (unsigned)c->suite);
         return 0;
 
@@ -550,6 +640,12 @@ static OSStatus schan_pull_adapter(SSLConnectionRef transport, void *buff,
     OSStatus ret;
 
     TRACE("(%p/%p, %p, %p/%lu)\n", s, s->transport, buff, buff_len, *buff_len);
+
+    if (s->mode != schan_mode_READ && s->mode != schan_mode_HANDSHAKE)
+    {
+        WARN("called in mode %u\n", s->mode);
+        return noErr;
+    }
 
     status = schan_pull(s->transport, buff, buff_len);
     if (status == 0)
@@ -610,6 +706,12 @@ static OSStatus schan_push_adapter(SSLConnectionRef transport, const void *buff,
 
     TRACE("(%p/%p, %p, %p/%lu)\n", s, s->transport, buff, buff_len, *buff_len);
 
+    if (s->mode != schan_mode_WRITE && s->mode != schan_mode_HANDSHAKE)
+    {
+        WARN("called in mode %u\n", s->mode);
+        return noErr;
+    }
+
     status = schan_push(s->transport, buff, buff_len);
     if (status == 0)
     {
@@ -656,9 +758,12 @@ BOOL schan_imp_create_session(schan_imp_session *session, schan_credentials *cre
 
     TRACE("(%p)\n", session);
 
-    s = HeapAlloc(GetProcessHeap(), 0, sizeof(*s));
+    s = heap_alloc(sizeof(*s));
     if (!s)
         return FALSE;
+
+    InitializeCriticalSection(&s->cs);
+    s->cs.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": mac_session.cs");
 
     status = SSLNewContext(cred->credential_use == SECPKG_CRED_INBOUND, &s->context);
     if (status != noErr)
@@ -681,7 +786,7 @@ BOOL schan_imp_create_session(schan_imp_session *session, schan_credentials *cre
         goto fail;
     }
 
-    for(i=0; i < sizeof(protocol_priority_flags)/sizeof(*protocol_priority_flags); i++) {
+    for(i = 0; i < ARRAY_SIZE(protocol_priority_flags); i++) {
         if(!(protocol_priority_flags[i].enable_flag & supported_protocols))
            continue;
 
@@ -701,13 +806,15 @@ BOOL schan_imp_create_session(schan_imp_session *session, schan_credentials *cre
         goto fail;
     }
 
+    s->mode = schan_mode_NONE;
+
     TRACE("    -> %p/%p\n", s, s->context);
 
     *session = (schan_imp_session)s;
     return TRUE;
 
 fail:
-    HeapFree(GetProcessHeap(), 0, s);
+    heap_free(s);
     return FALSE;
 }
 
@@ -721,7 +828,8 @@ void schan_imp_dispose_session(schan_imp_session session)
     status = SSLDisposeContext(s->context);
     if (status != noErr)
         ERR("Failed to dispose of session context: %d\n", status);
-    HeapFree(GetProcessHeap(), 0, s);
+    DeleteCriticalSection(&s->cs);
+    heap_free(s);
 }
 
 void schan_imp_set_session_transport(schan_imp_session session,
@@ -750,7 +858,10 @@ SECURITY_STATUS schan_imp_handshake(schan_imp_session session)
 
     TRACE("(%p/%p)\n", s, s->context);
 
+    s->mode = schan_mode_HANDSHAKE;
     status = SSLHandshake(s->context);
+    s->mode = schan_mode_NONE;
+
     if (status == noErr)
     {
         TRACE("Handshake completed\n");
@@ -830,6 +941,68 @@ unsigned int schan_imp_get_max_message_size(schan_imp_session session)
 {
     FIXME("Returning 1 << 14.\n");
     return 1 << 14;
+}
+
+ALG_ID schan_imp_get_key_signature_algorithm(schan_imp_session session)
+{
+    struct mac_session* s = (struct mac_session*)session;
+    SSLCipherSuite cipherSuite;
+    const struct cipher_suite* c;
+    int status;
+
+    TRACE("(%p/%p)\n", s, s->context);
+
+    status = SSLGetNegotiatedCipher(s->context, &cipherSuite);
+    if (status != noErr)
+    {
+        ERR("Failed to get session cipher suite: %d\n", status);
+        return 0;
+    }
+
+    c = get_cipher_suite(cipherSuite);
+    if (!c)
+    {
+        ERR("Unknown session cipher suite: %#x\n", (unsigned int)cipherSuite);
+        return 0;
+    }
+
+    switch (c->kx_alg)
+    {
+    case schan_kx_DH_DSS_EXPORT:
+    case schan_kx_DH_DSS:
+    case schan_kx_DHE_DSS_EXPORT:
+    case schan_kx_DHE_DSS:
+        return CALG_DSS_SIGN;
+
+    case schan_kx_DH_RSA_EXPORT:
+    case schan_kx_DH_RSA:
+    case schan_kx_DHE_RSA_EXPORT:
+    case schan_kx_DHE_RSA:
+    case schan_kx_ECDH_RSA:
+    case schan_kx_ECDHE_RSA:
+    case schan_kx_RSA_EXPORT:
+    case schan_kx_RSA:
+        return CALG_RSA_SIGN;
+
+    case schan_kx_ECDH_ECDSA:
+    case schan_kx_ECDHE_ECDSA:
+        return CALG_ECDSA;
+
+    case schan_kx_DH_anon_EXPORT:
+    case schan_kx_DH_anon:
+    case schan_kx_DHE_PSK:
+    case schan_kx_ECDH_anon:
+    case schan_kx_FORTEZZA_DMS:
+    case schan_kx_NULL:
+    case schan_kx_PSK:
+    case schan_kx_RSA_PSK:
+        FIXME("Don't know key signature algorithm for key exchange algorithm %d, returning 0\n", c->kx_alg);
+        return 0;
+
+    default:
+        FIXME("Unknown key exchange algorithm %d for cipher suite %#x, returning 0\n", c->kx_alg, (unsigned int)c->suite);
+        return 0;
+    }
 }
 
 SECURITY_STATUS schan_imp_get_connection_info(schan_imp_session session,
@@ -946,7 +1119,14 @@ SECURITY_STATUS schan_imp_send(schan_imp_session session, const void *buffer,
 
     TRACE("(%p/%p, %p, %p/%lu)\n", s, s->context, buffer, length, *length);
 
+    EnterCriticalSection(&s->cs);
+    s->mode = schan_mode_WRITE;
+
     status = SSLWrite(s->context, buffer, *length, length);
+
+    s->mode = schan_mode_NONE;
+    LeaveCriticalSection(&s->cs);
+
     if (status == noErr)
         TRACE("Wrote %lu bytes\n", *length);
     else if (status == errSSLWouldBlock)
@@ -976,7 +1156,14 @@ SECURITY_STATUS schan_imp_recv(schan_imp_session session, void *buffer,
 
     TRACE("(%p/%p, %p, %p/%lu)\n", s, s->context, buffer, length, *length);
 
+    EnterCriticalSection(&s->cs);
+    s->mode = schan_mode_READ;
+
     status = SSLRead(s->context, buffer, *length, length);
+
+    s->mode = schan_mode_NONE;
+    LeaveCriticalSection(&s->cs);
+
     if (status == noErr || status == errSSLClosedGraceful)
         TRACE("Read %lu bytes\n", *length);
     else if (status == errSSLWouldBlock)
@@ -998,9 +1185,9 @@ SECURITY_STATUS schan_imp_recv(schan_imp_session session, void *buffer,
     return SEC_E_OK;
 }
 
-BOOL schan_imp_allocate_certificate_credentials(schan_credentials *c)
+BOOL schan_imp_allocate_certificate_credentials(schan_credentials *c, const CERT_CONTEXT *cert)
 {
-    /* The certificate is never really used for anything. */
+    if (cert) FIXME("no support for certificate credentials on this platform\n");
     c->credentials = NULL;
     return TRUE;
 }
@@ -1016,7 +1203,6 @@ BOOL schan_imp_init(void)
     supported_protocols = SP_PROT_SSL2_CLIENT | SP_PROT_SSL3_CLIENT | SP_PROT_TLS1_0_CLIENT;
 
 #if MAC_OS_X_VERSION_MAX_ALLOWED >= 1080
-#ifdef   SSLGetProtocolVersionMax
     if(SSLGetProtocolVersionMax != NULL) {
         SSLProtocol max_protocol;
         SSLContextRef ctx;
@@ -1036,7 +1222,6 @@ BOOL schan_imp_init(void)
             WARN("SSLNewContext failed\n");
         }
     }
-#endif    
 #endif
 
     return TRUE;

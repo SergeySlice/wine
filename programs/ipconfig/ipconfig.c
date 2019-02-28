@@ -19,6 +19,8 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#define NONAMELESSUNION
+
 #include <winsock2.h>
 #include <windows.h>
 #include <iphlpapi.h>
@@ -33,7 +35,7 @@ static int ipconfig_vprintfW(const WCHAR *msg, __ms_va_list va_args)
     WCHAR msg_buffer[8192];
 
     wlen = FormatMessageW(FORMAT_MESSAGE_FROM_STRING, msg, 0, 0, msg_buffer,
-                          sizeof(msg_buffer)/sizeof(*msg_buffer), &va_args);
+                          ARRAY_SIZE(msg_buffer), &va_args);
 
     ret = WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), msg_buffer, wlen, &count, NULL);
     if (!ret)
@@ -60,7 +62,7 @@ static int ipconfig_vprintfW(const WCHAR *msg, __ms_va_list va_args)
     return count;
 }
 
-static int CDECL ipconfig_printfW(const WCHAR *msg, ...)
+static int WINAPIV ipconfig_printfW(const WCHAR *msg, ...)
 {
     __ms_va_list va_args;
     int len;
@@ -72,14 +74,13 @@ static int CDECL ipconfig_printfW(const WCHAR *msg, ...)
     return len;
 }
 
-static int CDECL ipconfig_message_printfW(int msg, ...)
+static int WINAPIV ipconfig_message_printfW(int msg, ...)
 {
     __ms_va_list va_args;
     WCHAR msg_buffer[8192];
     int len;
 
-    LoadStringW(GetModuleHandleW(NULL), msg, msg_buffer,
-        sizeof(msg_buffer)/sizeof(WCHAR));
+    LoadStringW(GetModuleHandleW(NULL), msg, msg_buffer, ARRAY_SIZE(msg_buffer));
 
     __ms_va_start(va_args, msg);
     len = ipconfig_vprintfW(msg_buffer, va_args);
@@ -93,8 +94,7 @@ static int ipconfig_message(int msg)
     static const WCHAR formatW[] = {'%','1',0};
     WCHAR msg_buffer[8192];
 
-    LoadStringW(GetModuleHandleW(NULL), msg, msg_buffer,
-        sizeof(msg_buffer)/sizeof(WCHAR));
+    LoadStringW(GetModuleHandleW(NULL), msg, msg_buffer, ARRAY_SIZE(msg_buffer));
 
     return ipconfig_printfW(formatW, msg_buffer);
 }
@@ -116,8 +116,7 @@ static const WCHAR *iftype_to_string(DWORD type)
         msg = STRING_UNKNOWN;
     }
 
-    LoadStringW(GetModuleHandleW(NULL), msg, msg_buffer,
-        sizeof(msg_buffer)/sizeof(WCHAR));
+    LoadStringW(GetModuleHandleW(NULL), msg, msg_buffer, ARRAY_SIZE(msg_buffer));
 
     return msg_buffer;
 }
@@ -128,10 +127,10 @@ static void print_field(int msg, const WCHAR *value)
 
     WCHAR field[] = {'.',' ','.',' ','.',' ','.',' ','.',' ','.',' ','.',' ','.',' ','.',
                      ' ','.',' ','.',' ','.',' ','.',' ','.',' ','.',' ','.',' ','.',' ',0};
-    WCHAR name_buffer[sizeof(field)/sizeof(WCHAR)];
+    WCHAR name_buffer[ARRAY_SIZE(field)];
 
-    LoadStringW(GetModuleHandleW(NULL), msg, name_buffer, sizeof(name_buffer)/sizeof(WCHAR));
-    memcpy(field, name_buffer, sizeof(WCHAR) * min(strlenW(name_buffer), sizeof(field)/sizeof(WCHAR) - 1));
+    LoadStringW(GetModuleHandleW(NULL), msg, name_buffer, ARRAY_SIZE(name_buffer));
+    memcpy(field, name_buffer, sizeof(WCHAR) * min(strlenW(name_buffer), ARRAY_SIZE(field) - 1));
 
     ipconfig_printfW(formatW, field, value);
 }
@@ -187,22 +186,22 @@ static void print_basic_information(void)
                 for (addr = p->FirstUnicastAddress; addr; addr = addr->Next)
                 {
                     if (addr->Address.lpSockaddr->sa_family == AF_INET &&
-                        socket_address_to_string(addr_buf, sizeof(addr_buf)/sizeof(WCHAR), &addr->Address))
+                        socket_address_to_string(addr_buf, ARRAY_SIZE(addr_buf), &addr->Address))
                         print_field(STRING_IP_ADDRESS, addr_buf);
                     else if (addr->Address.lpSockaddr->sa_family == AF_INET6 &&
-                             socket_address_to_string(addr_buf, sizeof(addr_buf)/sizeof(WCHAR), &addr->Address))
+                             socket_address_to_string(addr_buf, ARRAY_SIZE(addr_buf), &addr->Address))
                         print_field(STRING_IP6_ADDRESS, addr_buf);
                     /* FIXME: Output corresponding subnet mask. */
                 }
 
                 if (p->FirstGatewayAddress)
                 {
-                    if (socket_address_to_string(addr_buf, sizeof(addr_buf)/sizeof(WCHAR), &p->FirstGatewayAddress->Address))
+                    if (socket_address_to_string(addr_buf, ARRAY_SIZE(addr_buf), &p->FirstGatewayAddress->Address))
                         print_field(STRING_DEFAULT_GATEWAY, addr_buf);
 
                     for (gateway = p->FirstGatewayAddress->Next; gateway; gateway = gateway->Next)
                     {
-                        if (socket_address_to_string(addr_buf, sizeof(addr_buf)/sizeof(WCHAR), &gateway->Address))
+                        if (socket_address_to_string(addr_buf, ARRAY_SIZE(addr_buf), &gateway->Address))
                             print_value(addr_buf);
                     }
                 }
@@ -241,8 +240,7 @@ static const WCHAR *nodetype_to_string(DWORD type)
         msg = STRING_UNKNOWN;
     }
 
-    LoadStringW(GetModuleHandleW(NULL), msg, msg_buffer,
-        sizeof(msg_buffer)/sizeof(WCHAR));
+    LoadStringW(GetModuleHandleW(NULL), msg, msg_buffer, ARRAY_SIZE(msg_buffer));
 
     return msg_buffer;
 }
@@ -275,7 +273,7 @@ static const WCHAR *boolean_to_string(int value)
     static WCHAR msg_buffer[15];
 
     LoadStringW(GetModuleHandleW(NULL), value ? STRING_YES : STRING_NO,
-        msg_buffer, sizeof(msg_buffer)/sizeof(WCHAR));
+        msg_buffer, ARRAY_SIZE(msg_buffer));
 
     return msg_buffer;
 }
@@ -299,7 +297,7 @@ static void print_full_information(void)
         {
             WCHAR hostnameW[MAX_HOSTNAME_LEN + 4];
 
-            MultiByteToWideChar(CP_ACP, 0, info->HostName, -1, hostnameW, sizeof(hostnameW)/sizeof(hostnameW[0]));
+            MultiByteToWideChar(CP_ACP, 0, info->HostName, -1, hostnameW, ARRAY_SIZE(hostnameW));
             print_field(STRING_HOSTNAME, hostnameW);
 
             /* FIXME: Output primary DNS suffix. */
@@ -339,29 +337,29 @@ static void print_full_information(void)
                 print_field(STRING_CONN_DNS_SUFFIX, p->DnsSuffix);
                 print_field(STRING_DESCRIPTION, p->Description);
                 print_field(STRING_PHYS_ADDR, physaddr_to_string(physaddr_buf, p->PhysicalAddress, p->PhysicalAddressLength));
-                print_field(STRING_DHCP_ENABLED, boolean_to_string(p->Flags & IP_ADAPTER_DHCP_ENABLED));
+                print_field(STRING_DHCP_ENABLED, boolean_to_string(p->u1.Flags & IP_ADAPTER_DHCP_ENABLED));
 
                 /* FIXME: Output autoconfiguration status. */
 
                 for (addr = p->FirstUnicastAddress; addr; addr = addr->Next)
                 {
                     if (addr->Address.lpSockaddr->sa_family == AF_INET &&
-                        socket_address_to_string(addr_buf, sizeof(addr_buf)/sizeof(WCHAR), &addr->Address))
+                        socket_address_to_string(addr_buf, ARRAY_SIZE(addr_buf), &addr->Address))
                         print_field(STRING_IP_ADDRESS, addr_buf);
                     else if (addr->Address.lpSockaddr->sa_family == AF_INET6 &&
-                             socket_address_to_string(addr_buf, sizeof(addr_buf)/sizeof(WCHAR), &addr->Address))
+                             socket_address_to_string(addr_buf, ARRAY_SIZE(addr_buf), &addr->Address))
                         print_field(STRING_IP6_ADDRESS, addr_buf);
                     /* FIXME: Output corresponding subnet mask. */
                 }
 
                 if (p->FirstGatewayAddress)
                 {
-                    if (socket_address_to_string(addr_buf, sizeof(addr_buf)/sizeof(WCHAR), &p->FirstGatewayAddress->Address))
+                    if (socket_address_to_string(addr_buf, ARRAY_SIZE(addr_buf), &p->FirstGatewayAddress->Address))
                         print_field(STRING_DEFAULT_GATEWAY, addr_buf);
 
                     for (gateway = p->FirstGatewayAddress->Next; gateway; gateway = gateway->Next)
                     {
-                        if (socket_address_to_string(addr_buf, sizeof(addr_buf)/sizeof(WCHAR), &gateway->Address))
+                        if (socket_address_to_string(addr_buf, ARRAY_SIZE(addr_buf), &gateway->Address))
                             print_value(addr_buf);
                     }
                 }

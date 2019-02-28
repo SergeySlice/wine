@@ -57,15 +57,11 @@ ME_StreamOutRTFText(ME_OutStream *pStream, const WCHAR *text, LONG nChars);
 static ME_OutStream*
 ME_StreamOutInit(ME_TextEditor *editor, EDITSTREAM *stream)
 {
-  ME_OutStream *pStream = ALLOC_OBJ(ME_OutStream);
+  ME_OutStream *pStream = heap_alloc_zero(sizeof(*pStream));
+
   pStream->stream = stream;
   pStream->stream->dwError = 0;
-  pStream->pos = 0;
-  pStream->written = 0;
-  pStream->nFontTblLen = 0;
   pStream->nColorTblLen = 1;
-  pStream->nNestingLevel = 0;
-  memset(&pStream->cur_fmt, 0, sizeof(pStream->cur_fmt));
   pStream->cur_fmt.dwEffects = CFE_AUTOCOLOR | CFE_AUTOBACKCOLOR;
   pStream->cur_fmt.bUnderlineType = CFU_UNDERLINE;
   return pStream;
@@ -101,7 +97,7 @@ ME_StreamOutFree(ME_OutStream *pStream)
   LONG written = pStream->written;
   TRACE("total length = %u\n", written);
 
-  FREE_OBJ(pStream);
+  heap_free(pStream);
   return written;
 }
 
@@ -382,14 +378,6 @@ ME_StreamOutRTFFontAndColorTbl(ME_OutStream *pStream, ME_DisplayItem *pFirstRun,
   if (!ME_StreamOutPrint(pStream, "}\r\n"))
     return FALSE;
 
-  /* It seems like Open Office ignores \deff0 tag at RTF-header.
-     As result it can't correctly parse text before first \fN tag,
-     so we can put \f0 immediately after font table. This forces
-     parser to use the same font, that \deff0 specifies.
-     It makes OOffice happy */
-  if (!ME_StreamOutPrint(pStream, "\\f0"))
-    return FALSE;
-
   /* Output the color table */
   if (!ME_StreamOutPrint(pStream, "{\\colortbl;")) return FALSE; /* first entry is auto-color */
   for (i = 1; i < pStream->nColorTblLen; i++)
@@ -398,7 +386,7 @@ ME_StreamOutRTFFontAndColorTbl(ME_OutStream *pStream, ME_DisplayItem *pFirstRun,
                            (pStream->colortbl[i] >> 8) & 0xFF, (pStream->colortbl[i] >> 16) & 0xFF))
       return FALSE;
   }
-  if (!ME_StreamOutPrint(pStream, "}")) return FALSE;
+  if (!ME_StreamOutPrint(pStream, "}\r\n")) return FALSE;
 
   return TRUE;
 }
@@ -731,8 +719,10 @@ ME_StreamOutRTFParaProps(ME_TextEditor *editor, ME_OutStream *pStream,
       sprintf(props + strlen(props), "\\shading%d", fmt->wShadingWeight);
     if (fmt->wShadingStyle & 0xF)
       strcat(props, style[fmt->wShadingStyle & 0xF]);
-    sprintf(props + strlen(props), "\\cfpat%d\\cbpat%d",
-            (fmt->wShadingStyle >> 4) & 0xF, (fmt->wShadingStyle >> 8) & 0xF);
+    if ((fmt->wShadingStyle >> 4) & 0xf)
+      sprintf(props + strlen(props), "\\cfpat%d", (fmt->wShadingStyle >> 4) & 0xf);
+    if ((fmt->wShadingStyle >> 8) & 0xf)
+      sprintf(props + strlen(props), "\\cbpat%d", (fmt->wShadingStyle >> 8) & 0xf);
   }
   if (*props)
     strcat(props, " ");
@@ -770,21 +760,21 @@ ME_StreamOutRTFCharProps(ME_OutStream *pStream, CHARFORMAT2W *fmt)
       { CFE_STRIKEOUT,   "\\strike",   "\\strike0"   },
   };
 
-  for (i = 0; i < sizeof(effects) / sizeof(effects[0]); i++)
+  for (i = 0; i < ARRAY_SIZE( effects ); i++)
   {
       if ((old_fmt->dwEffects ^ fmt->dwEffects) & effects[i].effect)
           strcat( props, fmt->dwEffects & effects[i].effect ? effects[i].on : effects[i].off );
   }
 
   if ((old_fmt->dwEffects ^ fmt->dwEffects) & CFE_AUTOBACKCOLOR ||
-      old_fmt->crBackColor != fmt->crBackColor)
+      (!(fmt->dwEffects & CFE_AUTOBACKCOLOR) && old_fmt->crBackColor != fmt->crBackColor))
   {
       if (fmt->dwEffects & CFE_AUTOBACKCOLOR) i = 0;
       else find_color_in_colortbl( pStream, fmt->crBackColor, &i );
-      sprintf(props + strlen(props), "\\cb%u", i);
+      sprintf(props + strlen(props), "\\highlight%u", i);
   }
   if ((old_fmt->dwEffects ^ fmt->dwEffects) & CFE_AUTOCOLOR ||
-      old_fmt->crTextColor != fmt->crTextColor)
+      (!(fmt->dwEffects & CFE_AUTOCOLOR) && old_fmt->crTextColor != fmt->crTextColor))
   {
       if (fmt->dwEffects & CFE_AUTOCOLOR) i = 0;
       else find_color_in_colortbl( pStream, fmt->crTextColor, &i );
@@ -957,7 +947,7 @@ static BOOL stream_out_graphics( ME_TextEditor *editor, ME_OutStream *stream,
     SIZE goal, pic;
     ME_Context c;
 
-    hr = IOleObject_QueryInterface( run->ole_obj->poleobj, &IID_IDataObject, (void **)&data );
+    hr = IOleObject_QueryInterface( run->reobj->obj.poleobj, &IID_IDataObject, (void **)&data );
     if (FAILED(hr)) return FALSE;
 
     ME_InitContext( &c, editor, ITextHost_TxGetDC( editor->texthost ) );
@@ -985,8 +975,8 @@ static BOOL stream_out_graphics( ME_TextEditor *editor, ME_OutStream *stream,
                      emf_bits->szlMillimeters.cy * c.dpi.cy * 10 );
 
     /* convert goal size to twips */
-    goal.cx = MulDiv( run->ole_obj->sizel.cx, 144, 254 );
-    goal.cy = MulDiv( run->ole_obj->sizel.cy, 144, 254 );
+    goal.cx = MulDiv( run->reobj->obj.sizel.cx, 144, 254 );
+    goal.cy = MulDiv( run->reobj->obj.sizel.cy, 144, 254 );
 
     if (!ME_StreamOutPrint( stream, "{\\*\\shppict{\\pict\\emfblip\\picw%d\\pich%d\\picwgoal%d\\pichgoal%d\n",
                             pic.cx, pic.cy, goal.cx, goal.cy ))
@@ -1025,7 +1015,7 @@ static BOOL ME_StreamOutRTF(ME_TextEditor *editor, ME_OutStream *pStream,
 
   /* TODO: stylesheet table */
 
-  if (!ME_StreamOutPrint(pStream, "{\\*\\generator Wine Riched20 2.0;}"))
+  if (!ME_StreamOutPrint(pStream, "{\\*\\generator Wine Riched20 2.0;}\r\n"))
     return FALSE;
 
   /* TODO: information group */
@@ -1074,6 +1064,9 @@ static BOOL ME_StreamOutRTF(ME_TextEditor *editor, ME_OutStream *pStream,
       }
       nChars--;
     } else if (cursor.pRun->member.run.nFlags & MERF_ENDPARA) {
+      if (!ME_StreamOutRTFCharProps(pStream, &cursor.pRun->member.run.style->fmt))
+        return FALSE;
+
       if (cursor.pPara->member.para.fmt.dwMask & PFM_TABLE &&
           cursor.pPara->member.para.fmt.wEffects & PFE_TABLE &&
           !(cursor.pPara->member.para.nFlags & (MEPF_ROWSTART|MEPF_ROWEND|MEPF_CELL)))
@@ -1151,8 +1144,7 @@ static BOOL ME_StreamOutText(ME_TextEditor *editor, ME_OutStream *pStream,
         nSize = WideCharToMultiByte(nCodePage, 0, get_text( &cursor.pRun->member.run, cursor.nOffset ),
                                     nLen, NULL, 0, NULL, NULL);
         if (nSize > nBufLen) {
-          FREE_OBJ(buffer);
-          buffer = ALLOC_N_OBJ(char, nSize);
+          buffer = heap_realloc(buffer, nSize);
           nBufLen = nSize;
         }
         WideCharToMultiByte(nCodePage, 0, get_text( &cursor.pRun->member.run, cursor.nOffset ),
@@ -1166,7 +1158,7 @@ static BOOL ME_StreamOutText(ME_TextEditor *editor, ME_OutStream *pStream,
     cursor.pRun = ME_FindItemFwd(cursor.pRun, diRun);
   }
 
-  FREE_OBJ(buffer);
+  heap_free(buffer);
   return success;
 }
 

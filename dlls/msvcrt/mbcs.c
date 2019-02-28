@@ -185,6 +185,7 @@ int CDECL MSVCRT____mb_cur_max_func(void)
   return get_locinfo()->mb_cur_max;
 }
 
+#if _MSVCR_VER>=80
 /*********************************************************************
  *		___mb_cur_max_l_func  (MSVCR80.@)
  */
@@ -199,6 +200,7 @@ int* CDECL ___mb_cur_max_l_func(MSVCRT__locale_t locale)
 
   return &locinfo->mb_cur_max;
 }
+#endif
 
 /*********************************************************************
  * INTERNAL: _setmbcp_l
@@ -243,7 +245,7 @@ int _setmbcp_l(int cp, LCID lcid, MSVCRT_pthreadmbcinfo mbcinfo)
 
   if(lcid == -1) {
     sprintf(bufA, format, newcp);
-    mbcinfo->mblcid = MSVCRT_locale_to_LCID(bufA, NULL);
+    mbcinfo->mblcid = MSVCRT_locale_to_LCID(bufA, NULL, NULL);
   } else {
     mbcinfo->mblcid = lcid;
   }
@@ -569,23 +571,92 @@ unsigned char* CDECL _mbsninc(const unsigned char* str, MSVCRT_size_t num)
 }
 
 /*********************************************************************
+ *              _mbsnlen_l(MSVCRT.@)
+ */
+MSVCRT_size_t CDECL _mbsnlen_l(const unsigned char *str,
+        MSVCRT_size_t maxsize, MSVCRT__locale_t locale)
+{
+    MSVCRT_pthreadmbcinfo mbcinfo;
+    MSVCRT_size_t i = 0, len = 0;
+
+    if(!locale)
+        mbcinfo = get_mbcinfo();
+    else
+        mbcinfo = locale->mbcinfo;
+
+    if(!mbcinfo->ismbcodepage)
+        return MSVCRT_strnlen((const char*)str, maxsize);
+
+    while(i<maxsize && str[i])
+    {
+        if (_ismbblead_l(str[i], locale))
+        {
+            i++;
+            if (!str[i])  /* count only full chars */
+                break;
+        }
+        i++;
+        len++;
+    }
+    return i < maxsize ? len : maxsize;
+}
+
+/*********************************************************************
  *		_mbslen(MSVCRT.@)
  */
 MSVCRT_size_t CDECL _mbslen(const unsigned char* str)
 {
-  MSVCRT_size_t len = 0;
-  while(*str)
-  {
-    if (_ismbblead(*str))
-    {
-      str++;
-      if (!*str)  /* count only full chars */
-        break;
+    return _mbsnlen_l(str, -1, NULL);
+}
+
+/*********************************************************************
+ *              _mbslen_l(MSVCRT.@)
+ */
+MSVCRT_size_t CDECL _mbslen_l(const unsigned char* str, MSVCRT__locale_t locale)
+{
+    return _mbsnlen_l(str, -1, locale);
+}
+
+/*********************************************************************
+ *              _mbsnlen(MSVCRT.@)
+ */
+MSVCRT_size_t CDECL _mbsnlen(const unsigned char* str, MSVCRT_size_t maxsize)
+{
+    return _mbsnlen_l(str, maxsize, NULL);
+}
+
+/*********************************************************************
+ *              _mbccpy_s_l(MSVCRT.@)
+ */
+int CDECL _mbccpy_s_l(unsigned char* dest, MSVCRT_size_t maxsize,
+        int *copied, const unsigned char* src, MSVCRT__locale_t locale)
+{
+    if(copied) *copied = 0;
+    if(!MSVCRT_CHECK_PMT(dest != NULL && maxsize >= 1)) return MSVCRT_EINVAL;
+    dest[0] = 0;
+    if(!MSVCRT_CHECK_PMT(src != NULL)) return MSVCRT_EINVAL;
+
+    if(_ismbblead_l(*src, locale)) {
+        if(!src[1]) {
+            if(copied) *copied = 1;
+            *MSVCRT__errno() = MSVCRT_EILSEQ;
+            return MSVCRT_EILSEQ;
+        }
+
+        if(maxsize < 2) {
+            MSVCRT_INVALID_PMT("dst buffer is too small", MSVCRT_ERANGE);
+            return MSVCRT_ERANGE;
+        }
+
+        *dest++ = *src++;
+        *dest = *src;
+        if(copied) *copied = 2;
+    }else {
+        *dest = *src;
+        if(copied) *copied = 1;
     }
-    str++;
-    len++;
-  }
-  return len;
+
+    return 0;
 }
 
 /*********************************************************************
@@ -593,9 +664,25 @@ MSVCRT_size_t CDECL _mbslen(const unsigned char* str)
  */
 void CDECL _mbccpy(unsigned char* dest, const unsigned char* src)
 {
-  *dest = *src;
-  if(_ismbblead(*src))
-    *++dest = *++src; /* MB char */
+    _mbccpy_s_l(dest, 2, NULL, src, NULL);
+}
+
+/*********************************************************************
+ *              _mbccpy_l(MSVCRT.@)
+ */
+void CDECL _mbccpy_l(unsigned char* dest, const unsigned char* src,
+        MSVCRT__locale_t locale)
+{
+    _mbccpy_s_l(dest, 2, NULL, src, locale);
+}
+
+/*********************************************************************
+ *              _mbccpy_s(MSVCRT.@)
+ */
+int CDECL _mbccpy_s(unsigned char* dest, MSVCRT_size_t maxsize,
+        int *copied, const unsigned char* src)
+{
+    return _mbccpy_s_l(dest, maxsize, copied, src, NULL);
 }
 
 /*********************************************************************
@@ -1464,13 +1551,35 @@ int CDECL _ismbblead(unsigned int c)
     return _ismbblead_l(c, NULL);
 }
 
+/*********************************************************************
+ *              _ismbbtrail_l(MSVCRT.@)
+ */
+int CDECL _ismbbtrail_l(unsigned int c, MSVCRT__locale_t locale)
+{
+    MSVCRT_pthreadmbcinfo mbcinfo;
+
+    if(!locale)
+        mbcinfo = get_mbcinfo();
+    else
+        mbcinfo = locale->mbcinfo;
+
+    return (mbcinfo->mbctype[(c&0xff) + 1] & _M2) != 0;
+}
 
 /*********************************************************************
  *		_ismbbtrail(MSVCRT.@)
  */
 int CDECL _ismbbtrail(unsigned int c)
 {
-  return (get_mbcinfo()->mbctype[(c&0xff) + 1] & _M2) != 0;
+    return _ismbbtrail_l(c, NULL);
+}
+
+/*********************************************************************
+ *              _ismbclegal_l(MSVCRT.@)
+ */
+int CDECL _ismbclegal_l(unsigned int c, MSVCRT__locale_t locale)
+{
+    return _ismbblead_l(HIBYTE(c), locale) && _ismbbtrail_l(LOBYTE(c), locale);
 }
 
 /*********************************************************************
@@ -1478,7 +1587,7 @@ int CDECL _ismbbtrail(unsigned int c)
  */
 int CDECL _ismbclegal(unsigned int c)
 {
-    return _ismbblead(HIBYTE(c)) && _ismbbtrail(LOBYTE(c));
+    return _ismbclegal_l(c, NULL);
 }
 
 /*********************************************************************
@@ -1924,13 +2033,12 @@ MSVCRT_size_t CDECL _mbsspn(const unsigned char* string, const unsigned char* se
     {
         if (_ismbblead(*p))
         {
-            for (q = set; *q; q++)
+            for (q = set; *q; q += 2)
             {
                 if (!q[1])
                     break;
                 if ((*p == *q) &&  (p[1] == q[1]))
                     break;
-                q++;
             }
             if (!q[0] || !q[1]) break;
         }
@@ -1956,13 +2064,12 @@ unsigned char* CDECL _mbsspnp(const unsigned char* string, const unsigned char* 
     {
         if (_ismbblead(*p))
         {
-            for (q = set; *q; q++)
+            for (q = set; *q; q += 2)
             {
                 if (!q[1])
                     break;
                 if ((*p == *q) &&  (p[1] == q[1]))
                     break;
-                q++;
             }
             if (!q[0] || !q[1]) break;
         }
@@ -2278,12 +2385,14 @@ MSVCRT_size_t CDECL MSVCRT__mbstowcs_l(MSVCRT_wchar_t *wcstr, const char *mbstr,
         size += (MSVCRT__isleadbyte_l((unsigned char)mbstr[size], locale) ? 2 : 1);
     }
 
-    size = MultiByteToWideChar(locinfo->lc_codepage, 0,
-            mbstr, size, wcstr, count);
-    if(!size) {
-        if(count) wcstr[0] = '\0';
-        *MSVCRT__errno() = MSVCRT_EILSEQ;
-        return -1;
+    if(size) {
+        size = MultiByteToWideChar(locinfo->lc_codepage, 0,
+                                   mbstr, size, wcstr, count);
+        if(!size) {
+            if(count) wcstr[0] = '\0';
+            *MSVCRT__errno() = MSVCRT_EILSEQ;
+            return -1;
+        }
     }
 
     if(size<count && wcstr)
@@ -2440,4 +2549,91 @@ unsigned int CDECL _mbctokata(unsigned int c)
     if(_ismbchira(c))
         return (c - 0x829f) + 0x8340 + (c >= 0x82de ? 1 : 0);
     return c;
+}
+
+/*********************************************************************
+ *		_ismbcl0_l (MSVCRT.@)
+ */
+int CDECL _ismbcl0_l(unsigned int c, MSVCRT__locale_t locale)
+{
+    MSVCRT_pthreadmbcinfo mbcinfo;
+
+    if(!locale)
+        mbcinfo = get_mbcinfo();
+    else
+        mbcinfo = locale->mbcinfo;
+
+    if(mbcinfo->mbcodepage == 932)
+    {
+        /* JIS non-Kanji */
+        return _ismbclegal_l(c, locale) && c >= 0x8140 && c <= 0x889e;
+    }
+
+    return 0;
+}
+
+/*********************************************************************
+ *		_ismbcl0 (MSVCRT.@)
+ */
+int CDECL _ismbcl0(unsigned int c)
+{
+    return _ismbcl0_l(c, NULL);
+}
+
+/*********************************************************************
+ *		_ismbcl1_l (MSVCRT.@)
+ */
+int CDECL _ismbcl1_l(unsigned int c, MSVCRT__locale_t locale)
+{
+    MSVCRT_pthreadmbcinfo mbcinfo;
+
+    if(!locale)
+        mbcinfo = get_mbcinfo();
+    else
+        mbcinfo = locale->mbcinfo;
+
+    if(mbcinfo->mbcodepage == 932)
+    {
+        /* JIS level-1 */
+        return _ismbclegal_l(c, locale) && c >= 0x889f && c <= 0x9872;
+    }
+
+    return 0;
+}
+
+/*********************************************************************
+ *		_ismbcl1 (MSVCRT.@)
+ */
+int CDECL _ismbcl1(unsigned int c)
+{
+    return _ismbcl1_l(c, NULL);
+}
+
+/*********************************************************************
+ *		_ismbcl2_l (MSVCRT.@)
+ */
+int CDECL _ismbcl2_l(unsigned int c, MSVCRT__locale_t locale)
+{
+    MSVCRT_pthreadmbcinfo mbcinfo;
+
+    if(!locale)
+        mbcinfo = get_mbcinfo();
+    else
+        mbcinfo = locale->mbcinfo;
+
+    if(mbcinfo->mbcodepage == 932)
+    {
+        /* JIS level-2 */
+        return _ismbclegal_l(c, locale) && c >= 0x989f && c <= 0xeaa4;
+    }
+
+    return 0;
+}
+
+/*********************************************************************
+ *		_ismbcl2 (MSVCRT.@)
+ */
+int CDECL _ismbcl2(unsigned int c)
+{
+    return _ismbcl2_l(c, NULL);
 }

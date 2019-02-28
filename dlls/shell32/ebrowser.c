@@ -38,6 +38,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(shell);
 
 #define SPLITTER_WIDTH 2
 #define NP_MIN_WIDTH 60
+#define NP_DEFAULT_WIDTH 150
 #define SV_MIN_WIDTH 150
 
 typedef struct _event_client {
@@ -83,6 +84,8 @@ typedef struct _ExplorerBrowserImpl {
     travellog_entry *travellog_cursor;
     int travellog_count;
 
+    int dpix;
+
     IShellView *psv;
     RECT sv_rc;
     LPITEMIDLIST current_pidl;
@@ -109,7 +112,7 @@ static void events_unadvise_all(ExplorerBrowserImpl *This)
         TRACE("Removing %p\n", client);
         list_remove(&client->entry);
         IExplorerBrowserEvents_Release(client->pebe);
-        HeapFree(GetProcessHeap(), 0, client);
+        heap_free(client);
     }
 }
 
@@ -181,7 +184,7 @@ static void travellog_remove_entry(ExplorerBrowserImpl *This, travellog_entry *e
 
     list_remove(&entry->entry);
     ILFree(entry->pidl);
-    HeapFree(GetProcessHeap(), 0, entry);
+    heap_free(entry);
     This->travellog_count--;
 }
 
@@ -213,7 +216,7 @@ static void travellog_add_entry(ExplorerBrowserImpl *This, LPITEMIDLIST pidl)
     }
 
     /* Create and add the new entry */
-    new = HeapAlloc(GetProcessHeap(), 0, sizeof(travellog_entry));
+    new = heap_alloc(sizeof(*new));
     new->pidl = ILClone(pidl);
     list_add_tail(&This->travellog, &new->entry);
     This->travellog_cursor = new;
@@ -274,6 +277,8 @@ static void update_layout(ExplorerBrowserImpl *This)
     RECT rc;
     INT navpane_width_actual;
     INT shellview_width_actual;
+    int np_min_width = MulDiv(NP_MIN_WIDTH, This->dpix, USER_DEFAULT_SCREEN_DPI);
+    int sv_min_width = MulDiv(SV_MIN_WIDTH, This->dpix, USER_DEFAULT_SCREEN_DPI);
     TRACE("%p (navpane: %d, EBO_SHOWFRAMES: %d)\n",
           This, This->navpane.show, This->eb_options & EBO_SHOWFRAMES);
 
@@ -285,10 +290,10 @@ static void update_layout(ExplorerBrowserImpl *This)
         navpane_width_actual = 0;
 
     shellview_width_actual = rc.right - navpane_width_actual;
-    if(shellview_width_actual < SV_MIN_WIDTH && navpane_width_actual)
+    if(shellview_width_actual < sv_min_width && navpane_width_actual)
     {
-        INT missing_width = SV_MIN_WIDTH - shellview_width_actual;
-        if(missing_width < (navpane_width_actual - NP_MIN_WIDTH))
+        INT missing_width = sv_min_width - shellview_width_actual;
+        if(missing_width < (navpane_width_actual - np_min_width))
         {
             /* Shrink the navpane */
             navpane_width_actual -= missing_width;
@@ -309,9 +314,7 @@ static void update_layout(ExplorerBrowserImpl *This)
 
     if(navpane_width_actual)
     {
-        This->navpane.rc.left = This->navpane.rc.top = 0;
-        This->navpane.rc.right = navpane_width_actual;
-        This->navpane.rc.bottom = rc.bottom;
+        SetRect(&This->navpane.rc, 0, 0, navpane_width_actual, rc.bottom);
 
         if(!This->navpane.hwnd_splitter)
             initialize_navpane(This, This->hwnd_main, &This->navpane.rc);
@@ -319,17 +322,16 @@ static void update_layout(ExplorerBrowserImpl *This)
     else
         ZeroMemory(&This->navpane.rc, sizeof(RECT));
 
-    This->sv_rc.left   = navpane_width_actual;
-    This->sv_rc.top    = 0;
-    This->sv_rc.right  = This->sv_rc.left + shellview_width_actual;
-    This->sv_rc.bottom = rc.bottom;
+    SetRect(&This->sv_rc, navpane_width_actual, 0, navpane_width_actual + shellview_width_actual,
+            rc.bottom);
 }
 
 static void size_panes(ExplorerBrowserImpl *This)
 {
+    int splitter_width = MulDiv(SPLITTER_WIDTH, This->dpix, USER_DEFAULT_SCREEN_DPI);
     MoveWindow(This->navpane.hwnd_splitter,
-               This->navpane.rc.right - SPLITTER_WIDTH, This->navpane.rc.top,
-               SPLITTER_WIDTH, This->navpane.rc.bottom - This->navpane.rc.top,
+               This->navpane.rc.right - splitter_width, This->navpane.rc.top,
+               splitter_width, This->navpane.rc.bottom - This->navpane.rc.top,
                TRUE);
 
     MoveWindow(This->hwnd_sv,
@@ -494,12 +496,14 @@ static void splitter_draw(HWND hwnd, RECT *rc)
  */
 static LRESULT navpane_splitter_beginresize(ExplorerBrowserImpl *This, HWND hwnd, LPARAM lParam)
 {
+    int splitter_width = MulDiv(SPLITTER_WIDTH, This->dpix, USER_DEFAULT_SCREEN_DPI);
+
     TRACE("\n");
 
     SetCapture(hwnd);
 
     This->splitter_rc = This->navpane.rc;
-    This->splitter_rc.left = This->splitter_rc.right - SPLITTER_WIDTH;
+    This->splitter_rc.left = This->splitter_rc.right - splitter_width;
 
     splitter_draw(GetParent(hwnd), &This->splitter_rc);
 
@@ -510,6 +514,9 @@ static LRESULT navpane_splitter_resizing(ExplorerBrowserImpl *This, HWND hwnd, L
 {
     int new_width, dx;
     RECT rc;
+    int splitter_width = MulDiv(SPLITTER_WIDTH, This->dpix, USER_DEFAULT_SCREEN_DPI);
+    int np_min_width = MulDiv(NP_MIN_WIDTH, This->dpix, USER_DEFAULT_SCREEN_DPI);
+    int sv_min_width = MulDiv(SV_MIN_WIDTH, This->dpix, USER_DEFAULT_SCREEN_DPI);
 
     if(GetCapture() != hwnd) return FALSE;
 
@@ -518,10 +525,10 @@ static LRESULT navpane_splitter_resizing(ExplorerBrowserImpl *This, HWND hwnd, L
 
     rc = This->navpane.rc;
     new_width = This->navpane.width + dx;
-    if(new_width > NP_MIN_WIDTH && This->sv_rc.right - new_width > SV_MIN_WIDTH)
+    if(new_width > np_min_width && This->sv_rc.right - new_width > sv_min_width)
     {
         rc.right = new_width;
-        rc.left = rc.right - SPLITTER_WIDTH;
+        rc.left = rc.right - splitter_width;
         splitter_draw(GetParent(hwnd), &This->splitter_rc);
         splitter_draw(GetParent(hwnd), &rc);
         This->splitter_rc = rc;
@@ -533,6 +540,8 @@ static LRESULT navpane_splitter_resizing(ExplorerBrowserImpl *This, HWND hwnd, L
 static LRESULT navpane_splitter_endresize(ExplorerBrowserImpl *This, HWND hwnd, LPARAM lParam)
 {
     int new_width, dx;
+    int np_min_width = MulDiv(NP_MIN_WIDTH, This->dpix, USER_DEFAULT_SCREEN_DPI);
+    int sv_min_width = MulDiv(SV_MIN_WIDTH, This->dpix, USER_DEFAULT_SCREEN_DPI);
 
     if(GetCapture() != hwnd) return FALSE;
 
@@ -542,10 +551,10 @@ static LRESULT navpane_splitter_endresize(ExplorerBrowserImpl *This, HWND hwnd, 
     splitter_draw(GetParent(hwnd), &This->splitter_rc);
 
     new_width = This->navpane.width + dx;
-    if(new_width < NP_MIN_WIDTH)
-        new_width = NP_MIN_WIDTH;
-    else if(This->sv_rc.right - new_width < SV_MIN_WIDTH)
-        new_width = This->sv_rc.right - SV_MIN_WIDTH;
+    if(new_width < np_min_width)
+        new_width = np_min_width;
+    else if(This->sv_rc.right - new_width < sv_min_width)
+        new_width = This->sv_rc.right - sv_min_width;
 
     This->navpane.width = new_width;
 
@@ -649,9 +658,11 @@ static LRESULT navpane_on_wm_create(HWND hwnd, CREATESTRUCTW *crs)
 static LRESULT navpane_on_wm_size_move(ExplorerBrowserImpl *This)
 {
     UINT height, width;
+    int splitter_width = MulDiv(SPLITTER_WIDTH, This->dpix, USER_DEFAULT_SCREEN_DPI);
+
     TRACE("%p\n", This);
 
-    width = This->navpane.rc.right - This->navpane.rc.left - SPLITTER_WIDTH;
+    width = This->navpane.rc.right - This->navpane.rc.left - splitter_width;
     height = This->navpane.rc.bottom - This->navpane.rc.top;
 
     MoveWindow(This->navpane.hwnd_nstc,
@@ -692,6 +703,7 @@ static void initialize_navpane(ExplorerBrowserImpl *This, HWND hwnd_parent, RECT
 {
     WNDCLASSW wc;
     HWND splitter;
+    int splitter_width = MulDiv(SPLITTER_WIDTH, This->dpix, USER_DEFAULT_SCREEN_DPI);
     static const WCHAR navpane_classname[] = {'e','b','_','n','a','v','p','a','n','e',0};
 
     if( !GetClassInfoW(shell32_hInstance, navpane_classname, &wc) )
@@ -712,8 +724,8 @@ static void initialize_navpane(ExplorerBrowserImpl *This, HWND hwnd_parent, RECT
 
     splitter = CreateWindowExW(0, navpane_classname, NULL,
                                WS_CHILD | WS_TABSTOP | WS_VISIBLE,
-                               rc->right - SPLITTER_WIDTH, rc->top,
-                               SPLITTER_WIDTH, rc->bottom - rc->top,
+                               rc->right - splitter_width, rc->top,
+                               splitter_width, rc->bottom - rc->top,
                                hwnd_parent, 0, shell32_hInstance, This);
     if(!splitter)
         ERR("Failed to create navpane : %d.\n", GetLastError());
@@ -782,7 +794,8 @@ static HRESULT WINAPI IExplorerBrowser_fnQueryInterface(IExplorerBrowser *iface,
     {
         *ppvObject = &This->IExplorerBrowser_iface;
     }
-    else if(IsEqualIID(riid, &IID_IShellBrowser))
+    else if(IsEqualIID(riid, &IID_IShellBrowser) ||
+            IsEqualIID(riid, &IID_IOleWindow))
     {
         *ppvObject = &This->IShellBrowser_iface;
     }
@@ -834,8 +847,7 @@ static ULONG WINAPI IExplorerBrowser_fnRelease(IExplorerBrowser *iface)
 
         IObjectWithSite_SetSite(&This->IObjectWithSite_iface, NULL);
 
-        HeapFree(GetProcessHeap(), 0, This);
-        return 0;
+        heap_free(This);
     }
 
     return ref;
@@ -848,6 +860,7 @@ static HRESULT WINAPI IExplorerBrowser_fnInitialize(IExplorerBrowser *iface,
     ExplorerBrowserImpl *This = impl_from_IExplorerBrowser(iface);
     WNDCLASSW wc;
     LONG style;
+    HDC parent_dc;
     static const WCHAR EB_CLASS_NAME[] =
         {'E','x','p','l','o','r','e','r','B','r','o','w','s','e','r','C','o','n','t','r','o','l',0};
 
@@ -874,6 +887,12 @@ static HRESULT WINAPI IExplorerBrowser_fnInitialize(IExplorerBrowser *iface,
 
         if (!RegisterClassW(&wc)) return E_FAIL;
     }
+
+    parent_dc = GetDC(hwndParent);
+    This->dpix = GetDeviceCaps(parent_dc, LOGPIXELSX);
+    ReleaseDC(hwndParent, parent_dc);
+
+    This->navpane.width = MulDiv(NP_DEFAULT_WIDTH, This->dpix, USER_DEFAULT_SCREEN_DPI);
 
     style = WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS;
     if (!(This->eb_options & EBO_NOBORDER))
@@ -993,7 +1012,7 @@ static HRESULT WINAPI IExplorerBrowser_fnAdvise(IExplorerBrowser *iface,
     event_client *client;
     TRACE("%p (%p, %p)\n", This, psbe, pdwCookie);
 
-    client = HeapAlloc(GetProcessHeap(), 0, sizeof(event_client));
+    client = heap_alloc(sizeof(*client));
     client->pebe = psbe;
     client->cookie = ++This->events_next_cookie;
 
@@ -1018,7 +1037,7 @@ static HRESULT WINAPI IExplorerBrowser_fnUnadvise(IExplorerBrowser *iface,
         {
             list_remove(&client->entry);
             IExplorerBrowserEvents_Release(client->pebe);
-            HeapFree(GetProcessHeap(), 0, client);
+            heap_free(client);
             return S_OK;
         }
     }
@@ -1653,14 +1672,14 @@ static HRESULT WINAPI ICommDlgBrowser3_fnGetCurrentFilter(ICommDlgBrowser3 *ifac
     return S_OK;
 }
 
-static HRESULT WINAPI ICommDlgBrowser3_fnOnPreviewCreated(ICommDlgBrowser3 *iface,
+static HRESULT WINAPI ICommDlgBrowser3_fnOnPreViewCreated(ICommDlgBrowser3 *iface,
                                                           IShellView *pshv)
 {
     ExplorerBrowserImpl *This = impl_from_ICommDlgBrowser3(iface);
     TRACE("%p (%p)\n", This, pshv);
 
     if(This->pcdb3_site)
-        return ICommDlgBrowser3_OnPreviewCreated(This->pcdb3_site, pshv);
+        return ICommDlgBrowser3_OnPreViewCreated(This->pcdb3_site, pshv);
 
     return S_OK;
 }
@@ -1677,7 +1696,7 @@ static const ICommDlgBrowser3Vtbl vt_ICommDlgBrowser3 = {
     ICommDlgBrowser3_fnGetViewFlags,
     ICommDlgBrowser3_fnOnColumnClicked,
     ICommDlgBrowser3_fnGetCurrentFilter,
-    ICommDlgBrowser3_fnOnPreviewCreated
+    ICommDlgBrowser3_fnOnPreViewCreated
 };
 
 /**************************************************************************
@@ -2055,7 +2074,7 @@ HRESULT WINAPI ExplorerBrowser_Constructor(IUnknown *pUnkOuter, REFIID riid, voi
     if(pUnkOuter)
         return CLASS_E_NOAGGREGATION;
 
-    eb = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(ExplorerBrowserImpl));
+    eb = heap_alloc_zero(sizeof(*eb));
     eb->ref = 1;
     eb->IExplorerBrowser_iface.lpVtbl = &vt_IExplorerBrowser;
     eb->IShellBrowser_iface.lpVtbl    = &vt_IShellBrowser;
@@ -2065,7 +2084,6 @@ HRESULT WINAPI ExplorerBrowser_Constructor(IUnknown *pUnkOuter, REFIID riid, voi
     eb->IInputObject_iface.lpVtbl     = &vt_IInputObject;
 
     /* Default settings */
-    eb->navpane.width = 150;
     eb->navpane.show = TRUE;
 
     list_init(&eb->event_clients);

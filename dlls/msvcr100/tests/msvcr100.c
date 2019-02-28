@@ -26,6 +26,8 @@
 #include <winbase.h>
 #include "wine/test.h"
 
+#include <locale.h>
+
 #define DEFINE_EXPECT(func) \
     static BOOL expect_ ## func = FALSE, called_ ## func = FALSE
 
@@ -82,6 +84,7 @@ struct thiscall_thunk
 
 static ULONG_PTR (WINAPI *call_thiscall_func1)( void *func, void *this );
 static ULONG_PTR (WINAPI *call_thiscall_func2)( void *func, void *this, const void *a );
+static ULONG_PTR (WINAPI *call_thiscall_func3)( void *func, void *this, const void *a, const void *b );
 
 static void init_thiscall_thunk(void)
 {
@@ -94,16 +97,19 @@ static void init_thiscall_thunk(void)
     thunk->jmp_edx  = 0xe2ff; /* jmp  *%edx */
     call_thiscall_func1 = (void *)thunk;
     call_thiscall_func2 = (void *)thunk;
+    call_thiscall_func3 = (void *)thunk;
 }
 
 #define call_func1(func,_this) call_thiscall_func1(func,_this)
 #define call_func2(func,_this,a) call_thiscall_func2(func,_this,(const void*)(a))
+#define call_func3(func,_this,a,b) call_thiscall_func3(func,_this,(const void*)(a),(const void*)(b))
 
 #else
 
 #define init_thiscall_thunk()
 #define call_func1(func,_this) func(_this)
 #define call_func2(func,_this,a) func(_this,a)
+#define call_func3(func,_this,a,b) func(_this,a,b)
 
 #endif /* __i386__ */
 
@@ -134,6 +140,40 @@ typedef struct
     yield_func yield_func;
 } SpinWait;
 
+typedef struct {
+    CRITICAL_SECTION cs;
+} _ReentrantBlockingLock;
+
+typedef struct {
+    char pad[64];
+} event;
+
+typedef struct {
+    void *vtable;
+} Context;
+
+typedef struct {
+    void *policy_container;
+} SchedulerPolicy;
+
+struct SchedulerVtbl;
+typedef struct {
+    struct SchedulerVtbl *vtable;
+} Scheduler;
+
+struct SchedulerVtbl {
+    Scheduler* (__thiscall *vector_dor)(Scheduler*);
+    unsigned int (__thiscall *Id)(Scheduler*);
+    unsigned int (__thiscall *GetNumberOfVirtualProcessors)(Scheduler*);
+    SchedulerPolicy* (__thiscall *GetPolicy)(Scheduler*);
+    unsigned int (__thiscall *Reference)(Scheduler*);
+    unsigned int (__thiscall *Release)(Scheduler*);
+    void (__thiscall *RegisterShutdownEvent)(Scheduler*,HANDLE);
+    void (__thiscall *Attach)(Scheduler*);
+    /* CreateScheduleGroup */
+    /* ScheduleTask */
+};
+
 static int* (__cdecl *p_errno)(void);
 static int (__cdecl *p_wmemcpy_s)(wchar_t *dest, size_t numberOfElements, const wchar_t *src, size_t count);
 static int (__cdecl *p_wmemmove_s)(wchar_t *dest, size_t numberOfElements, const wchar_t *src, size_t count);
@@ -162,6 +202,40 @@ static void (__thiscall *preader_writer_lock_lock_read)(void*);
 static void (__thiscall *preader_writer_lock_unlock)(void*);
 static MSVCRT_bool (__thiscall *preader_writer_lock_try_lock)(void*);
 static MSVCRT_bool (__thiscall *preader_writer_lock_try_lock_read)(void*);
+
+static _ReentrantBlockingLock* (__thiscall *p_ReentrantBlockingLock_ctor)(_ReentrantBlockingLock*);
+static void (__thiscall *p_ReentrantBlockingLock_dtor)(_ReentrantBlockingLock*);
+static void (__thiscall *p_ReentrantBlockingLock__Acquire)(_ReentrantBlockingLock*);
+static void (__thiscall *p_ReentrantBlockingLock__Release)(_ReentrantBlockingLock*);
+static MSVCRT_bool (__thiscall *p_ReentrantBlockingLock__TryAcquire)(_ReentrantBlockingLock*);
+static _ReentrantBlockingLock* (__thiscall *p_NonReentrantBlockingLock_ctor)(_ReentrantBlockingLock*);
+static void (__thiscall *p_NonReentrantBlockingLock_dtor)(_ReentrantBlockingLock*);
+static void (__thiscall *p_NonReentrantBlockingLock__Acquire)(_ReentrantBlockingLock*);
+static void (__thiscall *p_NonReentrantBlockingLock__Release)(_ReentrantBlockingLock*);
+static MSVCRT_bool (__thiscall *p_NonReentrantBlockingLock__TryAcquire)(_ReentrantBlockingLock*);
+
+static event* (__thiscall *p_event_ctor)(event*);
+static void (__thiscall *p_event_dtor)(event*);
+static void (__thiscall *p_event_reset)(event*);
+static void (__thiscall *p_event_set)(event*);
+static size_t (__thiscall *p_event_wait)(event*, unsigned int);
+static int (__cdecl *p_event_wait_for_multiple)(event**, size_t, MSVCRT_bool, unsigned int);
+
+static Context* (__cdecl *p_Context_CurrentContext)(void);
+static unsigned int (__cdecl *p_Context_Id)(void);
+static SchedulerPolicy* (__thiscall *p_SchedulerPolicy_ctor)(SchedulerPolicy*);
+static void (__thiscall *p_SchedulerPolicy_SetConcurrencyLimits)(SchedulerPolicy*, unsigned int, unsigned int);
+static void (__thiscall *p_SchedulerPolicy_dtor)(SchedulerPolicy*);
+static Scheduler* (__cdecl *p_Scheduler_Create)(SchedulerPolicy*);
+static Scheduler* (__cdecl *p_CurrentScheduler_Get)(void);
+static void (__cdecl *p_CurrentScheduler_Detach)(void);
+static unsigned int (__cdecl *p_CurrentScheduler_Id)(void);
+
+static int (__cdecl *p__memicmp)(const char*, const char*, size_t);
+static int (__cdecl *p__memicmp_l)(const char*, const char*, size_t,_locale_t);
+
+static char* (__cdecl *p_setlocale)(int, const char*);
+static size_t (__cdecl *p___strncnt)(const char*, size_t);
 
 /* make sure we use the correct errno */
 #undef errno
@@ -194,6 +268,14 @@ static BOOL init(void)
     SET(p__aligned_free, "_aligned_free");
     SET(p__aligned_msize, "_aligned_msize");
     SET(p_atoi, "atoi");
+    SET(p__memicmp, "_memicmp");
+    SET(p__memicmp_l, "_memicmp_l");
+    SET(p_setlocale, "setlocale");
+    SET(p___strncnt, "__strncnt");
+
+    SET(p_Context_Id, "?Id@Context@Concurrency@@SAIXZ");
+    SET(p_CurrentScheduler_Detach, "?Detach@CurrentScheduler@Concurrency@@SAXXZ");
+    SET(p_CurrentScheduler_Id, "?Id@CurrentScheduler@Concurrency@@SAIXZ");
 
     if(sizeof(void*) == 8) { /* 64-bit initialization */
         SET(pSpinWait_ctor_yield, "??0?$_SpinWait@$00@details@Concurrency@@QEAA@P6AXXZ@Z");
@@ -211,6 +293,31 @@ static BOOL init(void)
         SET(preader_writer_lock_unlock, "?unlock@reader_writer_lock@Concurrency@@QEAAXXZ");
         SET(preader_writer_lock_try_lock, "?try_lock@reader_writer_lock@Concurrency@@QEAA_NXZ");
         SET(preader_writer_lock_try_lock_read, "?try_lock_read@reader_writer_lock@Concurrency@@QEAA_NXZ");
+
+        SET(p_ReentrantBlockingLock_ctor, "??0_ReentrantBlockingLock@details@Concurrency@@QEAA@XZ");
+        SET(p_ReentrantBlockingLock_dtor, "??1_ReentrantBlockingLock@details@Concurrency@@QEAA@XZ");
+        SET(p_ReentrantBlockingLock__Acquire, "?_Acquire@_ReentrantBlockingLock@details@Concurrency@@QEAAXXZ");
+        SET(p_ReentrantBlockingLock__Release, "?_Release@_ReentrantBlockingLock@details@Concurrency@@QEAAXXZ");
+        SET(p_ReentrantBlockingLock__TryAcquire, "?_TryAcquire@_ReentrantBlockingLock@details@Concurrency@@QEAA_NXZ");
+        SET(p_NonReentrantBlockingLock_ctor, "??0_NonReentrantBlockingLock@details@Concurrency@@QEAA@XZ");
+        SET(p_NonReentrantBlockingLock_dtor, "??1_NonReentrantBlockingLock@details@Concurrency@@QEAA@XZ");
+        SET(p_NonReentrantBlockingLock__Acquire, "?_Acquire@_NonReentrantBlockingLock@details@Concurrency@@QEAAXXZ");
+        SET(p_NonReentrantBlockingLock__Release, "?_Release@_NonReentrantBlockingLock@details@Concurrency@@QEAAXXZ");
+        SET(p_NonReentrantBlockingLock__TryAcquire, "?_TryAcquire@_NonReentrantBlockingLock@details@Concurrency@@QEAA_NXZ");
+
+        SET(p_event_ctor, "??0event@Concurrency@@QEAA@XZ");
+        SET(p_event_dtor, "??1event@Concurrency@@QEAA@XZ");
+        SET(p_event_reset, "?reset@event@Concurrency@@QEAAXXZ");
+        SET(p_event_set, "?set@event@Concurrency@@QEAAXXZ");
+        SET(p_event_wait, "?wait@event@Concurrency@@QEAA_KI@Z");
+        SET(p_event_wait_for_multiple, "?wait_for_multiple@event@Concurrency@@SA_KPEAPEAV12@_K_NI@Z");
+
+        SET(p_Context_CurrentContext, "?CurrentContext@Context@Concurrency@@SAPEAV12@XZ");
+        SET(p_SchedulerPolicy_ctor, "??0SchedulerPolicy@Concurrency@@QEAA@XZ");
+        SET(p_SchedulerPolicy_SetConcurrencyLimits, "?SetConcurrencyLimits@SchedulerPolicy@Concurrency@@QEAAXII@Z");
+        SET(p_SchedulerPolicy_dtor, "??1SchedulerPolicy@Concurrency@@QEAA@XZ");
+        SET(p_Scheduler_Create, "?Create@Scheduler@Concurrency@@SAPEAV12@AEBVSchedulerPolicy@2@@Z");
+        SET(p_CurrentScheduler_Get, "?Get@CurrentScheduler@Concurrency@@SAPEAVScheduler@2@XZ");
     } else {
         SET(pSpinWait_ctor_yield, "??0?$_SpinWait@$00@details@Concurrency@@QAE@P6AXXZ@Z");
         SET(pSpinWait_dtor, "??_F?$_SpinWait@$00@details@Concurrency@@QAEXXZ");
@@ -227,13 +334,36 @@ static BOOL init(void)
         SET(preader_writer_lock_unlock, "?unlock@reader_writer_lock@Concurrency@@QAEXXZ");
         SET(preader_writer_lock_try_lock, "?try_lock@reader_writer_lock@Concurrency@@QAE_NXZ");
         SET(preader_writer_lock_try_lock_read, "?try_lock_read@reader_writer_lock@Concurrency@@QAE_NXZ");
+
+        SET(p_ReentrantBlockingLock_ctor, "??0_ReentrantBlockingLock@details@Concurrency@@QAE@XZ");
+        SET(p_ReentrantBlockingLock_dtor, "??1_ReentrantBlockingLock@details@Concurrency@@QAE@XZ");
+        SET(p_ReentrantBlockingLock__Acquire, "?_Acquire@_ReentrantBlockingLock@details@Concurrency@@QAEXXZ");
+        SET(p_ReentrantBlockingLock__Release, "?_Release@_ReentrantBlockingLock@details@Concurrency@@QAEXXZ");
+        SET(p_ReentrantBlockingLock__TryAcquire, "?_TryAcquire@_ReentrantBlockingLock@details@Concurrency@@QAE_NXZ");
+        SET(p_NonReentrantBlockingLock_ctor, "??0_NonReentrantBlockingLock@details@Concurrency@@QAE@XZ");
+        SET(p_NonReentrantBlockingLock_dtor, "??1_NonReentrantBlockingLock@details@Concurrency@@QAE@XZ");
+        SET(p_NonReentrantBlockingLock__Acquire, "?_Acquire@_NonReentrantBlockingLock@details@Concurrency@@QAEXXZ");
+        SET(p_NonReentrantBlockingLock__Release, "?_Release@_NonReentrantBlockingLock@details@Concurrency@@QAEXXZ");
+        SET(p_NonReentrantBlockingLock__TryAcquire, "?_TryAcquire@_NonReentrantBlockingLock@details@Concurrency@@QAE_NXZ");
+
+        SET(p_event_ctor, "??0event@Concurrency@@QAE@XZ");
+        SET(p_event_dtor, "??1event@Concurrency@@QAE@XZ");
+        SET(p_event_reset, "?reset@event@Concurrency@@QAEXXZ");
+        SET(p_event_set, "?set@event@Concurrency@@QAEXXZ");
+        SET(p_event_wait, "?wait@event@Concurrency@@QAEII@Z");
+        SET(p_event_wait_for_multiple, "?wait_for_multiple@event@Concurrency@@SAIPAPAV12@I_NI@Z");
+
+        SET(p_Context_CurrentContext, "?CurrentContext@Context@Concurrency@@SAPAV12@XZ");
+        SET(p_SchedulerPolicy_ctor, "??0SchedulerPolicy@Concurrency@@QAE@XZ");
+        SET(p_SchedulerPolicy_SetConcurrencyLimits, "?SetConcurrencyLimits@SchedulerPolicy@Concurrency@@QAEXII@Z");
+        SET(p_SchedulerPolicy_dtor, "??1SchedulerPolicy@Concurrency@@QAE@XZ");
+        SET(p_Scheduler_Create, "?Create@Scheduler@Concurrency@@SAPAV12@ABVSchedulerPolicy@2@@Z");
+        SET(p_CurrentScheduler_Get, "?Get@CurrentScheduler@Concurrency@@SAPAVScheduler@2@XZ");
     }
 
     init_thiscall_thunk();
     return TRUE;
 }
-
-#define NUMELMS(array) (sizeof(array)/sizeof((array)[0]))
 
 #define okwchars(dst, b0, b1, b2, b3, b4, b5, b6, b7) \
     ok(dst[0] == b0 && dst[1] == b1 && dst[2] == b2 && dst[3] == b3 && \
@@ -243,7 +373,7 @@ static BOOL init(void)
 
 static void test_wmemcpy_s(void)
 {
-    static wchar_t dest[8];
+    static wchar_t dest[8], buf[32];
     static const wchar_t tiny[] = {'T',0,'I','N','Y',0};
     static const wchar_t big[] = {'a','t','o','o','l','o','n','g','s','t','r','i','n','g',0};
     const wchar_t XX = 0x5858;     /* two 'X' bytes */
@@ -254,7 +384,7 @@ static void test_wmemcpy_s(void)
 
     /* Normal */
     memset(dest, 'X', sizeof(dest));
-    ret = p_wmemcpy_s(dest, NUMELMS(dest), tiny, NUMELMS(tiny));
+    ret = p_wmemcpy_s(dest, ARRAY_SIZE(dest), tiny, ARRAY_SIZE(tiny));
     ok(ret == 0, "Copying a buffer into a big enough destination returned %d, expected 0\n", ret);
     okwchars(dest, tiny[0], tiny[1], tiny[2], tiny[3], tiny[4], tiny[5], XX, XX);
 
@@ -262,7 +392,7 @@ static void test_wmemcpy_s(void)
     errno = 0xdeadbeef;
     SET_EXPECT(invalid_parameter_handler);
     memset(dest, 'X', sizeof(dest));
-    ret = p_wmemcpy_s(dest, NUMELMS(dest), big, NUMELMS(big));
+    ret = p_wmemcpy_s(dest, ARRAY_SIZE(dest), big, ARRAY_SIZE(big));
     ok(errno == ERANGE, "Copying a big buffer to a small destination errno %d, expected ERANGE\n", errno);
     ok(ret == ERANGE, "Copying a big buffer to a small destination returned %d, expected ERANGE\n", ret);
     okwchars(dest, 0, 0, 0, 0, 0, 0, 0, 0);
@@ -272,7 +402,7 @@ static void test_wmemcpy_s(void)
     errno = 0xdeadbeef;
     SET_EXPECT(invalid_parameter_handler);
     memset(dest, 'X', sizeof(dest));
-    ret = p_wmemcpy_s(dest, NUMELMS(dest), NULL, NUMELMS(tiny));
+    ret = p_wmemcpy_s(dest, ARRAY_SIZE(dest), NULL, ARRAY_SIZE(tiny));
     ok(errno == EINVAL, "Copying a NULL source buffer errno %d, expected EINVAL\n", errno);
     ok(ret == EINVAL, "Copying a NULL source buffer returned %d, expected EINVAL\n", ret);
     okwchars(dest, 0, 0, 0, 0, 0, 0, 0, 0);
@@ -282,7 +412,7 @@ static void test_wmemcpy_s(void)
     errno = 0xdeadbeef;
     SET_EXPECT(invalid_parameter_handler);
     memset(dest, 'X', sizeof(dest));
-    ret = p_wmemcpy_s(dest, 0, tiny, NUMELMS(tiny));
+    ret = p_wmemcpy_s(dest, 0, tiny, ARRAY_SIZE(tiny));
     ok(errno == ERANGE, "Copying into a destination of size 0 errno %d, expected ERANGE\n", errno);
     ok(ret == ERANGE, "Copying into a destination of size 0 returned %d, expected ERANGE\n", ret);
     okwchars(dest, XX, XX, XX, XX, XX, XX, XX, XX);
@@ -291,7 +421,7 @@ static void test_wmemcpy_s(void)
     /* Replace dest with NULL */
     errno = 0xdeadbeef;
     SET_EXPECT(invalid_parameter_handler);
-    ret = p_wmemcpy_s(NULL, NUMELMS(dest), tiny, NUMELMS(tiny));
+    ret = p_wmemcpy_s(NULL, ARRAY_SIZE(dest), tiny, ARRAY_SIZE(tiny));
     ok(errno == EINVAL, "Copying a tiny buffer to a big NULL destination errno %d, expected EINVAL\n", errno);
     ok(ret == EINVAL, "Copying a tiny buffer to a big NULL destination returned %d, expected EINVAL\n", ret);
     CHECK_CALLED(invalid_parameter_handler);
@@ -300,11 +430,23 @@ static void test_wmemcpy_s(void)
     errno = 0xdeadbeef;
     SET_EXPECT(invalid_parameter_handler);
     memset(dest, 'X', sizeof(dest));
-    ret = p_wmemcpy_s(dest, 0, NULL, NUMELMS(tiny));
+    ret = p_wmemcpy_s(dest, 0, NULL, ARRAY_SIZE(tiny));
     ok(errno == EINVAL, "Copying a NULL buffer into a destination of size 0 errno %d, expected EINVAL\n", errno);
     ok(ret == EINVAL, "Copying a NULL buffer into a destination of size 0 returned %d, expected EINVAL\n", ret);
     okwchars(dest, XX, XX, XX, XX, XX, XX, XX, XX);
     CHECK_CALLED(invalid_parameter_handler);
+
+    ret = p_wmemcpy_s(buf, ARRAY_SIZE(buf), big, ARRAY_SIZE(big));
+    ok(!ret, "wmemcpy_s returned %d\n", ret);
+    ok(!memcmp(buf, big, sizeof(big)), "unexpected buf\n");
+
+    ret = p_wmemcpy_s(buf + 1, ARRAY_SIZE(buf) - 1, buf, ARRAY_SIZE(big));
+    ok(!ret, "wmemcpy_s returned %d\n", ret);
+    ok(!memcmp(buf + 1, big, sizeof(big)), "unexpected buf\n");
+
+    ret = p_wmemcpy_s(buf, ARRAY_SIZE(buf), buf + 1, ARRAY_SIZE(big));
+    ok(!ret, "wmemcpy_s returned %d\n", ret);
+    ok(!memcmp(buf, big, sizeof(big)), "unexpected buf\n");
 
     ok(p_set_invalid_parameter_handler(NULL) == test_invalid_parameter_handler,
             "Cannot reset invalid parameter handler\n");
@@ -323,13 +465,13 @@ static void test_wmemmove_s(void)
 
     /* Normal */
     memset(dest, 'X', sizeof(dest));
-    ret = p_wmemmove_s(dest, NUMELMS(dest), tiny, NUMELMS(tiny));
+    ret = p_wmemmove_s(dest, ARRAY_SIZE(dest), tiny, ARRAY_SIZE(tiny));
     ok(ret == 0, "Moving a buffer into a big enough destination returned %d, expected 0\n", ret);
     okwchars(dest, tiny[0], tiny[1], tiny[2], tiny[3], tiny[4], tiny[5], XX, XX);
 
     /* Overlapping */
     memcpy(dest, big, sizeof(dest));
-    ret = p_wmemmove_s(dest+1, NUMELMS(dest)-1, dest, NUMELMS(dest)-1);
+    ret = p_wmemmove_s(dest+1, ARRAY_SIZE(dest)-1, dest, ARRAY_SIZE(dest)-1);
     ok(ret == 0, "Moving a buffer up one char returned %d, expected 0\n", ret);
     okwchars(dest, big[0], big[0], big[1], big[2], big[3], big[4], big[5], big[6]);
 
@@ -337,7 +479,7 @@ static void test_wmemmove_s(void)
     errno = 0xdeadbeef;
     SET_EXPECT(invalid_parameter_handler);
     memset(dest, 'X', sizeof(dest));
-    ret = p_wmemmove_s(dest, NUMELMS(dest), big, NUMELMS(big));
+    ret = p_wmemmove_s(dest, ARRAY_SIZE(dest), big, ARRAY_SIZE(big));
     ok(errno == ERANGE, "Moving a big buffer to a small destination errno %d, expected ERANGE\n", errno);
     ok(ret == ERANGE, "Moving a big buffer to a small destination returned %d, expected ERANGE\n", ret);
     okwchars(dest, XX, XX, XX, XX, XX, XX, XX, XX);
@@ -347,7 +489,7 @@ static void test_wmemmove_s(void)
     errno = 0xdeadbeef;
     SET_EXPECT(invalid_parameter_handler);
     memset(dest, 'X', sizeof(dest));
-    ret = p_wmemmove_s(dest, NUMELMS(dest), NULL, NUMELMS(tiny));
+    ret = p_wmemmove_s(dest, ARRAY_SIZE(dest), NULL, ARRAY_SIZE(tiny));
     ok(errno == EINVAL, "Moving a NULL source buffer errno %d, expected EINVAL\n", errno);
     ok(ret == EINVAL, "Moving a NULL source buffer returned %d, expected EINVAL\n", ret);
     okwchars(dest, XX, XX, XX, XX, XX, XX, XX, XX);
@@ -357,7 +499,7 @@ static void test_wmemmove_s(void)
     errno = 0xdeadbeef;
     SET_EXPECT(invalid_parameter_handler);
     memset(dest, 'X', sizeof(dest));
-    ret = p_wmemmove_s(dest, 0, tiny, NUMELMS(tiny));
+    ret = p_wmemmove_s(dest, 0, tiny, ARRAY_SIZE(tiny));
     ok(errno == ERANGE, "Moving into a destination of size 0 errno %d, expected ERANGE\n", errno);
     ok(ret == ERANGE, "Moving into a destination of size 0 returned %d, expected ERANGE\n", ret);
     okwchars(dest, XX, XX, XX, XX, XX, XX, XX, XX);
@@ -366,7 +508,7 @@ static void test_wmemmove_s(void)
     /* Replace dest with NULL */
     errno = 0xdeadbeef;
     SET_EXPECT(invalid_parameter_handler);
-    ret = p_wmemmove_s(NULL, NUMELMS(dest), tiny, NUMELMS(tiny));
+    ret = p_wmemmove_s(NULL, ARRAY_SIZE(dest), tiny, ARRAY_SIZE(tiny));
     ok(errno == EINVAL, "Moving a tiny buffer to a big NULL destination errno %d, expected EINVAL\n", errno);
     ok(ret == EINVAL, "Moving a tiny buffer to a big NULL destination returned %d, expected EINVAL\n", ret);
     CHECK_CALLED(invalid_parameter_handler);
@@ -375,7 +517,7 @@ static void test_wmemmove_s(void)
     errno = 0xdeadbeef;
     SET_EXPECT(invalid_parameter_handler);
     memset(dest, 'X', sizeof(dest));
-    ret = p_wmemmove_s(dest, 0, NULL, NUMELMS(tiny));
+    ret = p_wmemmove_s(dest, 0, NULL, ARRAY_SIZE(tiny));
     ok(errno == EINVAL, "Moving a NULL buffer into a destination of size 0 errno %d, expected EINVAL\n", errno);
     ok(ret == EINVAL, "Moving a NULL buffer into a destination of size 0 returned %d, expected EINVAL\n", ret);
     okwchars(dest, XX, XX, XX, XX, XX, XX, XX, XX);
@@ -640,11 +782,337 @@ static void test_reader_writer_lock(void)
     call_func1(preader_writer_lock_dtor, rw_lock);
 }
 
+static void test__ReentrantBlockingLock(void)
+{
+    _ReentrantBlockingLock rbl;
+    MSVCRT_bool ret;
+
+    call_func1(p_ReentrantBlockingLock_ctor, &rbl);
+    ret = call_func1(p_ReentrantBlockingLock__TryAcquire, &rbl);
+    ok(ret, "_ReentrantBlockingLock__TryAcquire failed\n");
+    call_func1(p_ReentrantBlockingLock__Acquire, &rbl);
+    ret = call_func1(p_ReentrantBlockingLock__TryAcquire, &rbl);
+    ok(ret, "_ReentrantBlockingLock__TryAcquire failed\n");
+    call_func1(p_ReentrantBlockingLock__Release, &rbl);
+    call_func1(p_ReentrantBlockingLock__Release, &rbl);
+    call_func1(p_ReentrantBlockingLock__Release, &rbl);
+    call_func1(p_ReentrantBlockingLock_dtor, &rbl);
+
+    call_func1(p_NonReentrantBlockingLock_ctor, &rbl);
+    ret = call_func1(p_NonReentrantBlockingLock__TryAcquire, &rbl);
+    ok(ret, "_NonReentrantBlockingLock__TryAcquire failed\n");
+    call_func1(p_NonReentrantBlockingLock__Acquire, &rbl);
+    ret = call_func1(p_NonReentrantBlockingLock__TryAcquire, &rbl);
+    ok(ret, "_NonReentrantBlockingLock__TryAcquire failed\n");
+    call_func1(p_NonReentrantBlockingLock__Release, &rbl);
+    call_func1(p_NonReentrantBlockingLock__Release, &rbl);
+    call_func1(p_NonReentrantBlockingLock__Release, &rbl);
+    call_func1(p_NonReentrantBlockingLock_dtor, &rbl);
+}
+
+static DWORD WINAPI test_event_thread(void *arg)
+{
+    event *evt = arg;
+    call_func1(p_event_set, evt);
+    return 0;
+}
+
+static DWORD WINAPI multiple_events_thread(void *arg)
+{
+     event **events = arg;
+
+     Sleep(50);
+     call_func1(p_event_set, events[0]);
+     call_func1(p_event_reset, events[0]);
+     call_func1(p_event_set, events[1]);
+     call_func1(p_event_reset, events[1]);
+     return 0;
+}
+
+static void test_event(void)
+{
+    int i;
+    int ret;
+    event evt;
+    event *evts[70];
+    HANDLE thread;
+    HANDLE threads[ARRAY_SIZE(evts)];
+
+    call_func1(p_event_ctor, &evt);
+
+    ret = call_func2(p_event_wait, &evt, 100);
+    ok(ret == -1, "expected -1, got %d\n", ret);
+
+    call_func1(p_event_set, &evt);
+    ret = call_func2(p_event_wait, &evt, 100);
+    ok(!ret, "expected 0, got %d\n", ret);
+
+    ret = call_func2(p_event_wait, &evt, 100);
+    ok(!ret, "expected 0, got %d\n", ret);
+
+    call_func1(p_event_reset, &evt);
+    ret = call_func2(p_event_wait, &evt, 100);
+    ok(ret == -1, "expected -1, got %d\n", ret);
+
+    thread = CreateThread(NULL, 0, test_event_thread, (void*)&evt, 0, NULL);
+    ret = call_func2(p_event_wait, &evt, 5000);
+    ok(!ret, "expected 0, got %d\n", ret);
+    WaitForSingleObject(thread, INFINITE);
+    CloseHandle(thread);
+
+    if (0) /* crashes on Windows */
+        p_event_wait_for_multiple(NULL, 10, TRUE, 0);
+
+    for (i = 0; i < ARRAY_SIZE(evts); i++) {
+        evts[i] = malloc(sizeof(evt));
+        call_func1(p_event_ctor, evts[i]);
+    }
+
+    ret = p_event_wait_for_multiple(evts, 0, TRUE, 100);
+    ok(!ret, "expected 0, got %d\n", ret);
+
+    ret = p_event_wait_for_multiple(evts, ARRAY_SIZE(evts), TRUE, 100);
+    ok(ret == -1, "expected -1, got %d\n", ret);
+
+    /* reset and test wait for multiple with all */
+    for (i = 0; i < ARRAY_SIZE(evts); i++)
+        threads[i] = CreateThread(NULL, 0, test_event_thread, (void*)evts[i], 0, NULL);
+
+    ret = p_event_wait_for_multiple(evts, ARRAY_SIZE(evts), TRUE, 5000);
+    ok(ret != -1, "didn't expect -1\n");
+
+    for (i = 0; i < ARRAY_SIZE(evts); i++) {
+        WaitForSingleObject(threads[i], INFINITE);
+        CloseHandle(threads[i]);
+    }
+
+    /* reset and test wait for multiple with any */
+    call_func1(p_event_reset, evts[0]);
+
+    thread = CreateThread(NULL, 0, test_event_thread, (void*)evts[0], 0, NULL);
+    ret = p_event_wait_for_multiple(evts, 1, FALSE, 5000);
+    ok(!ret, "expected 0, got %d\n", ret);
+    WaitForSingleObject(thread, INFINITE);
+    CloseHandle(thread);
+
+    call_func1(p_event_reset, evts[0]);
+    call_func1(p_event_reset, evts[1]);
+    thread = CreateThread(NULL, 0, multiple_events_thread, (void*)evts, 0, NULL);
+    ret = p_event_wait_for_multiple(evts, 2, TRUE, 500);
+    ok(ret == -1, "expected -1, got %d\n", ret);
+    WaitForSingleObject(thread, INFINITE);
+    CloseHandle(thread);
+
+    call_func1(p_event_reset, evts[0]);
+    call_func1(p_event_set, evts[1]);
+    ret = p_event_wait_for_multiple(evts, 2, FALSE, 0);
+    ok(ret == 1, "expected 1, got %d\n", ret);
+
+    for (i = 0; i < ARRAY_SIZE(evts); i++) {
+        call_func1(p_event_dtor, evts[i]);
+        free(evts[i]);
+    }
+
+    call_func1(p_event_dtor, &evt);
+}
+
+static DWORD WINAPI external_context_thread(void *arg)
+{
+    unsigned int id;
+    Context *ctx;
+
+    id = p_Context_Id();
+    ok(id == -1, "Context::Id() = %u\n", id);
+
+    ctx = p_Context_CurrentContext();
+    ok(ctx != NULL, "Context::CurrentContext() = NULL\n");
+    id = p_Context_Id();
+    ok(id == 1, "Context::Id() = %u\n", id);
+    return 0;
+}
+
+static void test_ExternalContextBase(void)
+{
+    unsigned int id;
+    Context *ctx;
+    HANDLE thread;
+
+    id = p_Context_Id();
+    ok(id == -1, "Context::Id() = %u\n", id);
+
+    ctx = p_Context_CurrentContext();
+    ok(ctx != NULL, "Context::CurrentContext() = NULL\n");
+    id = p_Context_Id();
+    ok(id == 0, "Context::Id() = %u\n", id);
+
+    ctx = p_Context_CurrentContext();
+    ok(ctx != NULL, "Context::CurrentContext() = NULL\n");
+    id = p_Context_Id();
+    ok(id == 0, "Context::Id() = %u\n", id);
+
+    thread = CreateThread(NULL, 0, external_context_thread, NULL, 0, NULL);
+    ok(thread != NULL, "CreateThread failed: %d\n", GetLastError());
+    WaitForSingleObject(thread, INFINITE);
+    CloseHandle(thread);
+}
+
+static void test_Scheduler(void)
+{
+    Scheduler *scheduler, *current_scheduler;
+    SchedulerPolicy policy;
+    unsigned int i;
+
+    call_func1(p_SchedulerPolicy_ctor, &policy);
+    scheduler = p_Scheduler_Create(&policy);
+    ok(scheduler != NULL, "Scheduler::Create() = NULL\n");
+
+    call_func1(scheduler->vtable->Attach, scheduler);
+    current_scheduler = p_CurrentScheduler_Get();
+    ok(current_scheduler == scheduler, "CurrentScheduler::Get() = %p, expected %p\n",
+            current_scheduler, scheduler);
+    p_CurrentScheduler_Detach();
+
+    current_scheduler = p_CurrentScheduler_Get();
+    ok(current_scheduler != scheduler, "scheduler has not changed after detach\n");
+    call_func1(scheduler->vtable->Release, scheduler);
+
+    i = p_CurrentScheduler_Id();
+    ok(!i, "CurrentScheduler::Id() = %u\n", i);
+
+    call_func3(p_SchedulerPolicy_SetConcurrencyLimits, &policy, 1, 1);
+    scheduler = p_Scheduler_Create(&policy);
+    ok(scheduler != NULL, "Scheduler::Create() = NULL\n");
+
+    i = call_func1(scheduler->vtable->GetNumberOfVirtualProcessors, scheduler);
+    ok(i == 1, "Scheduler::GetNumberOfVirtualProcessors() = %u\n", i);
+    call_func1(scheduler->vtable->Release, scheduler);
+    call_func1(p_SchedulerPolicy_dtor, &policy);
+}
+
+static void test__memicmp(void)
+{
+    static const char *s1 = "abc";
+    static const char *s2 = "aBd";
+    int ret;
+
+    ok(p_set_invalid_parameter_handler(test_invalid_parameter_handler) == NULL,
+            "Invalid parameter handler was already set\n");
+
+    ret = p__memicmp(NULL, NULL, 0);
+    ok(!ret, "got %d\n", ret);
+
+    SET_EXPECT(invalid_parameter_handler);
+    ret = p__memicmp(NULL, NULL, 1);
+    ok(ret == _NLSCMPERROR, "got %d\n", ret);
+    ok(errno == EINVAL, "errno = %d, expected EINVAL\n", errno);
+    CHECK_CALLED(invalid_parameter_handler);
+
+    SET_EXPECT(invalid_parameter_handler);
+    ret = p__memicmp(s1, NULL, 1);
+    ok(ret == _NLSCMPERROR, "got %d\n", ret);
+    ok(errno == EINVAL, "errno = %d, expected EINVAL\n", errno);
+    CHECK_CALLED(invalid_parameter_handler);
+
+    SET_EXPECT(invalid_parameter_handler);
+    ret = p__memicmp(NULL, s2, 1);
+    ok(ret == _NLSCMPERROR, "got %d\n", ret);
+    ok(errno == EINVAL, "errno = %d, expected EINVAL\n", errno);
+    CHECK_CALLED(invalid_parameter_handler);
+
+    ret = p__memicmp(s1, s2, 2);
+    ok(!ret, "got %d\n", ret);
+
+    ret = p__memicmp(s1, s2, 3);
+    ok(ret == -1, "got %d\n", ret);
+
+    ok(p_set_invalid_parameter_handler(NULL) == test_invalid_parameter_handler,
+            "Cannot reset invalid parameter handler\n");
+}
+
+static void test__memicmp_l(void)
+{
+    static const char *s1 = "abc";
+    static const char *s2 = "aBd";
+    int ret;
+
+    ok(p_set_invalid_parameter_handler(test_invalid_parameter_handler) == NULL,
+            "Invalid parameter handler was already set\n");
+
+    ret = p__memicmp_l(NULL, NULL, 0, NULL);
+    ok(!ret, "got %d\n", ret);
+
+    SET_EXPECT(invalid_parameter_handler);
+    ret = p__memicmp_l(NULL, NULL, 1, NULL);
+    ok(ret == _NLSCMPERROR, "got %d\n", ret);
+    ok(errno == EINVAL, "errno = %d, expected EINVAL\n", errno);
+    CHECK_CALLED(invalid_parameter_handler);
+
+    SET_EXPECT(invalid_parameter_handler);
+    ret = p__memicmp_l(s1, NULL, 1, NULL);
+    ok(ret == _NLSCMPERROR, "got %d\n", ret);
+    ok(errno == EINVAL, "errno = %d, expected EINVAL\n", errno);
+    CHECK_CALLED(invalid_parameter_handler);
+
+    SET_EXPECT(invalid_parameter_handler);
+    ret = p__memicmp_l(NULL, s2, 1, NULL);
+    ok(ret == _NLSCMPERROR, "got %d\n", ret);
+    ok(errno == EINVAL, "errno = %d, expected EINVAL\n", errno);
+    CHECK_CALLED(invalid_parameter_handler);
+
+    ret = p__memicmp_l(s1, s2, 2, NULL);
+    ok(!ret, "got %d\n", ret);
+
+    ret = p__memicmp_l(s1, s2, 3, NULL);
+    ok(ret == -1, "got %d\n", ret);
+
+    ok(p_set_invalid_parameter_handler(NULL) == test_invalid_parameter_handler,
+            "Cannot reset invalid parameter handler\n");
+}
+
+static void test_setlocale(void)
+{
+    char *ret;
+
+    ret = p_setlocale(LC_ALL, "en-US");
+    ok(!ret, "got %p\n", ret);
+}
+
+static void test___strncnt(void)
+{
+    static const struct
+    {
+        const char *str;
+        size_t size;
+        size_t ret;
+    }
+    strncnt_tests[] =
+    {
+        { NULL, 0, 0 },
+        { "a", 0, 0 },
+        { "a", 1, 1 },
+        { "a", 10, 1 },
+        { "abc", 1, 1 },
+    };
+    unsigned int i;
+    size_t ret;
+
+    if (0) /* crashes */
+        ret = p___strncnt(NULL, 1);
+
+    for (i = 0; i < ARRAY_SIZE(strncnt_tests); ++i)
+    {
+        ret = p___strncnt(strncnt_tests[i].str, strncnt_tests[i].size);
+        ok(ret == strncnt_tests[i].ret, "%u: unexpected return value %u.\n", i, (int)ret);
+    }
+}
+
 START_TEST(msvcr100)
 {
     if (!init())
         return;
 
+    test_ExternalContextBase();
+    test_Scheduler();
     test_wmemcpy_s();
     test_wmemmove_s();
     test_fread_s();
@@ -652,4 +1120,10 @@ START_TEST(msvcr100)
     test_atoi();
     test__SpinWait();
     test_reader_writer_lock();
+    test__ReentrantBlockingLock();
+    test_event();
+    test__memicmp();
+    test__memicmp_l();
+    test_setlocale();
+    test___strncnt();
 }

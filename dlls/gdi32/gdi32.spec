@@ -281,6 +281,7 @@
 @ stdcall GetEnhMetaFileW(wstr)
 # @ stub GetFontAssocStatus
 @ stdcall GetFontData(long long long ptr long)
+@ stdcall GetFontFileData(long long int64 ptr long)
 @ stdcall GetFontFileInfo(long long ptr long ptr)
 @ stdcall GetFontLanguageInfo(long)
 @ stdcall GetFontRealizationInfo(long ptr)
@@ -524,3 +525,6 @@
 
 # OpenGL
 @ cdecl __wine_get_wgl_driver(long long)
+
+# Vulkan
+@ cdecl __wine_get_vulkan_driver(long long)

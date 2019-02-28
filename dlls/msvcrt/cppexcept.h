@@ -26,6 +26,8 @@
 #define CXX_FRAME_MAGIC_VC8 0x19930522
 #define CXX_EXCEPTION       0xe06d7363
 
+#define FUNC_DESCR_SYNCHRONOUS  1 /* synchronous exceptions only (built with /EHs and /EHsc) */
+
 typedef void (*vtable_ptr)(void);
 
 /* type_info object, see cpp.c for implementation */
@@ -33,7 +35,7 @@ typedef struct __type_info
 {
   const vtable_ptr *vtable;
   char              *name;        /* Unmangled name, allocated lazily */
-  char               mangled[32]; /* Variable length, but we declare it large enough for static RTTI */
+  char               mangled[64]; /* Variable length, but we declare it large enough for static RTTI */
 } type_info;
 
 /* exception object */

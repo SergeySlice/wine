@@ -609,7 +609,7 @@ static HRESULT compile_new_expression(compiler_ctx_t *ctx, call_expression_t *ex
     if(FAILED(hres))
         return hres;
 
-    return push_instr(ctx, OP_push_ret) ? S_OK : E_OUTOFMEMORY;
+    return push_instr(ctx, OP_push_acc) ? S_OK : E_OUTOFMEMORY;
 }
 
 static HRESULT compile_call_expression(compiler_ctx_t *ctx, call_expression_t *expr, BOOL emit_ret)
@@ -651,7 +651,7 @@ static HRESULT compile_call_expression(compiler_ctx_t *ctx, call_expression_t *e
     if(FAILED(hres))
         return hres;
 
-    return !emit_ret || push_instr(ctx, OP_push_ret) ? S_OK : E_OUTOFMEMORY;
+    return !emit_ret || push_instr(ctx, OP_push_acc) ? S_OK : E_OUTOFMEMORY;
 }
 
 static HRESULT compile_delete_expression(compiler_ctx_t *ctx, unary_expression_t *expr)
@@ -693,7 +693,7 @@ static HRESULT compile_delete_expression(compiler_ctx_t *ctx, unary_expression_t
     case EXPR_IDENT:
         return push_instr_bstr(ctx, OP_delete_ident, ((identifier_expression_t*)expr->expression)->identifier);
     default: {
-        const WCHAR fixmeW[] = {'F','I','X','M','E',0};
+        static const WCHAR fixmeW[] = {'F','I','X','M','E',0};
 
         WARN("invalid delete, unimplemented exception message\n");
 
@@ -861,35 +861,34 @@ static HRESULT literal_as_bstr(compiler_ctx_t *ctx, literal_t *literal, BSTR *st
 
 static HRESULT compile_array_literal(compiler_ctx_t *ctx, array_literal_expression_t *expr)
 {
-    unsigned i, elem_cnt = expr->length;
+    unsigned length = 0;
     array_element_t *iter;
+    unsigned array_instr;
     HRESULT hres;
 
-    for(iter = expr->element_list; iter; iter = iter->next) {
-        elem_cnt += iter->elision+1;
+    array_instr = push_instr(ctx, OP_carray);
 
-        for(i=0; i < iter->elision; i++) {
-            if(!push_instr(ctx, OP_undefined))
-                return E_OUTOFMEMORY;
-        }
+    for(iter = expr->element_list; iter; iter = iter->next) {
+        length += iter->elision;
 
         hres = compile_expression(ctx, iter->expr, TRUE);
         if(FAILED(hres))
             return hres;
+
+        hres = push_instr_uint(ctx, OP_carray_set, length);
+        if(FAILED(hres))
+            return hres;
+
+        length++;
     }
 
-    for(i=0; i < expr->length; i++) {
-        if(!push_instr(ctx, OP_undefined))
-            return E_OUTOFMEMORY;
-    }
-
-    return push_instr_uint(ctx, OP_carray, elem_cnt);
+    instr_ptr(ctx, array_instr)->u.arg[0].uint = length + expr->length;
+    return S_OK;
 }
 
 static HRESULT compile_object_literal(compiler_ctx_t *ctx, property_value_expression_t *expr)
 {
-    prop_val_t *iter;
-    unsigned instr;
+    property_definition_t *iter;
     BSTR name;
     HRESULT hres;
 
@@ -905,11 +904,9 @@ static HRESULT compile_object_literal(compiler_ctx_t *ctx, property_value_expres
         if(FAILED(hres))
             return hres;
 
-        instr = push_instr(ctx, OP_obj_prop);
-        if(!instr)
-            return E_OUTOFMEMORY;
-
-        instr_ptr(ctx, instr)->u.arg->bstr = name;
+        hres = push_instr_bstr_uint(ctx, OP_obj_prop, name, iter->type);
+        if(FAILED(hres))
+            return hres;
     }
 
     return S_OK;
@@ -1383,24 +1380,30 @@ static HRESULT compile_forin_statement(compiler_ctx_t *ctx, forin_statement_t *s
     return S_OK;
 }
 
-static HRESULT pop_to_stat(compiler_ctx_t *ctx, BOOL var_stack, BOOL scope_stack, statement_ctx_t *stat_ctx)
+static HRESULT pop_to_stat(compiler_ctx_t *ctx, statement_ctx_t *stat_ctx)
 {
     unsigned stack_pop = 0;
     statement_ctx_t *iter;
+    HRESULT hres;
 
     for(iter = ctx->stat_ctx; iter != stat_ctx; iter = iter->next) {
-        if(scope_stack) {
-            if(iter->using_scope && !push_instr(ctx, OP_pop_scope))
-                return E_OUTOFMEMORY;
-            if(iter->using_except && !push_instr(ctx, OP_pop_except))
-                return E_OUTOFMEMORY;
+        if(iter->using_scope && !push_instr(ctx, OP_pop_scope))
+            return E_OUTOFMEMORY;
+        if(iter->using_except) {
+            if(stack_pop) {
+                hres = push_instr_uint(ctx, OP_pop, stack_pop);
+                if(FAILED(hres))
+                    return hres;
+                stack_pop = 0;
+            }
+            hres = push_instr_uint(ctx, OP_pop_except, ctx->code_off+1);
+            if(FAILED(hres))
+                return hres;
         }
         stack_pop += iter->stack_use;
     }
 
-    if(var_stack && stack_pop) {
-        HRESULT hres;
-
+    if(stack_pop) {
         hres = push_instr_uint(ctx, OP_pop, stack_pop);
         if(FAILED(hres))
             return hres;
@@ -1455,7 +1458,7 @@ static HRESULT compile_continue_statement(compiler_ctx_t *ctx, branch_statement_
         }
     }
 
-    hres = pop_to_stat(ctx, TRUE, TRUE, pop_ctx);
+    hres = pop_to_stat(ctx, pop_ctx);
     if(FAILED(hres))
         return hres;
 
@@ -1492,7 +1495,7 @@ static HRESULT compile_break_statement(compiler_ctx_t *ctx, branch_statement_t *
         }
     }
 
-    hres = pop_to_stat(ctx, TRUE, TRUE, pop_ctx->next);
+    hres = pop_to_stat(ctx, pop_ctx->next);
     if(FAILED(hres))
         return hres;
 
@@ -1509,10 +1512,6 @@ static HRESULT compile_return_statement(compiler_ctx_t *ctx, expression_statemen
         return JS_E_MISPLACED_RETURN;
     }
 
-    hres = pop_to_stat(ctx, TRUE, FALSE, NULL);
-    if(FAILED(hres))
-        return hres;
-
     if(stat->expr) {
         hres = compile_expression(ctx, stat->expr, TRUE);
         if(FAILED(hres))
@@ -1521,7 +1520,7 @@ static HRESULT compile_return_statement(compiler_ctx_t *ctx, expression_statemen
             return E_OUTOFMEMORY;
     }
 
-    hres = pop_to_stat(ctx, FALSE, TRUE, NULL);
+    hres = pop_to_stat(ctx, NULL);
     if(FAILED(hres))
         return hres;
 
@@ -1687,9 +1686,8 @@ static HRESULT compile_throw_statement(compiler_ctx_t *ctx, expression_statement
 /* ECMA-262 3rd Edition    12.14 */
 static HRESULT compile_try_statement(compiler_ctx_t *ctx, try_statement_t *stat)
 {
-    statement_ctx_t try_ctx = {0, FALSE, TRUE}, catch_ctx = {0, TRUE, FALSE};
-    statement_ctx_t finally_ctx = {2, FALSE, FALSE};
-    unsigned push_except;
+    statement_ctx_t try_ctx = {0, FALSE, TRUE}, finally_ctx = {2, FALSE, FALSE};
+    unsigned push_except, finally_off = 0, catch_off = 0, pop_except, catch_pop_except = 0;
     BSTR ident;
     HRESULT hres;
 
@@ -1705,26 +1703,25 @@ static HRESULT compile_try_statement(compiler_ctx_t *ctx, try_statement_t *stat)
         ident = NULL;
     }
 
-    instr_ptr(ctx, push_except)->u.arg[1].bstr = ident;
-
-    if(!stat->catch_block)
-        try_ctx.stack_use = 2;
-
     hres = compile_statement(ctx, &try_ctx, stat->try_statement);
     if(FAILED(hres))
         return hres;
 
-    if(!push_instr(ctx, OP_pop_except))
+    pop_except = push_instr(ctx, OP_pop_except);
+    if(!pop_except)
         return E_OUTOFMEMORY;
 
     if(stat->catch_block) {
-        unsigned jmp_finally;
+        statement_ctx_t catch_ctx = {0, TRUE, stat->finally_statement != NULL};
 
-        jmp_finally = push_instr(ctx, OP_jmp);
-        if(!jmp_finally)
-            return E_OUTOFMEMORY;
+        if(stat->finally_statement)
+            catch_ctx.using_except = TRUE;
 
-        instr_ptr(ctx, push_except)->u.arg[0].uint = ctx->code_off;
+        catch_off = ctx->code_off;
+
+        hres = push_instr_bstr(ctx, OP_enter_catch, ident);
+        if(FAILED(hres))
+            return hres;
 
         hres = compile_statement(ctx, &catch_ctx, stat->catch_block->statement);
         if(FAILED(hres))
@@ -1733,20 +1730,33 @@ static HRESULT compile_try_statement(compiler_ctx_t *ctx, try_statement_t *stat)
         if(!push_instr(ctx, OP_pop_scope))
             return E_OUTOFMEMORY;
 
-        set_arg_uint(ctx, jmp_finally, ctx->code_off);
-    }else {
-        set_arg_uint(ctx, push_except, ctx->code_off);
+        if(stat->finally_statement) {
+            catch_pop_except = push_instr(ctx, OP_pop_except);
+            if(!catch_pop_except)
+                return E_OUTOFMEMORY;
+        }
     }
 
     if(stat->finally_statement) {
-        hres = compile_statement(ctx, stat->catch_block ? NULL : &finally_ctx, stat->finally_statement);
+        /*
+         * finally block expects two elements on the stack, which may be:
+         * - (true, return_addr) set by OP_pop_except, OP_end_finally jumps back to passed address
+         * - (false, exception_value) set when unwinding an exception, which OP_end_finally rethrows
+         */
+        finally_off = ctx->code_off;
+        hres = compile_statement(ctx, &finally_ctx, stat->finally_statement);
         if(FAILED(hres))
             return hres;
 
-        if(!stat->catch_block && !push_instr(ctx, OP_end_finally))
+        if(!push_instr(ctx, OP_end_finally))
             return E_OUTOFMEMORY;
     }
 
+    instr_ptr(ctx, pop_except)->u.arg[0].uint = ctx->code_off;
+    if(catch_pop_except)
+        instr_ptr(ctx, catch_pop_except)->u.arg[0].uint = ctx->code_off;
+    instr_ptr(ctx, push_except)->u.arg[0].uint = catch_off;
+    instr_ptr(ctx, push_except)->u.arg[1].uint = finally_off;
     return S_OK;
 }
 
@@ -1861,12 +1871,13 @@ static BOOL alloc_variable(compiler_ctx_t *ctx, const WCHAR *name)
     return alloc_local(ctx, ident, ctx->func->var_cnt++);
 }
 
-static BOOL visit_function_expression(compiler_ctx_t *ctx, function_expression_t *expr)
+static HRESULT visit_function_expression(compiler_ctx_t *ctx, function_expression_t *expr)
 {
     expr->func_id = ctx->func->func_cnt++;
     ctx->func_tail = ctx->func_tail ? (ctx->func_tail->next = expr) : (ctx->func_head = expr);
 
-    return !expr->identifier || expr->event_target || alloc_variable(ctx, expr->identifier);
+    return !expr->identifier || expr->event_target || alloc_variable(ctx, expr->identifier)
+        ? S_OK : E_OUTOFMEMORY;
 }
 
 static HRESULT visit_expression(compiler_ctx_t *ctx, expression_t *expr)
@@ -1979,13 +1990,13 @@ static HRESULT visit_expression(compiler_ctx_t *ctx, expression_t *expr)
         break;
     }
     case EXPR_FUNC:
-        visit_function_expression(ctx, (function_expression_t*)expr);
+        hres = visit_function_expression(ctx, (function_expression_t*)expr);
         break;
     case EXPR_MEMBER:
         hres = visit_expression(ctx, ((member_expression_t*)expr)->expression);
         break;
     case EXPR_PROPVAL: {
-        prop_val_t *iter;
+        property_definition_t *iter;
         for(iter = ((property_value_expression_t*)expr)->property_list; iter; iter = iter->next) {
             hres = visit_expression(ctx, iter->value);
             if(FAILED(hres))

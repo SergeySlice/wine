@@ -293,6 +293,22 @@ int CDECL MSVCRT_isxdigit(int c)
 }
 
 /*********************************************************************
+ *		_isblank_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__isblank_l(int c, MSVCRT__locale_t locale)
+{
+  return c == '\t' || MSVCRT__isctype_l( c, MSVCRT__BLANK, locale );
+}
+
+/*********************************************************************
+ *		isblank (MSVCRT.@)
+ */
+int CDECL MSVCRT_isblank(int c)
+{
+  return c == '\t' || MSVCRT__isctype( c, MSVCRT__BLANK );
+}
+
+/*********************************************************************
  *		__isascii (MSVCRT.@)
  */
 int CDECL MSVCRT___isascii(int c)
@@ -382,6 +398,8 @@ int CDECL MSVCRT__toupper_l(int c, MSVCRT__locale_t locale)
  */
 int CDECL MSVCRT_toupper(int c)
 {
+    if(initial_locale)
+        return c>='a' && c<='z' ? c-'a'+'A' : c;
     return MSVCRT__toupper_l(c, NULL);
 }
 
@@ -442,7 +460,9 @@ int CDECL MSVCRT__tolower_l(int c, MSVCRT__locale_t locale)
  */
 int CDECL MSVCRT_tolower(int c)
 {
-        return MSVCRT__tolower_l(c, NULL);
+    if(initial_locale)
+        return c>='A' && c<='Z' ? c-'A'+'a' : c;
+    return MSVCRT__tolower_l(c, NULL);
 }
 
 /*********************************************************************
@@ -452,3 +472,35 @@ int CDECL MSVCRT__tolower(int c)
 {
     return c + 0x20;  /* sic */
 }
+
+#if _MSVCR_VER>=120
+/*********************************************************************
+ *              wctype (MSVCR120.@)
+ */
+unsigned short __cdecl wctype(const char *property)
+{
+    static const struct {
+        const char *name;
+        unsigned short mask;
+    } properties[] = {
+        { "alnum", MSVCRT__DIGIT|MSVCRT__ALPHA },
+        { "alpha", MSVCRT__ALPHA },
+        { "cntrl", MSVCRT__CONTROL },
+        { "digit", MSVCRT__DIGIT },
+        { "graph", MSVCRT__DIGIT|MSVCRT__PUNCT|MSVCRT__ALPHA },
+        { "lower", MSVCRT__LOWER },
+        { "print", MSVCRT__DIGIT|MSVCRT__PUNCT|MSVCRT__BLANK|MSVCRT__ALPHA },
+        { "punct", MSVCRT__PUNCT },
+        { "space", MSVCRT__SPACE },
+        { "upper", MSVCRT__UPPER },
+        { "xdigit", MSVCRT__HEX }
+    };
+    unsigned int i;
+
+    for(i=0; i<ARRAY_SIZE(properties); i++)
+        if(!strcmp(property, properties[i].name))
+            return properties[i].mask;
+
+    return 0;
+}
+#endif

@@ -253,7 +253,7 @@ static void init_load_order(void)
     entry = strW.Buffer;
     while (*entry)
     {
-        while (*entry && *entry == ';') entry++;
+        while (*entry == ';') entry++;
         if (!*entry) break;
         next = strchrW( entry, ';' );
         if (next) *next++ = 0;
@@ -429,26 +429,27 @@ static enum loadorder get_load_order_value( HANDLE std_key, HANDLE app_key, cons
  * Return the loadorder of a module.
  * The system directory and '.dll' extension is stripped from the path.
  */
-enum loadorder get_load_order( const WCHAR *app_name, const WCHAR *path )
+enum loadorder get_load_order( const WCHAR *app_name, const UNICODE_STRING *nt_name )
 {
+    static const WCHAR nt_prefixW[] = {'\\','?','?','\\',0};
     enum loadorder ret = LO_INVALID;
     HANDLE std_key, app_key = 0;
+    const WCHAR *path = nt_name->Buffer;
     WCHAR *module, *basename;
-    UNICODE_STRING path_str;
     int len;
 
     if (!init_done) init_load_order();
     std_key = get_standard_key();
     if (app_name) app_key = get_app_key( app_name );
+    if (!strncmpW( path, nt_prefixW, 4 )) path += 4;
 
     TRACE("looking for %s\n", debugstr_w(path));
 
     /* Strip path information if the module resides in the system directory
      */
-    RtlInitUnicodeString( &path_str, path );
-    if (RtlPrefixUnicodeString( &system_dir, &path_str, TRUE ))
+    if (!strncmpiW( system_dir, path, strlenW( system_dir )))
     {
-        const WCHAR *p = path + system_dir.Length / sizeof(WCHAR);
+        const WCHAR *p = path + strlenW( system_dir );
         while (*p == '\\' || *p == '/') p++;
         if (!strchrW( p, '\\' ) && !strchrW( p, '/' )) path = p;
     }

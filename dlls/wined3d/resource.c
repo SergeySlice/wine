@@ -28,61 +28,36 @@
 WINE_DEFAULT_DEBUG_CHANNEL(d3d);
 WINE_DECLARE_DEBUG_CHANNEL(d3d_perf);
 
-static DWORD resource_access_from_pool(enum wined3d_pool pool)
+static void resource_check_usage(DWORD usage, unsigned int access)
 {
-    switch (pool)
-    {
-        case WINED3D_POOL_DEFAULT:
-            return WINED3D_RESOURCE_ACCESS_GPU;
-
-        case WINED3D_POOL_MANAGED:
-            return WINED3D_RESOURCE_ACCESS_GPU | WINED3D_RESOURCE_ACCESS_CPU;
-
-        case WINED3D_POOL_SCRATCH:
-        case WINED3D_POOL_SYSTEM_MEM:
-            return WINED3D_RESOURCE_ACCESS_CPU;
-
-        default:
-            FIXME("Unhandled pool %#x.\n", pool);
-            return 0;
-    }
-}
-
-static void resource_check_usage(DWORD usage)
-{
-    static const DWORD handled = WINED3DUSAGE_RENDERTARGET
-            | WINED3DUSAGE_DEPTHSTENCIL
-            | WINED3DUSAGE_WRITEONLY
-            | WINED3DUSAGE_SOFTWAREPROCESSING
-            | WINED3DUSAGE_DYNAMIC
-            | WINED3DUSAGE_AUTOGENMIPMAP
+    static const DWORD handled = WINED3DUSAGE_DYNAMIC
             | WINED3DUSAGE_STATICDECL
             | WINED3DUSAGE_OVERLAY
+            | WINED3DUSAGE_SCRATCH
+            | WINED3DUSAGE_PRIVATE
             | WINED3DUSAGE_LEGACY_CUBEMAP
-            | WINED3DUSAGE_TEXTURE;
+            | ~WINED3DUSAGE_MASK;
 
-    /* WINED3DUSAGE_WRITEONLY is supposed to result in write-combined mappings
+    /* Write-only CPU access is supposed to result in write-combined mappings
      * being returned. OpenGL doesn't give us explicit control over that, but
      * the hints and access flags we set for typical access patterns on
      * dynamic resources should in theory have the same effect on the OpenGL
      * driver. */
-  //#define WINED3DUSAGE_SOFTWAREPROCESSING                         0x00000010
-  //#define WINED3DUSAGE_DONOTCLIP                                  0x00000020
-  //#define WINED3DUSAGE_POINTS                                     0x00000040
 
     if (usage & ~handled)
         FIXME("Unhandled usage flags %#x.\n", usage & ~handled);
-    if ((usage & (WINED3DUSAGE_DYNAMIC | WINED3DUSAGE_WRITEONLY)) == WINED3DUSAGE_DYNAMIC)
-        WARN_(d3d_perf)("WINED3DUSAGE_DYNAMIC used without WINED3DUSAGE_WRITEONLY.\n");
+    if (usage & WINED3DUSAGE_DYNAMIC && access & WINED3D_RESOURCE_ACCESS_MAP_R)
+        WARN_(d3d_perf)("WINED3DUSAGE_DYNAMIC used with WINED3D_RESOURCE_ACCESS_MAP_R.\n");
 }
 
 HRESULT resource_init(struct wined3d_resource *resource, struct wined3d_device *device,
         enum wined3d_resource_type type, const struct wined3d_format *format,
-        enum wined3d_multisample_type multisample_type, UINT multisample_quality,
-        DWORD usage, enum wined3d_pool pool, UINT width, UINT height, UINT depth, UINT size,
-        void *parent, const struct wined3d_parent_ops *parent_ops,
+        enum wined3d_multisample_type multisample_type, unsigned int multisample_quality, unsigned int usage,
+        unsigned int bind_flags, unsigned int access, unsigned int width, unsigned int height, unsigned int depth,
+        unsigned int size, void *parent, const struct wined3d_parent_ops *parent_ops,
         const struct wined3d_resource_ops *resource_ops)
 {
+    const struct wined3d_d3d_info *d3d_info = &device->adapter->d3d_info;
     enum wined3d_gl_resource_type base_type = WINED3D_GL_RES_TYPE_COUNT;
     enum wined3d_gl_resource_type gl_type = WINED3D_GL_RES_TYPE_COUNT;
     const struct wined3d_gl_info *gl_info = &device->adapter->gl_info;
@@ -98,6 +73,7 @@ HRESULT resource_init(struct wined3d_resource *resource, struct wined3d_device *
     resource_types[] =
     {
         {WINED3D_RTYPE_BUFFER,      0,                              WINED3D_GL_RES_TYPE_BUFFER},
+        {WINED3D_RTYPE_TEXTURE_1D,  0,                              WINED3D_GL_RES_TYPE_TEX_1D},
         {WINED3D_RTYPE_TEXTURE_2D,  0,                              WINED3D_GL_RES_TYPE_TEX_2D},
         {WINED3D_RTYPE_TEXTURE_2D,  0,                              WINED3D_GL_RES_TYPE_TEX_RECT},
         {WINED3D_RTYPE_TEXTURE_2D,  0,                              WINED3D_GL_RES_TYPE_RB},
@@ -105,7 +81,35 @@ HRESULT resource_init(struct wined3d_resource *resource, struct wined3d_device *
         {WINED3D_RTYPE_TEXTURE_3D,  0,                              WINED3D_GL_RES_TYPE_TEX_3D},
     };
 
-    resource_check_usage(usage);
+    resource_check_usage(usage, access);
+
+    if (usage & WINED3DUSAGE_SCRATCH && access & WINED3D_RESOURCE_ACCESS_GPU)
+    {
+        ERR("Trying to create a scratch resource with access flags %s.\n",
+                wined3d_debug_resource_access(access));
+        return WINED3DERR_INVALIDCALL;
+    }
+
+    if (bind_flags & (WINED3D_BIND_RENDER_TARGET | WINED3D_BIND_DEPTH_STENCIL))
+    {
+        if ((access & (WINED3D_RESOURCE_ACCESS_CPU | WINED3D_RESOURCE_ACCESS_GPU)) != WINED3D_RESOURCE_ACCESS_GPU)
+        {
+            WARN("Bind flags %s are incompatible with resource access %s.\n",
+                    wined3d_debug_bind_flags(bind_flags), wined3d_debug_resource_access(access));
+            return WINED3DERR_INVALIDCALL;
+        }
+
+        /* Dynamic usage is incompatible with GPU writes. */
+        if (usage & WINED3DUSAGE_DYNAMIC)
+        {
+            WARN("Bind flags %s are incompatible with resource usage %s.\n",
+                    wined3d_debug_bind_flags(bind_flags), debug_d3dusage(usage));
+            return WINED3DERR_INVALIDCALL;
+        }
+    }
+
+    if (!size)
+        ERR("Attempting to create a zero-sized resource.\n");
 
     for (i = 0; i < ARRAY_SIZE(resource_types); ++i)
     {
@@ -117,31 +121,36 @@ HRESULT resource_init(struct wined3d_resource *resource, struct wined3d_device *
         if (base_type == WINED3D_GL_RES_TYPE_COUNT)
             base_type = gl_type;
 
-        if ((usage & WINED3DUSAGE_RENDERTARGET) && !(format->flags[gl_type] & WINED3DFMT_FLAG_RENDERTARGET))
+        if (type != WINED3D_RTYPE_BUFFER)
         {
-            WARN("Format %s cannot be used for render targets.\n", debug_d3dformat(format->id));
-            continue;
-        }
-        if ((usage & WINED3DUSAGE_DEPTHSTENCIL)
-                && !(format->flags[gl_type] & (WINED3DFMT_FLAG_DEPTH | WINED3DFMT_FLAG_STENCIL)))
-        {
-            WARN("Format %s cannot be used for depth/stencil buffers.\n", debug_d3dformat(format->id));
-            continue;
-        }
-        if (wined3d_settings.offscreen_rendering_mode == ORM_FBO
-                && usage & (WINED3DUSAGE_RENDERTARGET | WINED3DUSAGE_DEPTHSTENCIL)
-                && !(format->flags[gl_type] & WINED3DFMT_FLAG_FBO_ATTACHABLE))
-        {
-            WARN("Render target or depth stencil is not FBO attachable.\n");
-            continue;
-        }
-        if ((usage & WINED3DUSAGE_TEXTURE) && !(format->flags[gl_type] & WINED3DFMT_FLAG_TEXTURE))
-        {
-            WARN("Format %s cannot be used for texturing.\n", debug_d3dformat(format->id));
-            continue;
+            if ((bind_flags & WINED3D_BIND_RENDER_TARGET)
+                    && !(format->flags[gl_type] & WINED3DFMT_FLAG_RENDERTARGET))
+            {
+                WARN("Format %s cannot be used for render targets.\n", debug_d3dformat(format->id));
+                continue;
+            }
+            if ((bind_flags & WINED3D_BIND_DEPTH_STENCIL)
+                    && !(format->flags[gl_type] & (WINED3DFMT_FLAG_DEPTH | WINED3DFMT_FLAG_STENCIL)))
+            {
+                WARN("Format %s cannot be used for depth/stencil buffers.\n", debug_d3dformat(format->id));
+                continue;
+            }
+            if (wined3d_settings.offscreen_rendering_mode == ORM_FBO
+                    && bind_flags & (WINED3D_BIND_RENDER_TARGET | WINED3D_BIND_DEPTH_STENCIL)
+                    && !(format->flags[gl_type] & WINED3DFMT_FLAG_FBO_ATTACHABLE))
+            {
+                WARN("Render target or depth stencil is not FBO attachable.\n");
+                continue;
+            }
+            if ((bind_flags & WINED3D_BIND_SHADER_RESOURCE)
+                    && !(format->flags[gl_type] & WINED3DFMT_FLAG_TEXTURE))
+            {
+                WARN("Format %s cannot be used for texturing.\n", debug_d3dformat(format->id));
+                continue;
+            }
         }
         if (((width & (width - 1)) || (height & (height - 1)))
-                && !gl_info->supported[ARB_TEXTURE_NON_POWER_OF_TWO]
+                && !d3d_info->texture_npot
                 && !gl_info->supported[WINED3D_GL_NORMALIZED_TEXRECT]
                 && gl_type == WINED3D_GL_RES_TYPE_TEX_2D)
         {
@@ -160,7 +169,7 @@ HRESULT resource_init(struct wined3d_resource *resource, struct wined3d_device *
              * Use 2D textures, the texture code will pad to a power of 2 size. */
             gl_type = WINED3D_GL_RES_TYPE_TEX_2D;
         }
-        else if (pool == WINED3D_POOL_SCRATCH)
+        else if (usage & WINED3DUSAGE_SCRATCH)
         {
             /* Needed for proper format information. */
             gl_type = base_type;
@@ -193,10 +202,10 @@ HRESULT resource_init(struct wined3d_resource *resource, struct wined3d_device *
     resource->multisample_type = multisample_type;
     resource->multisample_quality = multisample_quality;
     resource->usage = usage;
-    resource->pool = pool;
-    resource->access_flags = resource_access_from_pool(pool);
-    if (usage & WINED3DUSAGE_DYNAMIC)
-        resource->access_flags |= WINED3D_RESOURCE_ACCESS_CPU;
+    resource->bind_flags = bind_flags;
+    if (resource->format_flags & WINED3DFMT_FLAG_MAPPABLE)
+        access |= WINED3D_RESOURCE_ACCESS_MAP_R | WINED3D_RESOURCE_ACCESS_MAP_W;
+    resource->access = access;
     resource->width = width;
     resource->height = height;
     resource->depth = depth;
@@ -206,33 +215,23 @@ HRESULT resource_init(struct wined3d_resource *resource, struct wined3d_device *
     resource->parent_ops = parent_ops;
     resource->resource_ops = resource_ops;
     resource->map_binding = WINED3D_LOCATION_SYSMEM;
+    resource->heap_memory = NULL;
 
-    if (size)
+    if (!(usage & WINED3DUSAGE_PRIVATE))
     {
-        if (!wined3d_resource_allocate_sysmem(resource))
+        /* Check that we have enough video ram left */
+        if (!(access & WINED3D_RESOURCE_ACCESS_CPU) && device->wined3d->flags & WINED3D_VIDMEM_ACCOUNTING)
         {
-            ERR("Failed to allocate system memory.\n");
-            return E_OUTOFMEMORY;
+            if (size > wined3d_device_get_available_texture_mem(device))
+            {
+                ERR("Out of adapter memory.\n");
+                return WINED3DERR_OUTOFVIDEOMEMORY;
+            }
+            adapter_adjust_memory(device->adapter, size);
         }
-    }
-    else
-    {
-        resource->heap_memory = NULL;
-    }
 
-    /* Check that we have enough video ram left */
-    if (pool == WINED3D_POOL_DEFAULT && device->wined3d->flags & WINED3D_VIDMEM_ACCOUNTING)
-    {
-        if (size > wined3d_device_get_available_texture_mem(device))
-        {
-            ERR("Out of adapter memory\n");
-            wined3d_resource_free_sysmem(resource);
-            return WINED3DERR_OUTOFVIDEOMEMORY;
-        }
-        adapter_adjust_memory(device->adapter, size);
+        device_resource_add(device, resource);
     }
-
-    device_resource_add(device, resource);
 
     return WINED3D_OK;
 }
@@ -242,7 +241,7 @@ static void wined3d_resource_destroy_object(void *object)
     struct wined3d_resource *resource = object;
 
     wined3d_resource_free_sysmem(resource);
-    context_resource_released(resource->device, resource, resource->type);
+    context_resource_released(resource->device, resource);
     wined3d_resource_release(resource);
 }
 
@@ -252,15 +251,18 @@ void resource_cleanup(struct wined3d_resource *resource)
 
     TRACE("Cleaning up resource %p.\n", resource);
 
-    if (resource->pool == WINED3D_POOL_DEFAULT && d3d->flags & WINED3D_VIDMEM_ACCOUNTING)
+    if (!(resource->usage & WINED3DUSAGE_PRIVATE))
     {
-        TRACE("Decrementing device memory pool by %u.\n", resource->size);
-        adapter_adjust_memory(resource->device->adapter, (INT64)0 - resource->size);
-    }
+        if (!(resource->access & WINED3D_RESOURCE_ACCESS_CPU) && d3d->flags & WINED3D_VIDMEM_ACCOUNTING)
+        {
+            TRACE("Decrementing device memory pool by %u.\n", resource->size);
+            adapter_adjust_memory(resource->device->adapter, (INT64)0 - resource->size);
+        }
 
-    device_resource_released(resource->device, resource);
+        device_resource_released(resource->device, resource);
+    }
     wined3d_resource_acquire(resource);
-    wined3d_cs_emit_destroy_object(resource->device->cs, wined3d_resource_destroy_object, resource);
+    wined3d_cs_destroy_object(resource->device->cs, wined3d_resource_destroy_object, resource);
 }
 
 void resource_unload(struct wined3d_resource *resource)
@@ -273,7 +275,7 @@ DWORD CDECL wined3d_resource_set_priority(struct wined3d_resource *resource, DWO
 {
     DWORD prev;
 
-    if (resource->pool != WINED3D_POOL_MANAGED)
+    if (!wined3d_resource_access_is_managed(resource->access))
     {
         WARN("Called on non-managed resource %p, ignoring.\n", resource);
         return 0;
@@ -308,7 +310,8 @@ void CDECL wined3d_resource_get_desc(const struct wined3d_resource *resource, st
     desc->multisample_type = resource->multisample_type;
     desc->multisample_quality = resource->multisample_quality;
     desc->usage = resource->usage;
-    desc->pool = resource->pool;
+    desc->bind_flags = resource->bind_flags;
+    desc->access = resource->access;
     desc->width = resource->width;
     desc->height = resource->height;
     desc->depth = resource->depth;
@@ -319,30 +322,32 @@ static DWORD wined3d_resource_sanitise_map_flags(const struct wined3d_resource *
 {
     /* Not all flags make sense together, but Windows never returns an error.
      * Catch the cases that could cause issues. */
-    if (flags & WINED3D_MAP_READONLY)
+    if (flags & WINED3D_MAP_READ)
     {
         if (flags & WINED3D_MAP_DISCARD)
         {
-            WARN("WINED3D_MAP_READONLY combined with WINED3D_MAP_DISCARD, ignoring flags.\n");
-            return 0;
+            WARN("WINED3D_MAP_READ combined with WINED3D_MAP_DISCARD, ignoring flags.\n");
+            return flags & (WINED3D_MAP_READ | WINED3D_MAP_WRITE);
         }
         if (flags & WINED3D_MAP_NOOVERWRITE)
         {
-            WARN("WINED3D_MAP_READONLY combined with WINED3D_MAP_NOOVERWRITE, ignoring flags.\n");
-            return 0;
+            WARN("WINED3D_MAP_READ combined with WINED3D_MAP_NOOVERWRITE, ignoring flags.\n");
+            return flags & (WINED3D_MAP_READ | WINED3D_MAP_WRITE);
         }
     }
-    else if ((flags & (WINED3D_MAP_DISCARD | WINED3D_MAP_NOOVERWRITE))
-            == (WINED3D_MAP_DISCARD | WINED3D_MAP_NOOVERWRITE))
+    else if (flags & (WINED3D_MAP_DISCARD | WINED3D_MAP_NOOVERWRITE))
     {
-        WARN("WINED3D_MAP_DISCARD and WINED3D_MAP_NOOVERWRITE used together, ignoring.\n");
-        return 0;
-    }
-    else if (flags & (WINED3D_MAP_DISCARD | WINED3D_MAP_NOOVERWRITE)
-            && !(resource->usage & WINED3DUSAGE_DYNAMIC))
-    {
-        WARN("DISCARD or NOOVERWRITE map on non-dynamic buffer, ignoring.\n");
-        return 0;
+        if (!(resource->usage & WINED3DUSAGE_DYNAMIC))
+        {
+            WARN("DISCARD or NOOVERWRITE map on non-dynamic buffer, ignoring.\n");
+            return flags & (WINED3D_MAP_READ | WINED3D_MAP_WRITE);
+        }
+        if ((flags & (WINED3D_MAP_DISCARD | WINED3D_MAP_NOOVERWRITE))
+                == (WINED3D_MAP_DISCARD | WINED3D_MAP_NOOVERWRITE))
+        {
+            WARN("WINED3D_MAP_NOOVERWRITE used with WINED3D_MAP_DISCARD, ignoring WINED3D_MAP_DISCARD.\n");
+            flags &= ~WINED3D_MAP_DISCARD;
+        }
     }
 
     return flags;
@@ -354,7 +359,26 @@ HRESULT CDECL wined3d_resource_map(struct wined3d_resource *resource, unsigned i
     TRACE("resource %p, sub_resource_idx %u, map_desc %p, box %s, flags %#x.\n",
             resource, sub_resource_idx, map_desc, debug_box(box), flags);
 
+    if (!(flags & (WINED3D_MAP_READ | WINED3D_MAP_WRITE)))
+    {
+        WARN("No read/write flags specified.\n");
+        return E_INVALIDARG;
+    }
+
+    if ((flags & WINED3D_MAP_READ) && !(resource->access & WINED3D_RESOURCE_ACCESS_MAP_R))
+    {
+        WARN("Resource does not have MAP_R access.\n");
+        return E_INVALIDARG;
+    }
+
+    if ((flags & WINED3D_MAP_WRITE) && !(resource->access & WINED3D_RESOURCE_ACCESS_MAP_W))
+    {
+        WARN("Resource does not have MAP_W access.\n");
+        return E_INVALIDARG;
+    }
+
     flags = wined3d_resource_sanitise_map_flags(resource, flags);
+    wined3d_resource_wait_idle(resource);
 
     return wined3d_cs_map(resource->device->cs, resource, sub_resource_idx, map_desc, box, flags);
 }
@@ -377,8 +401,11 @@ BOOL wined3d_resource_allocate_sysmem(struct wined3d_resource *resource)
     SIZE_T align = RESOURCE_ALIGNMENT - 1 + sizeof(*p);
     void *mem;
 
-    if (!(mem = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, resource->size + align)))
+    if (!(mem = heap_alloc_zero(resource->size + align)))
+    {
+        ERR("Failed to allocate system memory.\n");
         return FALSE;
+    }
 
     p = (void **)(((ULONG_PTR)mem + align) & ~(RESOURCE_ALIGNMENT - 1)) - 1;
     *p = mem;
@@ -395,7 +422,7 @@ void wined3d_resource_free_sysmem(struct wined3d_resource *resource)
     if (!p)
         return;
 
-    HeapFree(GetProcessHeap(), 0, *(--p));
+    heap_free(*(--p));
     resource->heap_memory = NULL;
 }
 
@@ -403,9 +430,9 @@ GLbitfield wined3d_resource_gl_map_flags(DWORD d3d_flags)
 {
     GLbitfield ret = 0;
 
-    if (!(d3d_flags & WINED3D_MAP_READONLY))
+    if (d3d_flags & WINED3D_MAP_WRITE)
         ret |= GL_MAP_WRITE_BIT | GL_MAP_FLUSH_EXPLICIT_BIT;
-    if (!(d3d_flags & (WINED3D_MAP_DISCARD | WINED3D_MAP_NOOVERWRITE)))
+    if (d3d_flags & WINED3D_MAP_READ)
         ret |= GL_MAP_READ_BIT;
 
     if (d3d_flags & WINED3D_MAP_DISCARD)
@@ -418,11 +445,17 @@ GLbitfield wined3d_resource_gl_map_flags(DWORD d3d_flags)
 
 GLenum wined3d_resource_gl_legacy_map_flags(DWORD d3d_flags)
 {
-    if (d3d_flags & WINED3D_MAP_READONLY)
-        return GL_READ_ONLY_ARB;
-    if (d3d_flags & (WINED3D_MAP_DISCARD | WINED3D_MAP_NOOVERWRITE))
-        return GL_WRITE_ONLY_ARB;
-    return GL_READ_WRITE_ARB;
+    switch (d3d_flags & (WINED3D_MAP_READ | WINED3D_MAP_WRITE))
+    {
+        case WINED3D_MAP_READ:
+            return GL_READ_ONLY_ARB;
+
+        case WINED3D_MAP_WRITE:
+            return GL_WRITE_ONLY_ARB;
+
+        default:
+            return GL_READ_WRITE_ARB;
+    }
 }
 
 BOOL wined3d_resource_is_offscreen(struct wined3d_resource *resource)
@@ -449,11 +482,32 @@ BOOL wined3d_resource_is_offscreen(struct wined3d_resource *resource)
 void wined3d_resource_update_draw_binding(struct wined3d_resource *resource)
 {
     if (!wined3d_resource_is_offscreen(resource) || wined3d_settings.offscreen_rendering_mode != ORM_FBO)
+    {
         resource->draw_binding = WINED3D_LOCATION_DRAWABLE;
+    }
     else if (resource->multisample_type)
-        resource->draw_binding = WINED3D_LOCATION_RB_MULTISAMPLE;
+    {
+        const struct wined3d_gl_info *gl_info = &resource->device->adapter->gl_info;
+        if (gl_info->supported[ARB_TEXTURE_MULTISAMPLE])
+            resource->draw_binding = WINED3D_LOCATION_TEXTURE_RGB;
+        else
+            resource->draw_binding = WINED3D_LOCATION_RB_MULTISAMPLE;
+    }
     else if (resource->gl_type == WINED3D_GL_RES_TYPE_RB)
+    {
         resource->draw_binding = WINED3D_LOCATION_RB_RESOLVED;
+    }
     else
+    {
         resource->draw_binding = WINED3D_LOCATION_TEXTURE_RGB;
+    }
+}
+
+const struct wined3d_format *wined3d_resource_get_decompress_format(const struct wined3d_resource *resource)
+{
+    const struct wined3d_adapter *adapter = resource->device->adapter;
+    if (resource->format_flags & (WINED3DFMT_FLAG_SRGB_READ | WINED3DFMT_FLAG_SRGB_WRITE)
+            && !(adapter->d3d_info.wined3d_creation_flags & WINED3D_SRGB_READ_WRITE_CONTROL))
+        return wined3d_get_format(adapter, WINED3DFMT_B8G8R8A8_UNORM_SRGB, resource->bind_flags);
+    return wined3d_get_format(adapter, WINED3DFMT_B8G8R8A8_UNORM, resource->bind_flags);
 }

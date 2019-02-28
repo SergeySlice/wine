@@ -21,6 +21,7 @@
 #define WIN32_LEAN_AND_MEAN
 
 #include <stdarg.h>
+#include <assert.h>
 #include <windows.h>
 #include <winsvc.h>
 #include <rpc.h>
@@ -114,6 +115,7 @@ DWORD service_create(LPCWSTR name, struct service_entry **entry)
     if (!*entry)
         return ERROR_NOT_ENOUGH_SERVER_MEMORY;
     (*entry)->name = strdupW(name);
+    list_init(&(*entry)->handles);
     if (!(*entry)->name)
     {
         HeapFree(GetProcessHeap(), 0, *entry);
@@ -136,6 +138,7 @@ DWORD service_create(LPCWSTR name, struct service_entry **entry)
 
 void free_service_entry(struct service_entry *entry)
 {
+    assert(list_empty(&entry->handles));
     CloseHandle(entry->status_changed_event);
     HeapFree(GetProcessHeap(), 0, entry->name);
     HeapFree(GetProcessHeap(), 0, entry->config.lpBinaryPathName);
@@ -361,7 +364,7 @@ static void scmdatabase_autostart_services(struct scmdatabase *db)
 
     scmdatabase_unlock(db);
     qsort(services_list, size, sizeof(services_list[0]), compare_tags);
-    while (!scmdatabase_lock_startup(db)) Sleep(10);
+    scmdatabase_lock_startup(db, INFINITE);
 
     for (i = 0; i < size; i++)
     {
@@ -619,9 +622,18 @@ static DWORD scmdatabase_load_services(struct scmdatabase *db)
     return ERROR_SUCCESS;
 }
 
-BOOL scmdatabase_lock_startup(struct scmdatabase *db)
+BOOL scmdatabase_lock_startup(struct scmdatabase *db, int timeout)
 {
-    return !InterlockedCompareExchange(&db->service_start_lock, TRUE, FALSE);
+    while (InterlockedCompareExchange(&db->service_start_lock, TRUE, FALSE))
+    {
+        if (timeout != INFINITE)
+        {
+            timeout -= 10;
+            if (timeout <= 0) return FALSE;
+        }
+        Sleep(10);
+    }
+    return TRUE;
 }
 
 void scmdatabase_unlock_startup(struct scmdatabase *db)
@@ -655,7 +667,7 @@ static LPWSTR service_get_pipe_name(void)
 {
     static const WCHAR format[] = { '\\','\\','.','\\','p','i','p','e','\\',
         'n','e','t','\\','N','t','C','o','n','t','r','o','l','P','i','p','e','%','u',0};
-    static WCHAR name[sizeof(format)/sizeof(WCHAR) + 10]; /* strlenW("4294967295") */
+    static WCHAR name[ARRAY_SIZE(format) + 10]; /* strlenW("4294967295") */
     static DWORD service_current = 0;
     DWORD len, value = -1;
     LONG ret;
@@ -714,7 +726,7 @@ static DWORD get_service_binary_path(const struct service_entry *service_entry, 
     return ERROR_SUCCESS;
 }
 
-static DWORD get_winedevice_binary_path(WCHAR **path, BOOL *is_wow64)
+static DWORD get_winedevice_binary_path(struct service_entry *service_entry, WCHAR **path, BOOL *is_wow64)
 {
     static const WCHAR winedeviceW[] = {'\\','w','i','n','e','d','e','v','i','c','e','.','e','x','e',0};
     WCHAR system_dir[MAX_PATH];
@@ -725,7 +737,7 @@ static DWORD get_winedevice_binary_path(WCHAR **path, BOOL *is_wow64)
     else if (GetBinaryTypeW(*path, &type))
         *is_wow64 = (type == SCS_32BIT_BINARY);
     else
-        return GetLastError();
+        *is_wow64 = service_entry->is_wow64;
 
     GetSystemDirectoryW(system_dir, MAX_PATH);
     HeapFree(GetProcessHeap(), 0, *path);
@@ -767,7 +779,7 @@ static DWORD add_winedevice_service(const struct service_entry *service, WCHAR *
                                     struct service_entry **entry)
 {
     static const WCHAR format[] = {'W','i','n','e','d','e','v','i','c','e','%','u',0};
-    static WCHAR name[sizeof(format)/sizeof(WCHAR) + 10]; /* strlenW("4294967295") */
+    static WCHAR name[ARRAY_SIZE(format) + 10]; /* strlenW("4294967295") */
     static DWORD current = 0;
     struct scmdatabase *db = service->db;
     DWORD err;
@@ -848,7 +860,7 @@ static DWORD service_start_process(struct service_entry *service_entry, struct p
         struct service_entry *winedevice_entry;
         WCHAR *group;
 
-        if ((err = get_winedevice_binary_path(&path, &is_wow64)))
+        if ((err = get_winedevice_binary_path(service_entry, &path, &is_wow64)))
         {
             service_unlock(service_entry);
             HeapFree(GetProcessHeap(), 0, path);

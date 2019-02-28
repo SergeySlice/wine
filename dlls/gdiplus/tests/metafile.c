@@ -33,11 +33,13 @@ static BOOL load_metafiles;
 
 typedef struct emfplus_record
 {
+    DWORD record_type;
+    DWORD flags; /* Used for EMF+ records only. */
     BOOL  todo;
-    ULONG record_type;
     BOOL  playback_todo;
     void (*playback_fn)(GpMetafile* metafile, EmfPlusRecordType record_type,
         unsigned int flags, unsigned int dataSize, const unsigned char *pStr);
+    DWORD broken_flags;
 } emfplus_record;
 
 typedef struct emfplus_check_state
@@ -50,10 +52,21 @@ typedef struct emfplus_check_state
 
 static void check_record(int count, const char *desc, const struct emfplus_record *expected, const struct emfplus_record *actual)
 {
+    if (actual->record_type > GDIP_EMFPLUS_RECORD_BASE)
+    {
+    todo_wine_if (expected->todo)
+        ok(expected->record_type == actual->record_type && (expected->flags == actual->flags ||
+            broken(expected->broken_flags == actual->flags)),
+            "%s.%i: Expected record type 0x%x, got 0x%x. Expected flags %#x, got %#x.\n", desc, count,
+            expected->record_type, actual->record_type, expected->flags, actual->flags);
+    }
+    else
+    {
     todo_wine_if (expected->todo)
         ok(expected->record_type == actual->record_type,
-            "%s.%i: Expected record type 0x%x, got 0x%x\n", desc, count,
+            "%s.%i: Expected record type 0x%x, got 0x%x.\n", desc, count,
             expected->record_type, actual->record_type);
+    }
 }
 
 typedef struct EmfPlusRecordHeader
@@ -63,6 +76,39 @@ typedef struct EmfPlusRecordHeader
     DWORD Size;
     DWORD DataSize;
 } EmfPlusRecordHeader;
+
+typedef enum
+{
+    ObjectTypeInvalid,
+    ObjectTypeBrush,
+    ObjectTypePen,
+    ObjectTypePath,
+    ObjectTypeRegion,
+    ObjectTypeImage,
+    ObjectTypeFont,
+    ObjectTypeStringFormat,
+    ObjectTypeImageAttributes,
+    ObjectTypeCustomLineCap,
+} ObjectType;
+
+typedef enum
+{
+    ImageDataTypeUnknown,
+    ImageDataTypeBitmap,
+    ImageDataTypeMetafile,
+} ImageDataType;
+
+typedef struct
+{
+    EmfPlusRecordHeader Header;
+    /* EmfPlusImage */
+    DWORD Version;
+    ImageDataType Type;
+    /* EmfPlusMetafile */
+    DWORD MetafileType;
+    DWORD MetafileDataSize;
+    BYTE MetafileData[1];
+} MetafileImageObject;
 
 static int CALLBACK enum_emf_proc(HDC hDC, HANDLETABLE *lpHTable, const ENHMETARECORD *lpEMFR,
     int nObj, LPARAM lpData)
@@ -95,14 +141,31 @@ static int CALLBACK enum_emf_proc(HDC hDC, HANDLETABLE *lpHTable, const ENHMETAR
                 {
                     actual.todo = FALSE;
                     actual.record_type = record->Type;
+                    actual.flags = record->Flags;
 
                     check_record(state->count, state->desc, &state->expected[state->count], &actual);
-
                     state->count++;
+
+                    if (state->expected[state->count-1].todo && state->expected[state->count-1].record_type != actual.record_type)
+                        continue;
                 }
                 else
                 {
                     ok(0, "%s: Unexpected EMF+ 0x%x record\n", state->desc, record->Type);
+                }
+
+                if ((record->Flags >> 8) == ObjectTypeImage && record->Type == EmfPlusRecordTypeObject)
+                {
+                    const MetafileImageObject *image = (const MetafileImageObject*)record;
+
+                    if (image->Type == ImageDataTypeMetafile)
+                    {
+                        HENHMETAFILE hemf = SetEnhMetaFileBits(image->MetafileDataSize, image->MetafileData);
+                        ok(hemf != NULL, "%s: SetEnhMetaFileBits failed\n", state->desc);
+
+                        EnumEnhMetaFile(0, hemf, enum_emf_proc, state, NULL);
+                        DeleteEnhMetaFile(hemf);
+                    }
                 }
 
                 offset += record->Size;
@@ -118,6 +181,7 @@ static int CALLBACK enum_emf_proc(HDC hDC, HANDLETABLE *lpHTable, const ENHMETAR
     {
         actual.todo = FALSE;
         actual.record_type = lpEMFR->iType;
+        actual.flags = 0;
 
         check_record(state->count, state->desc, &state->expected[state->count], &actual);
 
@@ -153,6 +217,7 @@ static BOOL CALLBACK enum_metafile_proc(EmfPlusRecordType record_type, unsigned 
 
     actual.todo = FALSE;
     actual.record_type = record_type;
+    actual.flags = flags;
 
     if (dataSize == 0)
         ok(pStr == NULL, "non-NULL pStr\n");
@@ -293,11 +358,11 @@ static void sync_metafile(GpMetafile **metafile, const char *filename)
 }
 
 static const emfplus_record empty_records[] = {
-    {0, EMR_HEADER},
-    {0, EmfPlusRecordTypeHeader},
-    {0, EmfPlusRecordTypeEndOfFile},
-    {0, EMR_EOF},
-    {0}
+    { EMR_HEADER },
+    { EmfPlusRecordTypeHeader },
+    { EmfPlusRecordTypeEndOfFile },
+    { EMR_EOF },
+    { 0 }
 };
 
 static void test_empty(void)
@@ -492,17 +557,17 @@ static void test_empty(void)
 }
 
 static const emfplus_record getdc_records[] = {
-    {0, EMR_HEADER},
-    {0, EmfPlusRecordTypeHeader},
-    {0, EmfPlusRecordTypeGetDC},
-    {0, EMR_CREATEBRUSHINDIRECT},
-    {0, EMR_SELECTOBJECT},
-    {0, EMR_RECTANGLE},
-    {0, EMR_SELECTOBJECT},
-    {0, EMR_DELETEOBJECT},
-    {0, EmfPlusRecordTypeEndOfFile},
-    {0, EMR_EOF},
-    {0}
+    { EMR_HEADER },
+    { EmfPlusRecordTypeHeader },
+    { EmfPlusRecordTypeGetDC },
+    { EMR_CREATEBRUSHINDIRECT },
+    { EMR_SELECTOBJECT },
+    { EMR_RECTANGLE },
+    { EMR_SELECTOBJECT },
+    { EMR_DELETEOBJECT },
+    { EmfPlusRecordTypeEndOfFile },
+    { EMR_EOF },
+    { 0 }
 };
 
 static void test_getdc(void)
@@ -630,14 +695,34 @@ static void test_getdc(void)
 }
 
 static const emfplus_record emfonly_records[] = {
-    {0, EMR_HEADER},
-    {0, EMR_CREATEBRUSHINDIRECT},
-    {0, EMR_SELECTOBJECT},
-    {0, EMR_RECTANGLE},
-    {0, EMR_SELECTOBJECT},
-    {0, EMR_DELETEOBJECT},
-    {0, EMR_EOF},
-    {0}
+    { EMR_HEADER },
+    { EMR_CREATEBRUSHINDIRECT },
+    { EMR_SELECTOBJECT },
+    { EMR_RECTANGLE },
+    { EMR_SELECTOBJECT },
+    { EMR_DELETEOBJECT },
+    { EMR_EOF },
+    { 0 }
+};
+
+static const emfplus_record emfonly_draw_records[] = {
+    { EMR_HEADER },
+    { EMR_SAVEDC, 0, 1 },
+    { EMR_SETICMMODE, 0, 1 },
+    { EMR_SETMITERLIMIT, 0, 1 },
+    { EMR_MODIFYWORLDTRANSFORM, 0, 1 },
+    { EMR_EXTCREATEPEN, 0, 1 },
+    { EMR_SELECTOBJECT, 0, 1 },
+    { EMR_SELECTOBJECT, 0, 1 },
+    { EMR_POLYLINE16, 0, 1 },
+    { EMR_SELECTOBJECT, 0, 1 },
+    { EMR_SELECTOBJECT, 0, 1 },
+    { EMR_MODIFYWORLDTRANSFORM, 0, 1 },
+    { EMR_DELETEOBJECT, 0, 1 },
+    { EMR_SETMITERLIMIT, 0, 1 },
+    { EMR_RESTOREDC, 0, 1 },
+    { EMR_EOF },
+    { 0, 0, 1 }
 };
 
 static void test_emfonly(void)
@@ -658,6 +743,7 @@ static void test_emfonly(void)
     HBRUSH hbrush, holdbrush;
     GpBitmap *bitmap;
     ARGB color;
+    GpPen *pen;
 
     hdc = CreateCompatibleDC(0);
 
@@ -900,15 +986,44 @@ static void test_emfonly(void)
 
     stat = GdipDisposeImage((GpImage*)metafile);
     expect(Ok, stat);
+
+    /* test drawing to metafile with gdi+ functions */
+    hdc = CreateCompatibleDC(0);
+
+    stat = GdipRecordMetafile(hdc, EmfTypeEmfOnly, &frame, MetafileFrameUnitPixel, description, &metafile);
+    expect(Ok, stat);
+
+    DeleteDC(hdc);
+
+    if (stat != Ok)
+        return;
+
+    stat = GdipGetImageGraphicsContext((GpImage*)metafile, &graphics);
+    expect(Ok, stat);
+
+    stat = GdipCreatePen1((ARGB)0xffff00ff, 10.0f, UnitPixel, &pen);
+    expect(Ok, stat);
+    stat = GdipDrawLineI(graphics, pen, 0, 0, 10, 10);
+    todo_wine expect(Ok, stat);
+    GdipDeletePen(pen);
+
+    stat = GdipDeleteGraphics(graphics);
+    expect(Ok, stat);
+
+    check_metafile(metafile, emfonly_draw_records, "emfonly draw metafile", dst_points, &frame, UnitPixel);
+    sync_metafile(&metafile, "emfonly_draw.emf");
+
+    stat = GdipDisposeImage((GpImage*)metafile);
+    expect(Ok, stat);
 }
 
 static const emfplus_record fillrect_records[] = {
-    {0, EMR_HEADER},
-    {0, EmfPlusRecordTypeHeader},
-    {0, EmfPlusRecordTypeFillRects},
-    {0, EmfPlusRecordTypeEndOfFile},
-    {0, EMR_EOF},
-    {0}
+    { EMR_HEADER },
+    { EmfPlusRecordTypeHeader },
+    { EmfPlusRecordTypeFillRects, 0xc000 },
+    { EmfPlusRecordTypeEndOfFile },
+    { EMR_EOF },
+    { 0 }
 };
 
 static void test_fillrect(void)
@@ -1013,16 +1128,16 @@ static void test_fillrect(void)
 }
 
 static const emfplus_record clear_emf_records[] = {
-    {0, EMR_HEADER},
-    {0, EmfPlusRecordTypeHeader},
-    {0, EmfPlusRecordTypeClear},
-    {1, EMR_SAVEDC},
-    {1, EMR_SETICMMODE},
-    {1, EMR_BITBLT},
-    {1, EMR_RESTOREDC},
-    {0, EmfPlusRecordTypeEndOfFile},
-    {0, EMR_EOF},
-    {0}
+    { EMR_HEADER },
+    { EmfPlusRecordTypeHeader },
+    { EmfPlusRecordTypeClear },
+    { EMR_SAVEDC, 0, 1 },
+    { EMR_SETICMMODE, 0, 1 },
+    { EMR_BITBLT, 0, 1 },
+    { EMR_RESTOREDC, 0, 1 },
+    { EmfPlusRecordTypeEndOfFile },
+    { EMR_EOF },
+    { 0 }
 };
 
 static void test_clear(void)
@@ -1217,20 +1332,20 @@ static void test_nullframerect(void) {
 }
 
 static const emfplus_record pagetransform_records[] = {
-    {0, EMR_HEADER},
-    {0, EmfPlusRecordTypeHeader},
-    {0, EmfPlusRecordTypeFillRects},
-    {0, EmfPlusRecordTypeSetPageTransform},
-    {0, EmfPlusRecordTypeFillRects},
-    {0, EmfPlusRecordTypeSetPageTransform},
-    {0, EmfPlusRecordTypeFillRects},
-    {0, EmfPlusRecordTypeSetPageTransform},
-    {0, EmfPlusRecordTypeFillRects},
-    {0, EmfPlusRecordTypeSetPageTransform},
-    {0, EmfPlusRecordTypeFillRects},
-    {0, EmfPlusRecordTypeEndOfFile},
-    {0, EMR_EOF},
-    {0}
+    { EMR_HEADER },
+    { EmfPlusRecordTypeHeader },
+    { EmfPlusRecordTypeFillRects, 0xc000 },
+    { EmfPlusRecordTypeSetPageTransform, UnitPixel },
+    { EmfPlusRecordTypeFillRects, 0xc000 },
+    { EmfPlusRecordTypeSetPageTransform, UnitPixel },
+    { EmfPlusRecordTypeFillRects, 0xc000 },
+    { EmfPlusRecordTypeSetPageTransform, UnitInch },
+    { EmfPlusRecordTypeFillRects, 0x8000 },
+    { EmfPlusRecordTypeSetPageTransform, UnitDisplay },
+    { EmfPlusRecordTypeFillRects, 0xc000 },
+    { EmfPlusRecordTypeEndOfFile },
+    { EMR_EOF },
+    { 0 }
 };
 
 static void test_pagetransform(void)
@@ -1418,24 +1533,24 @@ static void test_pagetransform(void)
 }
 
 static const emfplus_record worldtransform_records[] = {
-    {0, EMR_HEADER},
-    {0, EmfPlusRecordTypeHeader},
-    {0, EmfPlusRecordTypeFillRects},
-    {0, EmfPlusRecordTypeScaleWorldTransform},
-    {0, EmfPlusRecordTypeFillRects},
-    {0, EmfPlusRecordTypeResetWorldTransform},
-    {0, EmfPlusRecordTypeFillRects},
-    {0, EmfPlusRecordTypeMultiplyWorldTransform},
-    {0, EmfPlusRecordTypeFillRects},
-    {0, EmfPlusRecordTypeRotateWorldTransform},
-    {0, EmfPlusRecordTypeFillRects},
-    {0, EmfPlusRecordTypeSetWorldTransform},
-    {0, EmfPlusRecordTypeFillRects},
-    {0, EmfPlusRecordTypeTranslateWorldTransform},
-    {0, EmfPlusRecordTypeFillRects},
-    {0, EmfPlusRecordTypeEndOfFile},
-    {0, EMR_EOF},
-    {0}
+    { EMR_HEADER },
+    { EmfPlusRecordTypeHeader },
+    { EmfPlusRecordTypeFillRects, 0xc000 },
+    { EmfPlusRecordTypeScaleWorldTransform },
+    { EmfPlusRecordTypeFillRects, 0x8000 },
+    { EmfPlusRecordTypeResetWorldTransform },
+    { EmfPlusRecordTypeFillRects, 0xc000 },
+    { EmfPlusRecordTypeMultiplyWorldTransform },
+    { EmfPlusRecordTypeFillRects, 0x8000 },
+    { EmfPlusRecordTypeRotateWorldTransform, 0x2000 },
+    { EmfPlusRecordTypeFillRects, 0x8000 },
+    { EmfPlusRecordTypeSetWorldTransform },
+    { EmfPlusRecordTypeFillRects, 0xc000 },
+    { EmfPlusRecordTypeTranslateWorldTransform, 0x2000 },
+    { EmfPlusRecordTypeFillRects, 0xc000 },
+    { EmfPlusRecordTypeEndOfFile },
+    { EMR_EOF },
+    { 0 }
 };
 
 static void test_worldtransform(void)
@@ -1843,29 +1958,29 @@ static void test_frameunit(void)
 }
 
 static const emfplus_record container_records[] = {
-    {0, EMR_HEADER},
-    {0, EmfPlusRecordTypeHeader},
-    {0, EmfPlusRecordTypeBeginContainerNoParams},
-    {0, EmfPlusRecordTypeScaleWorldTransform},
-    {0, EmfPlusRecordTypeFillRects},
-    {0, EmfPlusRecordTypeEndContainer},
-    {0, EmfPlusRecordTypeScaleWorldTransform},
-    {0, EmfPlusRecordTypeFillRects},
-    {0, EmfPlusRecordTypeSave},
-    {0, EmfPlusRecordTypeRestore},
-    {0, EmfPlusRecordTypeScaleWorldTransform},
-    {0, EmfPlusRecordTypeBeginContainerNoParams},
-    {0, EmfPlusRecordTypeScaleWorldTransform},
-    {0, EmfPlusRecordTypeBeginContainerNoParams},
-    {0, EmfPlusRecordTypeEndContainer},
-    {0, EmfPlusRecordTypeFillRects},
-    {0, EmfPlusRecordTypeBeginContainer},
-    {0, EmfPlusRecordTypeFillRects},
-    {0, EmfPlusRecordTypeEndContainer},
-    {0, EmfPlusRecordTypeBeginContainerNoParams},
-    {0, EmfPlusRecordTypeEndOfFile},
-    {0, EMR_EOF},
-    {0}
+    { EMR_HEADER },
+    { EmfPlusRecordTypeHeader },
+    { EmfPlusRecordTypeBeginContainerNoParams },
+    { EmfPlusRecordTypeScaleWorldTransform },
+    { EmfPlusRecordTypeFillRects, 0xc000 },
+    { EmfPlusRecordTypeEndContainer },
+    { EmfPlusRecordTypeScaleWorldTransform },
+    { EmfPlusRecordTypeFillRects, 0xc000 },
+    { EmfPlusRecordTypeSave },
+    { EmfPlusRecordTypeRestore },
+    { EmfPlusRecordTypeScaleWorldTransform },
+    { EmfPlusRecordTypeBeginContainerNoParams },
+    { EmfPlusRecordTypeScaleWorldTransform },
+    { EmfPlusRecordTypeBeginContainerNoParams },
+    { EmfPlusRecordTypeEndContainer },
+    { EmfPlusRecordTypeFillRects, 0xc000 },
+    { EmfPlusRecordTypeBeginContainer, UnitInch },
+    { EmfPlusRecordTypeFillRects, 0xc000 },
+    { EmfPlusRecordTypeEndContainer },
+    { EmfPlusRecordTypeBeginContainerNoParams },
+    { EmfPlusRecordTypeEndOfFile },
+    { EMR_EOF },
+    { 0 }
 };
 
 static void test_containers(void)
@@ -2047,17 +2162,19 @@ static void test_containers(void)
 }
 
 static const emfplus_record clipping_records[] = {
-    {0, EMR_HEADER},
-    {0, EmfPlusRecordTypeHeader},
-    {0, EmfPlusRecordTypeSave},
-    {0, EmfPlusRecordTypeSetClipRect},
-    {0, EmfPlusRecordTypeFillRects},
-    {0, EmfPlusRecordTypeRestore},
-    {0, EmfPlusRecordTypeSetClipRect},
-    {0, EmfPlusRecordTypeFillRects},
-    {0, EmfPlusRecordTypeEndOfFile},
-    {0, EMR_EOF},
-    {0}
+    { EMR_HEADER },
+    { EmfPlusRecordTypeHeader },
+    { EmfPlusRecordTypeSave },
+    { EmfPlusRecordTypeSetClipRect },
+    { EmfPlusRecordTypeFillRects, 0xc000 },
+    { EmfPlusRecordTypeRestore },
+    { EmfPlusRecordTypeSetClipRect, 0x300 },
+    { EmfPlusRecordTypeFillRects, 0xc000 },
+    { EmfPlusRecordTypeObject, ObjectTypeRegion << 8 },
+    { EmfPlusRecordTypeSetClipRegion, 0x100 },
+    { EmfPlusRecordTypeEndOfFile },
+    { EMR_EOF },
+    { 0 }
 };
 
 static void test_clipping(void)
@@ -2066,7 +2183,9 @@ static void test_clipping(void)
     GpMetafile *metafile;
     GpGraphics *graphics;
     GpBitmap *bitmap;
+    GpRegion *region;
     GpBrush *brush;
+    GpRectF rect;
     ARGB color;
     HDC hdc;
     static const GpRectF frame = {0.0, 0.0, 100.0, 100.0};
@@ -2090,8 +2209,22 @@ static void test_clipping(void)
     stat = GdipSaveGraphics(graphics, &state);
     expect(Ok, stat);
 
+    stat = GdipGetVisibleClipBounds(graphics, &rect);
+    expect(Ok, stat);
+    ok(rect.X == -0x400000, "rect.X = %f\n", rect.X);
+    ok(rect.Y == -0x400000, "rect.Y = %f\n", rect.Y);
+    ok(rect.Width == 0x800000, "rect.Width = %f\n", rect.Width);
+    ok(rect.Height == 0x800000, "rect.Height = %f\n", rect.Height);
+
     stat = GdipSetClipRect(graphics, 30, 30, 10, 10, CombineModeReplace);
     expect(Ok, stat);
+
+    stat = GdipGetVisibleClipBounds(graphics, &rect);
+    expect(Ok, stat);
+    ok(rect.X == 30, "rect.X = %f\n", rect.X);
+    ok(rect.Y == 30, "rect.Y = %f\n", rect.Y);
+    ok(rect.Width == 10, "rect.Width = %f\n", rect.Width);
+    ok(rect.Height == 10, "rect.Height = %f\n", rect.Height);
 
     stat = GdipCreateSolidFill((ARGB)0xff000000, (GpSolidFill**)&brush);
     expect(Ok, stat);
@@ -2115,6 +2248,15 @@ static void test_clipping(void)
     expect(Ok, stat);
 
     stat = GdipDeleteBrush(brush);
+    expect(Ok, stat);
+
+    stat = GdipCreateRegionRect(&rect, &region);
+    expect(Ok, stat);
+
+    stat = GdipSetClipRegion(graphics, region, CombineModeIntersect);
+    expect(Ok, stat);
+
+    stat = GdipDeleteRegion(region);
     expect(Ok, stat);
 
     stat = GdipDeleteGraphics(graphics);
@@ -2169,14 +2311,14 @@ static void test_gditransform_cb(GpMetafile* metafile, EmfPlusRecordType record_
 }
 
 static const emfplus_record gditransform_records[] = {
-    {0, EMR_HEADER},
-    {0, EMR_CREATEBRUSHINDIRECT},
-    {0, EMR_SELECTOBJECT},
-    {0, EMR_GDICOMMENT, 0, test_gditransform_cb},
-    {0, EMR_SELECTOBJECT},
-    {0, EMR_DELETEOBJECT},
-    {0, EMR_EOF},
-    {0}
+    { EMR_HEADER },
+    { EMR_CREATEBRUSHINDIRECT },
+    { EMR_SELECTOBJECT },
+    { EMR_GDICOMMENT, 0, 0, 0, test_gditransform_cb },
+    { EMR_SELECTOBJECT },
+    { EMR_DELETEOBJECT },
+    { EMR_EOF },
+    { 0 }
 };
 
 static void test_gditransform(void)
@@ -2272,12 +2414,392 @@ static void test_gditransform(void)
     expect(Ok, stat);
 }
 
+static const emfplus_record draw_image_bitmap_records[] = {
+    { EMR_HEADER },
+    { EmfPlusRecordTypeHeader },
+    { EmfPlusRecordTypeObject, ObjectTypeImage << 8 },
+    { EmfPlusRecordTypeObject, (ObjectTypeImageAttributes << 8) | 1 },
+    { EmfPlusRecordTypeDrawImagePoints, 0, 0, 0, NULL, 0x4000 },
+    { EMR_SAVEDC, 0, 1 },
+    { EMR_SETICMMODE, 0, 1 },
+    { EMR_BITBLT, 0, 1 },
+    { EMR_RESTOREDC, 0, 1 },
+    { EmfPlusRecordTypeEndOfFile },
+    { EMR_EOF },
+    { 0 }
+};
+
+static const emfplus_record draw_image_metafile_records[] = {
+    { EMR_HEADER },
+    { EmfPlusRecordTypeHeader },
+    { EmfPlusRecordTypeObject, ObjectTypeImage << 8 },
+    /* metafile object */
+    { EMR_HEADER },
+    { EmfPlusRecordTypeHeader },
+    { EmfPlusRecordTypeObject, ObjectTypeImage << 8 },
+    { EmfPlusRecordTypeObject, (ObjectTypeImageAttributes << 8) | 1 },
+    { EmfPlusRecordTypeDrawImagePoints },
+    { EMR_SAVEDC, 0, 1 },
+    { EMR_SETICMMODE, 0, 1 },
+    { EMR_BITBLT, 0, 1 },
+    { EMR_RESTOREDC, 0, 1 },
+    { EmfPlusRecordTypeEndOfFile },
+    { EMR_EOF },
+    /* end of metafile object */
+    { EmfPlusRecordTypeDrawImagePoints },
+    { EMR_SAVEDC, 0, 1 },
+    { EMR_SETICMMODE, 0, 1 },
+    { EMR_BITBLT, 0, 1 },
+    { EMR_RESTOREDC, 0, 1 },
+    { EmfPlusRecordTypeEndOfFile },
+    { EMR_EOF },
+    { 0 }
+};
+
+static void test_drawimage(void)
+{
+    static const WCHAR description[] = {'w','i','n','e','t','e','s','t',0};
+    static const GpPointF dst_points[3] = {{10.0,10.0},{85.0,15.0},{10.0,80.0}};
+    static const GpRectF frame = {0.0, 0.0, 100.0, 100.0};
+    const ColorMatrix double_red = {{
+        {2.0,0.0,0.0,0.0,0.0},
+        {0.0,1.0,0.0,0.0,0.0},
+        {0.0,0.0,1.0,0.0,0.0},
+        {0.0,0.0,0.0,1.0,0.0},
+        {0.0,0.0,0.0,0.0,1.0}}};
+
+    GpImageAttributes *imageattr;
+    GpMetafile *metafile;
+    GpGraphics *graphics;
+    HENHMETAFILE hemf;
+    GpStatus stat;
+    BITMAPINFO info;
+    BYTE buff[400];
+    GpImage *image;
+    HDC hdc;
+
+    hdc = CreateCompatibleDC(0);
+    stat = GdipRecordMetafile(hdc, EmfTypeEmfPlusOnly, &frame, MetafileFrameUnitPixel, description, &metafile);
+    expect(Ok, stat);
+
+    stat = GdipGetImageGraphicsContext((GpImage*)metafile, &graphics);
+    expect(Ok, stat);
+
+    memset(&info, 0, sizeof(info));
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = 10;
+    info.bmiHeader.biHeight = 10;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    memset(buff, 0x80, sizeof(buff));
+    stat = GdipCreateBitmapFromGdiDib(&info, buff, (GpBitmap**)&image);
+    expect(Ok, stat);
+
+    stat = GdipCreateImageAttributes(&imageattr);
+    expect(Ok, stat);
+
+    stat = GdipSetImageAttributesColorMatrix(imageattr, ColorAdjustTypeDefault,
+            TRUE, &double_red, NULL, ColorMatrixFlagsDefault);
+    expect(Ok, stat);
+
+    stat = GdipDrawImagePointsRect(graphics, image, dst_points, 3,
+            0.0, 0.0, 10.0, 10.0, UnitPixel, imageattr, NULL, NULL);
+    GdipDisposeImageAttributes(imageattr);
+    expect(Ok, stat);
+
+    GdipDisposeImage(image);
+
+    stat = GdipDeleteGraphics(graphics);
+    expect(Ok, stat);
+    sync_metafile(&metafile, "draw_image_bitmap.emf");
+
+    stat = GdipGetHemfFromMetafile(metafile, &hemf);
+    expect(Ok, stat);
+
+    check_emfplus(hemf, draw_image_bitmap_records, "draw image bitmap");
+
+    stat = GdipDisposeImage((GpImage*)metafile);
+    expect(Ok, stat);
+
+    /* test drawing metafile */
+    stat = GdipRecordMetafile(hdc, EmfTypeEmfPlusOnly, &frame, MetafileFrameUnitPixel, description, &metafile);
+    expect(Ok, stat);
+
+    stat = GdipGetImageGraphicsContext((GpImage*)metafile, &graphics);
+    expect(Ok, stat);
+
+    stat = GdipCreateMetafileFromEmf(hemf, TRUE, (GpMetafile**)&image);
+    expect(Ok, stat);
+
+    stat = GdipDrawImagePointsRect(graphics, image, dst_points, 3,
+            0.0, 0.0, 100.0, 100.0, UnitPixel, NULL, NULL, NULL);
+    expect(Ok, stat);
+
+    GdipDisposeImage(image);
+
+    stat = GdipDeleteGraphics(graphics);
+    expect(Ok, stat);
+    sync_metafile(&metafile, "draw_image_metafile.emf");
+
+    stat = GdipGetHemfFromMetafile(metafile, &hemf);
+    expect(Ok, stat);
+
+    if (GetProcAddress(GetModuleHandleA("gdiplus.dll"), "GdipConvertToEmfPlus"))
+    {
+        check_emfplus(hemf, draw_image_metafile_records, "draw image metafile");
+    }
+    else
+    {
+        win_skip("draw image metafile records tests skipped\n");
+    }
+    DeleteEnhMetaFile(hemf);
+
+    DeleteDC(hdc);
+    stat = GdipDisposeImage((GpImage*)metafile);
+    expect(Ok, stat);
+}
+
+static const emfplus_record properties_records[] = {
+    { EMR_HEADER },
+    { EmfPlusRecordTypeHeader },
+    { EmfPlusRecordTypeSetTextRenderingHint, TextRenderingHintAntiAlias },
+    { EmfPlusRecordTypeSetPixelOffsetMode, PixelOffsetModeHighQuality },
+    { EmfPlusRecordTypeSetAntiAliasMode, (SmoothingModeAntiAlias << 1) | 1, 0, 0, NULL, 0x1 },
+    { EmfPlusRecordTypeSetCompositingMode, CompositingModeSourceCopy },
+    { EmfPlusRecordTypeSetCompositingQuality, CompositingQualityHighQuality },
+    { EmfPlusRecordTypeSetInterpolationMode, InterpolationModeHighQualityBicubic },
+    { EmfPlusRecordTypeEndOfFile },
+    { EMR_EOF },
+    { 0 }
+};
+
+static void test_properties(void)
+{
+    static const WCHAR description[] = {'w','i','n','e','t','e','s','t',0};
+    static const GpRectF frame = {0.0, 0.0, 100.0, 100.0};
+
+    GpMetafile *metafile;
+    GpGraphics *graphics;
+    HENHMETAFILE hemf;
+    GpStatus stat;
+    HDC hdc;
+
+    hdc = CreateCompatibleDC(0);
+    stat = GdipRecordMetafile(hdc, EmfTypeEmfPlusOnly, &frame, MetafileFrameUnitPixel, description, &metafile);
+    expect(Ok, stat);
+    DeleteDC(hdc);
+
+    stat = GdipGetImageGraphicsContext((GpImage*)metafile, &graphics);
+    expect(Ok, stat);
+
+    stat = GdipSetTextRenderingHint(graphics, TextRenderingHintSystemDefault);
+    expect(Ok, stat);
+    stat = GdipSetTextRenderingHint(graphics, TextRenderingHintAntiAlias);
+    expect(Ok, stat);
+
+    stat = GdipSetPixelOffsetMode(graphics, PixelOffsetModeHighQuality);
+    expect(Ok, stat);
+    stat = GdipSetPixelOffsetMode(graphics, PixelOffsetModeHighQuality);
+    expect(Ok, stat);
+
+    stat = GdipSetSmoothingMode(graphics, SmoothingModeAntiAlias);
+    expect(Ok, stat);
+    stat = GdipSetSmoothingMode(graphics, SmoothingModeAntiAlias);
+    expect(Ok, stat);
+
+    stat = GdipSetCompositingMode(graphics, CompositingModeSourceOver);
+    expect(Ok, stat);
+    stat = GdipSetCompositingMode(graphics, CompositingModeSourceCopy);
+    expect(Ok, stat);
+
+    stat = GdipSetCompositingQuality(graphics, CompositingQualityHighQuality);
+    expect(Ok, stat);
+    stat = GdipSetCompositingQuality(graphics, CompositingQualityHighQuality);
+    expect(Ok, stat);
+
+    stat = GdipSetInterpolationMode(graphics, InterpolationModeDefault);
+    expect(Ok, stat);
+    stat = GdipSetInterpolationMode(graphics, InterpolationModeHighQuality);
+    expect(Ok, stat);
+
+    stat = GdipDeleteGraphics(graphics);
+    expect(Ok, stat);
+    sync_metafile(&metafile, "properties.emf");
+
+    stat = GdipGetHemfFromMetafile(metafile, &hemf);
+    expect(Ok, stat);
+
+    check_emfplus(hemf, properties_records, "properties");
+    DeleteEnhMetaFile(hemf);
+
+    stat = GdipDisposeImage((GpImage*)metafile);
+    expect(Ok, stat);
+}
+
+static const emfplus_record draw_path_records[] = {
+    { EMR_HEADER },
+    { EmfPlusRecordTypeHeader },
+    { EmfPlusRecordTypeObject, ObjectTypePen << 8 },
+    { EmfPlusRecordTypeObject, (ObjectTypePath << 8) | 1 },
+    { EmfPlusRecordTypeDrawPath, 1 },
+    { EMR_SAVEDC, 0, 1 },
+    { EMR_SETICMMODE, 0, 1 },
+    { EMR_BITBLT, 0, 1 },
+    { EMR_RESTOREDC, 0, 1 },
+    { EmfPlusRecordTypeEndOfFile },
+    { EMR_EOF },
+    { 0 }
+};
+
+static void test_drawpath(void)
+{
+    static const WCHAR description[] = {'w','i','n','e','t','e','s','t',0};
+    static const GpRectF frame = {0.0, 0.0, 100.0, 100.0};
+
+    GpMetafile *metafile;
+    GpGraphics *graphics;
+    HENHMETAFILE hemf;
+    GpStatus stat;
+    GpPath *path;
+    GpPen *pen;
+    HDC hdc;
+
+    hdc = CreateCompatibleDC(0);
+    stat = GdipRecordMetafile(hdc, EmfTypeEmfPlusOnly, &frame, MetafileFrameUnitPixel, description, &metafile);
+    expect(Ok, stat);
+    DeleteDC(hdc);
+
+    stat = GdipGetImageGraphicsContext((GpImage*)metafile, &graphics);
+    expect(Ok, stat);
+
+    stat = GdipCreatePath(FillModeAlternate, &path);
+    expect(Ok, stat);
+    stat = GdipAddPathLine(path, 5, 5, 30, 30);
+    expect(Ok, stat);
+
+    stat = GdipCreatePen1((ARGB)0xffff00ff, 10.0f, UnitPixel, &pen);
+    expect(Ok, stat);
+
+    stat = GdipDrawPath(graphics, pen, path);
+    expect(Ok, stat);
+
+    stat = GdipDeletePen(pen);
+    expect(Ok, stat);
+    stat = GdipDeletePath(path);
+    expect(Ok, stat);
+
+    stat = GdipDeleteGraphics(graphics);
+    expect(Ok, stat);
+    sync_metafile(&metafile, "draw_path.emf");
+
+    stat = GdipGetHemfFromMetafile(metafile, &hemf);
+    expect(Ok, stat);
+
+    check_emfplus(hemf, draw_path_records, "draw path");
+    DeleteEnhMetaFile(hemf);
+
+    stat = GdipDisposeImage((GpImage*)metafile);
+    expect(Ok, stat);
+}
+
+static const emfplus_record fill_path_records[] = {
+    { EMR_HEADER },
+    { EmfPlusRecordTypeHeader },
+    { EmfPlusRecordTypeObject, ObjectTypePath << 8 },
+    { EmfPlusRecordTypeFillPath, 0x8000 },
+    { EMR_SAVEDC, 0, 1 },
+    { EMR_SETICMMODE, 0, 1 },
+    { EMR_BITBLT, 0, 1 },
+    { EMR_RESTOREDC, 0, 1 },
+    { EmfPlusRecordTypeEndOfFile },
+    { EMR_EOF },
+    { 0 }
+};
+
+static void test_fillpath(void)
+{
+    static const WCHAR description[] = {'w','i','n','e','t','e','s','t',0};
+    static const GpRectF frame = {0.0, 0.0, 100.0, 100.0};
+    static const WCHAR winetestemfW[] = {'w','i','n','e','t','e','s','t','.','e','m','f',0};
+
+    GpMetafile *metafile;
+    GpGraphics *graphics;
+    GpSolidFill *brush;
+    HENHMETAFILE hemf;
+    GpStatus stat;
+    GpPath *path;
+    HDC hdc;
+
+    hdc = CreateCompatibleDC(0);
+    stat = GdipRecordMetafile(hdc, EmfTypeEmfPlusOnly, &frame, MetafileFrameUnitPixel, description, &metafile);
+    expect(Ok, stat);
+    DeleteDC(hdc);
+
+    stat = GdipGetImageGraphicsContext((GpImage*)metafile, &graphics);
+    expect(Ok, stat);
+
+    stat = GdipCreatePath(FillModeAlternate, &path);
+    expect(Ok, stat);
+    stat = GdipAddPathLine(path, 5, 5, 30, 30);
+    expect(Ok, stat);
+    stat = GdipAddPathLine(path, 30, 30, 5, 30);
+    expect(Ok, stat);
+
+    stat = GdipCreateSolidFill(0xffaabbcc, &brush);
+    expect(Ok, stat);
+
+    stat = GdipFillPath(graphics, (GpBrush*)brush, path);
+    expect(Ok, stat);
+
+    stat = GdipDeleteBrush((GpBrush*)brush);
+    expect(Ok, stat);
+    stat = GdipDeletePath(path);
+    expect(Ok, stat);
+
+    stat = GdipDeleteGraphics(graphics);
+    expect(Ok, stat);
+    sync_metafile(&metafile, "fill_path.emf");
+
+    stat = GdipGetHemfFromMetafile(metafile, &hemf);
+    expect(Ok, stat);
+
+    check_emfplus(hemf, fill_path_records, "fill path");
+
+    /* write to disk */
+    DeleteEnhMetaFile(CopyEnhMetaFileW(hemf, winetestemfW));
+
+    DeleteEnhMetaFile(hemf);
+
+    stat = GdipDisposeImage((GpImage*)metafile);
+    expect(Ok, stat);
+
+    /* should succeed when given path to an EMF */
+    stat = GdipCreateMetafileFromWmfFile(winetestemfW, NULL, &metafile);
+    expect(Ok, stat);
+
+    stat = GdipDisposeImage((GpImage*)metafile);
+    expect(Ok, stat);
+
+    DeleteFileW(winetestemfW);
+
+    stat = GdipCreateMetafileFromWmfFile(winetestemfW, NULL, &metafile);
+    expect(GenericError, stat);
+}
+
 START_TEST(metafile)
 {
     struct GdiplusStartupInput gdiplusStartupInput;
     ULONG_PTR gdiplusToken;
     int myARGC;
     char **myARGV;
+    HMODULE hmsvcrt;
+    int (CDECL * _controlfp_s)(unsigned int *cur, unsigned int newval, unsigned int mask);
+
+    /* Enable all FP exceptions except _EM_INEXACT, which gdi32 can trigger */
+    hmsvcrt = LoadLibraryA("msvcrt");
+    _controlfp_s = (void*)GetProcAddress(hmsvcrt, "_controlfp_s");
+    if (_controlfp_s) _controlfp_s(0, 0, 0x0008001e);
 
     gdiplusStartupInput.GdiplusVersion              = 1;
     gdiplusStartupInput.DebugEventCallback          = NULL;
@@ -2309,6 +2831,10 @@ START_TEST(metafile)
     test_containers();
     test_clipping();
     test_gditransform();
+    test_drawimage();
+    test_properties();
+    test_drawpath();
+    test_fillpath();
 
     GdiplusShutdown(gdiplusToken);
 }

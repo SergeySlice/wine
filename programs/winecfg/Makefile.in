@@ -11,7 +11,6 @@ C_SRCS = \
 	driveui.c \
 	libraries.c \
 	main.c \
-	staging.c \
 	theme.c \
 	winecfg.c \
 	x11drvdlg.c
@@ -23,5 +22,3 @@ MANPAGES = winecfg.man.in
 SVG_SRCS = \
 	logo.svg \
 	winecfg.svg
-
-INSTALL_LIB = winecfg.exe winecfg

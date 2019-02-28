@@ -38,6 +38,7 @@
 
 #include "initguid.h"
 
+#include "wine/heap.h"
 #include "wine/test.h"
 
 #include "msg.h"
@@ -53,10 +54,8 @@ static LRESULT WINAPI listview_subclass_proc(HWND hwnd, UINT message, WPARAM wPa
 {
     WNDPROC oldproc = (WNDPROC)GetWindowLongPtrA(hwnd, GWLP_USERDATA);
     static LONG defwndproc_counter = 0;
+    struct message msg = { 0 };
     LRESULT ret;
-    struct message msg;
-
-    trace("listview: %p, %04x, %08lx, %08lx\n", hwnd, message, wParam, lParam);
 
     msg.message = message;
     msg.flags = sent|wparam|lparam;
@@ -151,7 +150,7 @@ static IDataObject* IDataObjectImpl_Construct(void)
 {
     IDataObjectImpl *obj;
 
-    obj = HeapAlloc(GetProcessHeap(), 0, sizeof(*obj));
+    obj = heap_alloc(sizeof(*obj));
     obj->IDataObject_iface.lpVtbl = &IDataObjectImpl_Vtbl;
     obj->ref = 1;
 
@@ -165,7 +164,7 @@ static HRESULT WINAPI IDataObjectImpl_QueryInterface(IDataObject *iface, REFIID 
     if (IsEqualIID(riid, &IID_IUnknown) ||
         IsEqualIID(riid, &IID_IDataObject))
     {
-        *ppvObj = This;
+        *ppvObj = &This->IDataObject_iface;
     }
 
     if(*ppvObj)
@@ -189,10 +188,8 @@ static ULONG WINAPI IDataObjectImpl_Release(IDataObject * iface)
     ULONG ref = InterlockedDecrement(&This->ref);
 
     if (!ref)
-    {
-        HeapFree(GetProcessHeap(), 0, This);
-        return 0;
-    }
+        heap_free(This);
+
     return ref;
 }
 
@@ -278,7 +275,7 @@ static IShellBrowser* IShellBrowserImpl_Construct(void)
 {
     IShellBrowserImpl *browser;
 
-    browser = HeapAlloc(GetProcessHeap(), 0, sizeof(*browser));
+    browser = heap_alloc(sizeof(*browser));
     browser->IShellBrowser_iface.lpVtbl = &IShellBrowserImpl_Vtbl;
     browser->ref = 1;
 
@@ -297,7 +294,7 @@ static HRESULT WINAPI IShellBrowserImpl_QueryInterface(IShellBrowser *iface,
        IsEqualIID(riid, &IID_IOleWindow) ||
        IsEqualIID(riid, &IID_IShellBrowser))
     {
-        *ppvObj = This;
+        *ppvObj = &This->IShellBrowser_iface;
     }
 
     if(*ppvObj)
@@ -321,10 +318,8 @@ static ULONG WINAPI IShellBrowserImpl_Release(IShellBrowser * iface)
     ULONG ref = InterlockedDecrement(&This->ref);
 
     if (!ref)
-    {
-        HeapFree(GetProcessHeap(), 0, This);
-        return 0;
-    }
+        heap_free(This);
+
     return ref;
 }
 
@@ -635,12 +630,18 @@ static void test_CreateViewWindow(void)
     HRESULT hr;
     RECT r = {0};
     ULONG ref1, ref2;
+    IUnknown *unk;
 
     hr = SHGetDesktopFolder(&desktop);
     ok(hr == S_OK, "got (0x%08x)\n", hr);
 
     hr = IShellFolder_CreateViewObject(desktop, NULL, &IID_IShellView, (void**)&view);
     ok(hr == S_OK, "got (0x%08x)\n", hr);
+
+    hr = IShellView_QueryInterface(view, &IID_CDefView, (void **)&unk);
+    ok(hr == S_OK, "got (0x%08x)\n", hr);
+    ok(unk == (IUnknown *)view, "got %p\n", unk);
+    IUnknown_Release(unk);
 
 if (0)
 {
@@ -1331,6 +1332,176 @@ static void test_IOleCommandTarget(void)
     IShellFolder_Release(psf_desktop);
 }
 
+static void test_SHCreateShellFolderView(void)
+{
+    IShellFolder *desktop;
+    IShellView *psv;
+    SFV_CREATE sfvc;
+    ULONG refCount;
+    IUnknown *unk;
+    HRESULT hr;
+
+    hr = SHGetDesktopFolder(&desktop);
+    ok(hr == S_OK, "got (0x%08x)\n", hr);
+
+    if (0)
+    {
+        /* crash on win7 */
+        SHCreateShellFolderView(NULL, NULL);
+    }
+
+    psv = (void *)0xdeadbeef;
+    hr = SHCreateShellFolderView(NULL, &psv);
+    ok(hr == E_INVALIDARG, "Got 0x%08x\n", hr);
+    ok(psv == NULL, "psv = %p\n", psv);
+
+    memset(&sfvc, 0, sizeof(sfvc));
+    psv = (void *)0xdeadbeef;
+    hr = SHCreateShellFolderView(&sfvc, &psv);
+    ok(hr == E_INVALIDARG, "Got 0x%08x\n", hr);
+    ok(psv == NULL, "psv = %p\n", psv);
+
+    memset(&sfvc, 0, sizeof(sfvc));
+    sfvc.cbSize = sizeof(sfvc) - 1;
+    psv = (void *)0xdeadbeef;
+    hr = SHCreateShellFolderView(&sfvc, &psv);
+    ok(hr == E_INVALIDARG, "Got 0x%08x\n", hr);
+    ok(psv == NULL, "psv = %p\n", psv);
+
+    memset(&sfvc, 0, sizeof(sfvc));
+    sfvc.cbSize = sizeof(sfvc) + 1;
+    psv = (void *)0xdeadbeef;
+    hr = SHCreateShellFolderView(&sfvc, &psv);
+    ok(hr == E_INVALIDARG, "Got 0x%08x\n", hr);
+    ok(psv == NULL, "psv = %p\n", psv);
+
+if (0)
+{
+    /* Crashes on NULL 'pshf' on XP/2k3 */
+    memset(&sfvc, 0, sizeof(sfvc));
+    sfvc.cbSize = sizeof(sfvc);
+    psv = (void *)0xdeadbeef;
+    hr = SHCreateShellFolderView(&sfvc, &psv);
+    ok(hr == E_UNEXPECTED, "Got 0x%08x\n", hr);
+    ok(psv == NULL, "psv = %p\n", psv);
+}
+    memset(&sfvc, 0, sizeof(sfvc));
+    sfvc.cbSize = sizeof(sfvc) - 1;
+    sfvc.pshf = desktop;
+    psv = (void *)0xdeadbeef;
+    hr = SHCreateShellFolderView(&sfvc, &psv);
+    ok(hr == E_INVALIDARG, "Got 0x%08x\n", hr);
+    ok(psv == NULL, "psv = %p\n", psv);
+
+    memset(&sfvc, 0, sizeof(sfvc));
+    sfvc.cbSize = sizeof(sfvc);
+    sfvc.pshf = desktop;
+    psv = NULL;
+    hr = SHCreateShellFolderView(&sfvc, &psv);
+    ok(hr == S_OK, "Got 0x%08x\n", hr);
+    ok(psv != NULL, "psv = %p\n", psv);
+
+    hr = IShellView_QueryInterface(psv, &IID_CDefView, (void **)&unk);
+    ok(hr == S_OK, "got (0x%08x)\n", hr);
+    ok(unk == (IUnknown *)psv, "got %p\n", unk);
+    IUnknown_Release(unk);
+
+    refCount = IShellView_Release(psv);
+    ok(refCount == 0, "refCount = %u\n", refCount);
+
+    IShellFolder_Release(desktop);
+}
+
+static void test_SHCreateShellFolderViewEx(void)
+{
+    IShellFolder *desktop;
+    IShellView *psv;
+    ULONG refCount;
+    IUnknown *unk;
+    HRESULT hr;
+    CSFV csfv;
+
+    hr = SHGetDesktopFolder(&desktop);
+    ok(hr == S_OK, "got (0x%08x)\n", hr);
+
+    if (0)
+    {
+        /* crash on win7 */
+        SHCreateShellFolderViewEx(NULL, NULL);
+        SHCreateShellFolderViewEx(NULL, &psv);
+        SHCreateShellFolderViewEx(&csfv, NULL);
+    }
+
+    memset(&csfv, 0, sizeof(csfv));
+    csfv.pshf = desktop;
+    psv = NULL;
+    hr = SHCreateShellFolderViewEx(&csfv, &psv);
+    ok(hr == S_OK, "Got 0x%08x\n", hr);
+    ok(psv != NULL, "psv = %p\n", psv);
+
+    hr = IShellView_QueryInterface(psv, &IID_CDefView, (void **)&unk);
+    ok(hr == S_OK, "got (0x%08x)\n", hr);
+    ok(unk == (IUnknown *)psv, "got %p\n", unk);
+    IUnknown_Release(unk);
+
+    refCount = IShellView_Release(psv);
+    ok(refCount == 0, "refCount = %u\n", refCount);
+
+if (0)
+{
+    /* Crashes on null shellfolder, on XP/2k3 */
+    memset(&csfv, 0, sizeof(csfv));
+    csfv.pshf = NULL;
+    psv = (void *)0xdeadbeef;
+    hr = SHCreateShellFolderViewEx(&csfv, &psv);
+    ok(hr == E_UNEXPECTED, "Got 0x%08x\n", hr);
+    ok(psv == NULL, "psv = %p\n", psv);
+}
+    memset(&csfv, 0, sizeof(csfv));
+    csfv.cbSize = sizeof(csfv);
+    csfv.pshf = desktop;
+    psv = NULL;
+    hr = SHCreateShellFolderViewEx(&csfv, &psv);
+    ok(hr == S_OK, "Got 0x%08x\n", hr);
+    ok(psv != NULL, "psv = %p\n", psv);
+    if (psv)
+    {
+        refCount = IShellView_Release(psv);
+        ok(refCount == 0, "refCount = %u\n", refCount);
+    }
+
+    IShellFolder_Release(desktop);
+}
+
+static void test_newmenu(void)
+{
+    IUnknown *unk, *unk2;
+    HRESULT hr;
+
+    hr = CoCreateInstance(&CLSID_NewMenu, NULL, CLSCTX_INPROC_SERVER, &IID_IUnknown, (void **)&unk);
+todo_wine
+    ok(hr == S_OK, "Failed to create NewMenu object, hr %#x.\n", hr);
+    if (hr != S_OK)
+    {
+        skip("NewMenu is not supported.\n");
+        return;
+    }
+
+    hr = IUnknown_QueryInterface(unk, &IID_IShellExtInit, (void **)&unk2);
+    ok(hr == S_OK, "Failed to get IShellExtInit, hr %#x.\n", hr);
+    IUnknown_Release(unk2);
+
+    hr = IUnknown_QueryInterface(unk, &IID_IContextMenu3, (void **)&unk2);
+    ok(hr == S_OK, "Failed to get IContextMenu3, hr %#x.\n", hr);
+    IUnknown_Release(unk2);
+
+    hr = IUnknown_QueryInterface(unk, &IID_IObjectWithSite, (void **)&unk2);
+    ok(hr == S_OK, "Failed to get IObjectWithSite, hr %#x.\n", hr);
+    IUnknown_Release(unk2);
+
+    IUnknown_Release(unk);
+}
+
 START_TEST(shlview)
 {
     OleInitialize(NULL);
@@ -1344,6 +1515,9 @@ START_TEST(shlview)
     test_IOleWindow();
     test_GetSetCurrentViewMode();
     test_IOleCommandTarget();
+    test_SHCreateShellFolderView();
+    test_SHCreateShellFolderViewEx();
+    test_newmenu();
 
     OleUninitialize();
 }

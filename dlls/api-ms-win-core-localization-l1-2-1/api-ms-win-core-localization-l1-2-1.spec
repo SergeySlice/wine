@@ -4,7 +4,7 @@
 @ stdcall EnumSystemLocalesEx(ptr long long ptr) kernel32.EnumSystemLocalesEx
 @ stdcall EnumSystemLocalesW(ptr long) kernel32.EnumSystemLocalesW
 @ stub FindNLSString
-@ stub FindNLSStringEx
+@ stdcall FindNLSStringEx(wstr long wstr long wstr long ptr ptr ptr long) kernel32.FindNLSStringEx
 @ stdcall FormatMessageA(long ptr long long ptr long ptr) kernel32.FormatMessageA
 @ stdcall FormatMessageW(long ptr long long ptr long ptr) kernel32.FormatMessageW
 @ stdcall GetACP() kernel32.GetACP
@@ -48,7 +48,7 @@
 @ stdcall LCMapStringEx(wstr long wstr long ptr long ptr ptr long) kernel32.LCMapStringEx
 @ stdcall LCMapStringW(long long wstr long ptr long) kernel32.LCMapStringW
 @ stdcall LocaleNameToLCID(wstr long) kernel32.LocaleNameToLCID
-@ stub ResolveLocaleName
+@ stdcall ResolveLocaleName(wstr ptr long) kernel32.ResolveLocaleName
 @ stdcall SetCalendarInfoW(long long long wstr) kernel32.SetCalendarInfoW
 @ stdcall SetLocaleInfoW(long long wstr) kernel32.SetLocaleInfoW
 @ stub SetProcessPreferredUILanguages

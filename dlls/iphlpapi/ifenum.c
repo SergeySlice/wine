@@ -815,7 +815,7 @@ static DWORD getIPAddrRowByName(PMIB_IPADDRROW ipAddrRow, const char *ifName,
   return ret;
 }
 
-#ifdef HAVE_IFADDRS_H
+#if defined(HAVE_IFADDRS_H) && defined(HAVE_GETIFADDRS)
 
 /* Counts the IPv4 addresses in the system using the return value from
  * getifaddrs, returning the count.
@@ -1013,13 +1013,13 @@ static DWORD enumIPAddresses(PDWORD pcAddresses, struct ifconf *ifc)
 
     if (ioctlRet == 0) {
       ifPtr = ifc->ifc_buf;
-      while (ifPtr && ifPtr < ifc->ifc_buf + ifc->ifc_len) {
+      while (ifPtr && (char *)ifPtr < ifc->ifc_buf + ifc->ifc_len) {
         struct ifreq *ifr = (struct ifreq *)ifPtr;
 
         if (ifr->ifr_addr.sa_family == AF_INET)
           numAddresses++;
 
-        ifPtr += ifreq_len((struct ifreq *)ifPtr);
+        ifPtr = (char *)ifPtr + ifreq_len((struct ifreq *)ifPtr);
       }
     }
     else
@@ -1074,10 +1074,10 @@ DWORD getIPAddrTable(PMIB_IPADDRTABLE *ppIpAddrTable, HANDLE heap, DWORD flags)
         ret = NO_ERROR;
         (*ppIpAddrTable)->dwNumEntries = numAddresses;
         ifPtr = ifc.ifc_buf;
-        while (!ret && ifPtr && ifPtr < ifc.ifc_buf + ifc.ifc_len) {
+        while (!ret && ifPtr && (char *)ifPtr < ifc.ifc_buf + ifc.ifc_len) {
           struct ifreq *ifr = (struct ifreq *)ifPtr;
 
-          ifPtr += ifreq_len(ifr);
+          ifPtr = (char *)ifPtr + ifreq_len(ifr);
 
           if (ifr->ifr_addr.sa_family != AF_INET)
              continue;

@@ -23,7 +23,6 @@
 #include "dxgi_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dxgi);
-WINE_DECLARE_DEBUG_CHANNEL(winediag);
 
 #define WINE_DXGI_TO_STR(x) case x: return #x
 
@@ -148,6 +147,7 @@ const char *debug_dxgi_format(DXGI_FORMAT format)
         WINE_DXGI_TO_STR(DXGI_FORMAT_BC7_TYPELESS);
         WINE_DXGI_TO_STR(DXGI_FORMAT_BC7_UNORM);
         WINE_DXGI_TO_STR(DXGI_FORMAT_BC7_UNORM_SRGB);
+        WINE_DXGI_TO_STR(DXGI_FORMAT_B4G4R4A4_UNORM);
         default:
             FIXME("Unrecognized DXGI_FORMAT %#x.\n", format);
             return "unrecognized";
@@ -260,6 +260,7 @@ DXGI_FORMAT dxgi_format_from_wined3dformat(enum wined3d_format_id format)
         case WINED3DFMT_BC7_TYPELESS: return DXGI_FORMAT_BC7_TYPELESS;
         case WINED3DFMT_BC7_UNORM: return DXGI_FORMAT_BC7_UNORM;
         case WINED3DFMT_BC7_UNORM_SRGB: return DXGI_FORMAT_BC7_UNORM_SRGB;
+        case WINED3DFMT_B4G4R4A4_UNORM: return DXGI_FORMAT_B4G4R4A4_UNORM;
         default:
             FIXME("Unhandled wined3d format %#x.\n", format);
             return DXGI_FORMAT_UNKNOWN;
@@ -370,6 +371,7 @@ enum wined3d_format_id wined3dformat_from_dxgi_format(DXGI_FORMAT format)
         case DXGI_FORMAT_BC7_TYPELESS: return WINED3DFMT_BC7_TYPELESS;
         case DXGI_FORMAT_BC7_UNORM: return WINED3DFMT_BC7_UNORM;
         case DXGI_FORMAT_BC7_UNORM_SRGB: return WINED3DFMT_BC7_UNORM_SRGB;
+        case DXGI_FORMAT_B4G4R4A4_UNORM: return WINED3DFMT_B4G4R4A4_UNORM;
         default:
             FIXME("Unhandled DXGI_FORMAT %#x.\n", format);
             return WINED3DFMT_UNKNOWN;
@@ -453,6 +455,36 @@ void wined3d_display_mode_from_dxgi(struct wined3d_display_mode *wined3d_mode,
     wined3d_mode->scanline_ordering = wined3d_scanline_ordering_from_dxgi(mode->ScanlineOrdering);
 }
 
+DXGI_USAGE dxgi_usage_from_wined3d_bind_flags(unsigned int wined3d_bind_flags)
+{
+    DXGI_USAGE dxgi_usage = 0;
+
+    if (wined3d_bind_flags & WINED3D_BIND_SHADER_RESOURCE)
+        dxgi_usage |= DXGI_USAGE_SHADER_INPUT;
+    if (wined3d_bind_flags & WINED3D_BIND_RENDER_TARGET)
+        dxgi_usage |= DXGI_USAGE_RENDER_TARGET_OUTPUT;
+
+    wined3d_bind_flags &= ~(WINED3D_BIND_SHADER_RESOURCE | WINED3D_BIND_RENDER_TARGET);
+    if (wined3d_bind_flags)
+        FIXME("Unhandled wined3d bind flags %#x.\n", wined3d_bind_flags);
+    return dxgi_usage;
+}
+
+unsigned int wined3d_bind_flags_from_dxgi_usage(DXGI_USAGE dxgi_usage)
+{
+    unsigned int wined3d_bind_flags = 0;
+
+    if (dxgi_usage & DXGI_USAGE_SHADER_INPUT)
+        wined3d_bind_flags |= WINED3D_BIND_SHADER_RESOURCE;
+    if (dxgi_usage & DXGI_USAGE_RENDER_TARGET_OUTPUT)
+        wined3d_bind_flags |= WINED3D_BIND_RENDER_TARGET;
+
+    dxgi_usage &= ~(DXGI_USAGE_SHADER_INPUT | DXGI_USAGE_RENDER_TARGET_OUTPUT);
+    if (dxgi_usage)
+        FIXME("Unhandled DXGI usage %#x.\n", dxgi_usage);
+    return wined3d_bind_flags;
+}
+
 #define DXGI_WINED3D_SWAPCHAIN_FLAGS \
         (WINED3D_SWAPCHAIN_USE_CLOSEST_MATCHING_MODE | WINED3D_SWAPCHAIN_RESTORE_WINDOW_RECT)
 
@@ -466,6 +498,12 @@ unsigned int dxgi_swapchain_flags_from_wined3d(unsigned int wined3d_flags)
     {
         wined3d_flags &= ~WINED3D_SWAPCHAIN_ALLOW_MODE_SWITCH;
         flags |= DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
+    }
+
+    if (wined3d_flags & WINED3D_SWAPCHAIN_GDI_COMPATIBLE)
+    {
+        wined3d_flags &= ~WINED3D_SWAPCHAIN_GDI_COMPATIBLE;
+        flags |= DXGI_SWAP_CHAIN_FLAG_GDI_COMPATIBLE;
     }
 
     if (wined3d_flags)
@@ -482,6 +520,12 @@ unsigned int wined3d_swapchain_flags_from_dxgi(unsigned int flags)
     {
         flags &= ~DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
         wined3d_flags |= WINED3D_SWAPCHAIN_ALLOW_MODE_SWITCH;
+    }
+
+    if (flags & DXGI_SWAP_CHAIN_FLAG_GDI_COMPATIBLE)
+    {
+        flags &= ~DXGI_SWAP_CHAIN_FLAG_GDI_COMPATIBLE;
+        wined3d_flags |= WINED3D_SWAPCHAIN_GDI_COMPATIBLE;
     }
 
     if (flags)
@@ -574,77 +618,4 @@ HRESULT dxgi_set_private_data_interface(struct wined3d_private_store *store,
     wined3d_mutex_unlock();
 
     return hr;
-}
-
-D3D_FEATURE_LEVEL dxgi_check_feature_level_support(struct dxgi_factory *factory, struct dxgi_adapter *adapter,
-        const D3D_FEATURE_LEVEL *feature_levels, unsigned int level_count)
-{
-    static const struct
-    {
-        D3D_FEATURE_LEVEL feature_level;
-        unsigned int sm;
-    }
-    feature_levels_sm[] =
-    {
-        {D3D_FEATURE_LEVEL_11_1, 5},
-        {D3D_FEATURE_LEVEL_11_0, 5},
-        {D3D_FEATURE_LEVEL_10_1, 4},
-        {D3D_FEATURE_LEVEL_10_0, 4},
-        {D3D_FEATURE_LEVEL_9_3,  3},
-        {D3D_FEATURE_LEVEL_9_2,  2},
-        {D3D_FEATURE_LEVEL_9_1,  2},
-    };
-    D3D_FEATURE_LEVEL selected_feature_level = 0;
-    unsigned int shader_model;
-    unsigned int i, j;
-    WINED3DCAPS caps;
-    HRESULT hr;
-
-    FIXME("Ignoring adapter type.\n");
-
-    wined3d_mutex_lock();
-    hr = wined3d_get_device_caps(factory->wined3d, adapter->ordinal, WINED3D_DEVICE_TYPE_HAL, &caps);
-    wined3d_mutex_unlock();
-
-    if (FAILED(hr))
-        level_count = 0;
-
-    shader_model = min(caps.VertexShaderVersion, caps.PixelShaderVersion);
-    //Slice
-    FIXME("shader_model: VS=%d, PS=%d\n", caps.VertexShaderVersion, caps.PixelShaderVersion);
-    if (shader_model < 5) {
-        shader_model = 5;
-    }
-
-    for (i = 0; i < level_count; ++i)
-    {
-        for (j = 0; j < sizeof(feature_levels_sm) / sizeof(feature_levels_sm[0]); ++j)
-        {
-            TRACE("feature_levels[%d]=%d, levels_sm[%d]=%d\n", i, feature_levels[i], j, feature_levels_sm[j].feature_level);
-
-            if (feature_levels[i] == feature_levels_sm[j].feature_level)
-            {
-                if (shader_model >= feature_levels_sm[j].sm)
-                {
-                    selected_feature_level = feature_levels[i];
-                    FIXME("Choosing supported feature level %s (SM%u).\n",
-                            debug_feature_level(selected_feature_level), feature_levels_sm[j].sm);
-                }
-                break;
-            }
-        }
-        if (selected_feature_level)
-            break;
-
-        if (j == sizeof(feature_levels_sm) / sizeof(feature_levels_sm[0]))
-            FIXME("Unexpected feature level %#x.\n", feature_levels[i]);
-        else
-            TRACE("Feature level %s not supported, trying next fallback if available.\n",
-                    debug_feature_level(feature_levels[i]));
-    }
-    if (!selected_feature_level)
-        FIXME_(winediag)("None of the requested D3D feature levels is supported on this GPU "
-                "with the current shader backend.\n");
-
-    return selected_feature_level;
 }

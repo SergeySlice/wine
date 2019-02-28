@@ -33,6 +33,7 @@
     BOOL maximized;
     BOOL fullscreen;
     BOOL pendingMinimize;
+    BOOL pendingOrderOut;
     BOOL savedVisibleState;
     BOOL drawnSinceShown;
     WineWindow* latentParentWindow;
@@ -80,6 +81,8 @@
     NSPoint dragWindowStartPosition;
 
     NSTimeInterval lastDockIconSnapshot;
+
+    BOOL allowKeyRepeats;
 
     BOOL ignore_windowDeminiaturize;
     BOOL ignore_windowResize;

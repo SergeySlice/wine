@@ -124,9 +124,17 @@ static HRESULT WINAPI IDirectPlay8ClientImpl_EnumServiceProviders(IDirectPlay8Cl
         DPN_SERVICE_PROVIDER_INFO * const pSPInfoBuffer, PDWORD const pcbEnumData,
         PDWORD const pcReturned, const DWORD dwFlags)
 {
-  IDirectPlay8ClientImpl *This = impl_from_IDirectPlay8Client(iface);
-  FIXME("(%p):(%x): Stub\n", This, dwFlags);
-  return DPN_OK; 
+    IDirectPlay8ClientImpl *This = impl_from_IDirectPlay8Client(iface);
+    TRACE("(%p)->(%s,%s,%p,%p,%p,%x)\n", This, debugstr_guid(pguidServiceProvider), debugstr_guid(pguidApplication),
+                                             pSPInfoBuffer, pcbEnumData, pcReturned, dwFlags);
+
+    if(dwFlags)
+        FIXME("Unhandled flags %x\n", dwFlags);
+
+    if(pguidApplication)
+        FIXME("Application guid %s is currently being ignored\n", debugstr_guid(pguidApplication));
+
+    return enum_services_providers(pguidServiceProvider, pSPInfoBuffer, pcbEnumData, pcReturned);
 }
 
 static HRESULT WINAPI IDirectPlay8ClientImpl_EnumHosts(IDirectPlay8Client *iface,
@@ -136,9 +144,21 @@ static HRESULT WINAPI IDirectPlay8ClientImpl_EnumHosts(IDirectPlay8Client *iface
         const DWORD dwTimeOut, void * const pvUserContext, DPNHANDLE * const pAsyncHandle,
         const DWORD dwFlags)
 {
-  IDirectPlay8ClientImpl *This = impl_from_IDirectPlay8Client(iface);
-  FIXME("(%p):(%p,%p,%x): Stub\n", This, pvUserContext, pAsyncHandle, dwFlags);
-  return DPN_OK; 
+    IDirectPlay8ClientImpl *This = impl_from_IDirectPlay8Client(iface);
+
+    FIXME("(%p):(%p,%p,%p,%p,%u,%u,%u,%u,%p,%p,%x)\n", This, pApplicationDesc, pAddrHost, pDeviceInfo, pUserEnumData,
+        dwUserEnumDataSize, dwEnumCount, dwRetryInterval, dwTimeOut, pvUserContext, pAsyncHandle, dwFlags);
+
+    if(!This->msghandler)
+        return DPNERR_UNINITIALIZED;
+
+    if((dwFlags & DPNENUMHOSTS_SYNC) && pAsyncHandle)
+        return DPNERR_INVALIDPARAM;
+
+    if(dwUserEnumDataSize > This->spcaps.dwMaxEnumPayloadSize)
+        return DPNERR_ENUMQUERYTOOLARGE;
+
+    return (dwFlags & DPNENUMHOSTS_SYNC) ? DPN_OK : DPNSUCCESS_PENDING;
 }
 
 static HRESULT WINAPI IDirectPlay8ClientImpl_CancelAsyncOperation(IDirectPlay8Client *iface,
@@ -289,9 +309,17 @@ static HRESULT WINAPI IDirectPlay8ClientImpl_SetCaps(IDirectPlay8Client *iface,
 static HRESULT WINAPI IDirectPlay8ClientImpl_SetSPCaps(IDirectPlay8Client *iface,
         const GUID * const pguidSP, const DPN_SP_CAPS * const pdpspCaps, const DWORD dwFlags)
 {
-  IDirectPlay8ClientImpl *This = impl_from_IDirectPlay8Client(iface);
-  FIXME("(%p):(%x): Stub\n", This, dwFlags);
-  return DPN_OK; 
+    IDirectPlay8ClientImpl *This = impl_from_IDirectPlay8Client(iface);
+
+    TRACE("(%p)->(%p,%p,%x): stub\n", iface, pguidSP, pdpspCaps, dwFlags);
+
+    if(!This->msghandler || pdpspCaps->dwSize != sizeof(DPN_SP_CAPS))
+        return DPNERR_INVALIDPARAM;
+
+    /* Only dwSystemBufferSize is set by this call. */
+    This->spcaps.dwSystemBufferSize = pdpspCaps->dwSystemBufferSize;
+
+    return DPN_OK;
 }
 
 static HRESULT WINAPI IDirectPlay8ClientImpl_GetSPCaps(IDirectPlay8Client *iface,

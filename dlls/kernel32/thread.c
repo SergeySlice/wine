@@ -55,9 +55,18 @@ HANDLE WINAPI DECLSPEC_HOTPATCH CreateThread( SECURITY_ATTRIBUTES *sa, SIZE_T st
                                 sa, stack, start, param, flags, id );
 }
 
-
 /***************************************************************************
  *                  CreateRemoteThread   (KERNEL32.@)
+ */
+HANDLE WINAPI CreateRemoteThread( HANDLE hProcess, SECURITY_ATTRIBUTES *sa, SIZE_T stack,
+                                  LPTHREAD_START_ROUTINE start, LPVOID param,
+                                  DWORD flags, DWORD *id )
+{
+    return CreateRemoteThreadEx( hProcess, sa, stack, start, param, flags, NULL, id );
+}
+
+/***************************************************************************
+ *                  CreateRemoteThreadEx   (KERNEL32.@)
  *
  * Creates a thread that runs in the address space of another process
  *
@@ -73,19 +82,22 @@ HANDLE WINAPI DECLSPEC_HOTPATCH CreateThread( SECURITY_ATTRIBUTES *sa, SIZE_T st
  *   Bad start address for RtlCreateUserThread because the library
  *   may be loaded at different address in other process.
  */
-HANDLE WINAPI CreateRemoteThread( HANDLE hProcess, SECURITY_ATTRIBUTES *sa, SIZE_T stack,
-                                  LPTHREAD_START_ROUTINE start, LPVOID param,
-                                  DWORD flags, LPDWORD id )
+HANDLE WINAPI CreateRemoteThreadEx( HANDLE hProcess, SECURITY_ATTRIBUTES *sa, SIZE_T stack,
+                                    LPTHREAD_START_ROUTINE start, LPVOID param, DWORD flags,
+                                    LPPROC_THREAD_ATTRIBUTE_LIST attributes, DWORD *id )
 {
     HANDLE handle;
     CLIENT_ID client_id;
     NTSTATUS status;
     SIZE_T stack_reserve = 0, stack_commit = 0;
 
+    if (attributes)
+        FIXME("thread attributes ignored\n");
+
     if (flags & STACK_SIZE_PARAM_IS_A_RESERVATION) stack_reserve = stack;
     else stack_commit = stack;
 
-    status = RtlCreateUserThread( hProcess, NULL, TRUE,
+    status = RtlCreateUserThread( hProcess, sa ? sa->lpSecurityDescriptor : NULL, TRUE,
                                   NULL, stack_reserve, stack_commit,
                                   (PRTL_THREAD_START_ROUTINE)start, param, &handle, &client_id );
     if (status == STATUS_SUCCESS)
@@ -224,6 +236,23 @@ BOOL WINAPI SetThreadContext( HANDLE handle,           /* [in]  Handle to thread
 
 
 /***********************************************************************
+ * Wow64SetThreadContext [KERNEL32.@]
+ */
+BOOL WINAPI Wow64SetThreadContext( HANDLE handle, const WOW64_CONTEXT *context)
+{
+#ifdef __i386__
+    NTSTATUS status = NtSetContextThread( handle, (const CONTEXT *)context );
+#elif defined(__x86_64__)
+    NTSTATUS status = RtlWow64SetThreadContext( handle, context );
+#else
+    NTSTATUS status = STATUS_NOT_IMPLEMENTED;
+    FIXME("not implemented on this platform\n");
+#endif
+    if (status) SetLastError( RtlNtStatusToDosError(status) );
+    return !status;
+}
+
+/***********************************************************************
  * GetThreadContext [KERNEL32.@]  Retrieves context of thread.
  *
  * RETURNS
@@ -234,6 +263,24 @@ BOOL WINAPI GetThreadContext( HANDLE handle,     /* [in]  Handle to thread with 
                               CONTEXT *context ) /* [out] Address of context structure */
 {
     NTSTATUS status = NtGetContextThread( handle, context );
+    if (status) SetLastError( RtlNtStatusToDosError(status) );
+    return !status;
+}
+
+
+/***********************************************************************
+ * Wow64GetThreadContext [KERNEL32.@]
+ */
+BOOL WINAPI Wow64GetThreadContext( HANDLE handle, WOW64_CONTEXT *context)
+{
+#ifdef __i386__
+    NTSTATUS status = NtGetContextThread( handle, (CONTEXT *)context );
+#elif defined(__x86_64__)
+    NTSTATUS status = RtlWow64GetThreadContext( handle, context );
+#else
+    NTSTATUS status = STATUS_NOT_IMPLEMENTED;
+    FIXME("not implemented on this platform\n");
+#endif
     if (status) SetLastError( RtlNtStatusToDosError(status) );
     return !status;
 }
@@ -471,6 +518,15 @@ DWORD WINAPI SetThreadIdealProcessor(
     return 0;
 }
 
+/***********************************************************************
+ *              SetThreadIdealProcessorEx (KERNEL32.@)
+ */
+BOOL WINAPI SetThreadIdealProcessorEx( HANDLE thread, PROCESSOR_NUMBER *ideal, PROCESSOR_NUMBER *previous )
+{
+    FIXME("(%p %p %p): stub\n", thread, ideal, previous);
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
 
 /***********************************************************************
  *           GetThreadSelectorEntry   (KERNEL32.@)
@@ -643,6 +699,15 @@ DWORD WINAPI GetProcessIdOfThread(HANDLE Thread)
 HANDLE WINAPI GetCurrentThread(void)
 {
     return (HANDLE)~(ULONG_PTR)1;
+}
+
+/***********************************************************************
+ *		GetCurrentThreadStackLimits (KERNEL32.@)
+ */
+void WINAPI GetCurrentThreadStackLimits(ULONG_PTR *low, ULONG_PTR *high)
+{
+    *low = (ULONG_PTR)NtCurrentTeb()->DeallocationStack;
+    *high = (ULONG_PTR)NtCurrentTeb()->Tib.StackBase;
 }
 
 
@@ -918,8 +983,17 @@ LANGID WINAPI GetThreadUILanguage( void )
  */
 BOOL WINAPI GetThreadIOPendingFlag( HANDLE thread, PBOOL io_pending )
 {
-    FIXME("%p, %p\n", thread, io_pending);
-    *io_pending = FALSE;
+    NTSTATUS status;
+
+    TRACE("%p, %p\n", thread, io_pending);
+
+    status = NtQueryInformationThread( thread, ThreadIsIoPending,
+                                       io_pending, sizeof(*io_pending), NULL );
+    if (status)
+    {
+        SetLastError( RtlNtStatusToDosError(status) );
+        return FALSE;
+    }
     return TRUE;
 }
 
@@ -980,6 +1054,16 @@ PTP_CLEANUP_GROUP WINAPI CreateThreadpoolCleanupGroup( void )
     }
 
     return group;
+}
+
+/***********************************************************************
+ *              CreateThreadpoolIo (KERNEL32.@)
+ */
+PTP_IO WINAPI CreateThreadpoolIo( HANDLE handle, PTP_WIN32_IO_CALLBACK callback,
+                                  PVOID userdata, TP_CALLBACK_ENVIRON *environment )
+{
+    FIXME("(%p, %p, %p, %p): stub\n", handle, callback, userdata, environment);
+    return FALSE;
 }
 
 /***********************************************************************

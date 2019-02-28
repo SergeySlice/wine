@@ -16,6 +16,16 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+/* How does this DLL work?
+ * This DLL is used to probe and configure wireless access points using the
+ * available wireless interfaces. Most functions are tied to a handle that is
+ * first obtained by calling WlanOpenHandle. Usually it is followed by a call
+ * to WlanEnumInterfaces and then for each interface a WlanScan call is made.
+ * WlanScan starts a parallel access point discovery that delivers the ready
+ * response through the callback registered by WlanRegisterNotification. After
+ * that the program calls WlanGetAvailableNetworkList or WlanGetNetworkBssList.
+ */
+
 #include "config.h"
 
 #include <stdarg.h>
@@ -39,7 +49,7 @@ static struct wine_wlan* handle_index(HANDLE handle)
 {
     ULONG_PTR i = (ULONG_PTR)handle - 1;
 
-    if (i < sizeof(handle_table) / sizeof(handle_table[0]) && handle_table[i].magic == WLAN_MAGIC)
+    if (i < ARRAY_SIZE(handle_table) && handle_table[i].magic == WLAN_MAGIC)
         return &handle_table[i];
 
     return NULL;
@@ -49,7 +59,7 @@ static HANDLE handle_new(struct wine_wlan **entry)
 {
     ULONG_PTR i;
 
-    for (i = 0; i < sizeof(handle_table) / sizeof(handle_table[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(handle_table); i++)
     {
         if (handle_table[i].magic == 0)
         {
@@ -63,8 +73,28 @@ static HANDLE handle_new(struct wine_wlan **entry)
 
 DWORD WINAPI WlanEnumInterfaces(HANDLE handle, void *reserved, WLAN_INTERFACE_INFO_LIST **interface_list)
 {
-    FIXME("(%p, %p, %p) stub\n", handle, reserved, interface_list);
-    return ERROR_CALL_NOT_IMPLEMENTED;
+    struct wine_wlan *wlan;
+    WLAN_INTERFACE_INFO_LIST *ret_list;
+
+    FIXME("(%p, %p, %p) semi-stub\n", handle, reserved, interface_list);
+
+    if (!handle || reserved || !interface_list)
+        return ERROR_INVALID_PARAMETER;
+
+    wlan = handle_index(handle);
+    if (!wlan)
+        return ERROR_INVALID_HANDLE;
+
+    ret_list = WlanAllocateMemory(sizeof(WLAN_INTERFACE_INFO_LIST));
+    if (!ret_list)
+        return ERROR_NOT_ENOUGH_MEMORY;
+
+    memset(&ret_list->InterfaceInfo[0], 0, sizeof(WLAN_INTERFACE_INFO));
+    ret_list->dwNumberOfItems = 0;
+    ret_list->dwIndex = 0; /* unused in this function */
+    *interface_list = ret_list;
+
+    return ERROR_SUCCESS;
 }
 
 DWORD WINAPI WlanCloseHandle(HANDLE handle, void *reserved)
@@ -106,6 +136,34 @@ DWORD WINAPI WlanOpenHandle(DWORD client_version, void *reserved, DWORD *negotia
     *handle = ret_handle;
 
     return ERROR_SUCCESS;
+}
+
+DWORD WINAPI WlanScan(HANDLE handle, const GUID *guid, const DOT11_SSID *ssid,
+                      const WLAN_RAW_DATA *raw, void *reserved)
+{
+    FIXME("(%p, %s, %p, %p, %p) stub\n",
+          handle, wine_dbgstr_guid(guid), ssid, raw, reserved);
+
+    return ERROR_CALL_NOT_IMPLEMENTED;
+}
+
+DWORD WINAPI WlanRegisterNotification(HANDLE handle, DWORD notify_source, BOOL ignore_dup,
+                                      WLAN_NOTIFICATION_CALLBACK callback, void *context,
+                                      void *reserved, DWORD *notify_prev)
+{
+    FIXME("(%p, %d, %d, %p, %p, %p, %p) stub\n",
+          handle, notify_source, ignore_dup, callback, context, reserved, notify_prev);
+
+    return ERROR_CALL_NOT_IMPLEMENTED;
+}
+
+DWORD WINAPI WlanGetAvailableNetworkList(HANDLE handle, const GUID *guid, DWORD flags,
+                                         void *reserved, WLAN_AVAILABLE_NETWORK_LIST **network_list)
+{
+    FIXME("(%p, %s, 0x%x, %p, %p) stub\n",
+          handle, wine_dbgstr_guid(guid), flags, reserved, network_list);
+
+    return ERROR_CALL_NOT_IMPLEMENTED;
 }
 
 void WINAPI WlanFreeMemory(void *ptr)

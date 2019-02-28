@@ -2,6 +2,7 @@
  * Unit test suite for crypt32.dll's OID support functions.
  *
  * Copyright 2005 Juan Lang
+ * Copyright 2018 Dmitry Timoshkov
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -22,6 +23,7 @@
 #include <windef.h>
 #include <winbase.h>
 #include <winerror.h>
+#define CRYPT_OID_INFO_HAS_EXTRA_FIELDS
 #include <wincrypt.h>
 #include <winreg.h>
 
@@ -36,6 +38,7 @@ struct OIDToAlgID
     LPCSTR oid;
     LPCSTR altOid;
     DWORD algID;
+    DWORD altAlgID;
 };
 
 static const struct OIDToAlgID oidToAlgID[] = {
@@ -72,6 +75,9 @@ static const struct OIDToAlgID oidToAlgID[] = {
  { szOID_OIWDIR_md2RSA, NULL, CALG_MD2 },
  { szOID_INFOSEC_mosaicUpdatedSig, NULL, CALG_SHA },
  { szOID_INFOSEC_mosaicKMandUpdSig, NULL, CALG_DSS_SIGN },
+ { szOID_NIST_sha256, NULL, CALG_SHA_256, -1 },
+ { szOID_NIST_sha384, NULL, CALG_SHA_384, -1 },
+ { szOID_NIST_sha512, NULL, CALG_SHA_512, -1 }
 };
 
 static const struct OIDToAlgID algIDToOID[] = {
@@ -101,13 +107,10 @@ static void testOIDToAlgID(void)
     alg = CertOIDToAlgId("1.2.3");
     ok(!alg, "Expected failure, got %d\n", alg);
 
-    for (i = 0; i < sizeof(oidToAlgID) / sizeof(oidToAlgID[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(oidToAlgID); i++)
     {
         alg = CertOIDToAlgId(oidToAlgID[i].oid);
-        /* Not all Windows installations support all these, so make sure it's
-         * at least not the wrong one.
-         */
-        ok(alg == 0 || alg == oidToAlgID[i].algID,
+        ok(alg == oidToAlgID[i].algID || (oidToAlgID[i].altAlgID && alg == oidToAlgID[i].altAlgID),
          "Expected %d, got %d\n", oidToAlgID[i].algID, alg);
     }
 }
@@ -122,10 +125,11 @@ static void testAlgIDToOID(void)
     oid = CertAlgIdToOID(ALG_CLASS_SIGNATURE | ALG_TYPE_ANY | 80);
     ok(!oid && GetLastError() == 0xdeadbeef,
      "Didn't expect last error (%08x) to be set\n", GetLastError());
-    for (i = 0; i < sizeof(algIDToOID) / sizeof(algIDToOID[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(algIDToOID); i++)
     {
         oid = CertAlgIdToOID(algIDToOID[i].algID);
         /* Allow failure, not every version of Windows supports every algo */
+        ok(oid != NULL || broken(!oid), "CertAlgIdToOID failed, expected %s\n", algIDToOID[i].oid);
         if (oid)
         {
             if (strcmp(oid, algIDToOID[i].oid))
@@ -421,7 +425,7 @@ static void test_registerDefaultOIDFunction(void)
         DWORD type, size;
         LPSTR ptr;
 
-        size = sizeof(dllBuf) / sizeof(dllBuf[0]);
+        size = ARRAY_SIZE(dllBuf);
         rc = RegQueryValueExA(key, dllA, NULL, &type, (LPBYTE)dllBuf, &size);
         ok(rc == 0,
          "Expected Dll value to exist, RegQueryValueExA failed: %d\n", rc);
@@ -541,50 +545,165 @@ static void test_enumOIDInfo(void)
 
 static void test_findOIDInfo(void)
 {
+    static WCHAR sha256ECDSA[] = { 's','h','a','2','5','6','E','C','D','S','A',0 };
     static WCHAR sha1[] = { 's','h','a','1',0 };
-    static CHAR oid_rsa_md5[] = szOID_RSA_MD5;
+    static CHAR oid_rsa_md5[] = szOID_RSA_MD5, oid_sha256[] = szOID_NIST_sha256;
+    static CHAR oid_ecdsa_sha256[] = szOID_ECDSA_SHA256;
     ALG_ID alg = CALG_SHA1;
     ALG_ID algs[2] = { CALG_MD5, CALG_RSA_SIGN };
+    const struct oid_info
+    {
+        DWORD key_type;
+        void *key;
+        const char *oid;
+        ALG_ID algid;
+        ALG_ID broken_algid;
+    } oid_test_info [] =
+    {
+        { CRYPT_OID_INFO_OID_KEY, oid_rsa_md5, szOID_RSA_MD5, CALG_MD5 },
+        { CRYPT_OID_INFO_NAME_KEY, sha1, szOID_OIWSEC_sha1, CALG_SHA1 },
+        { CRYPT_OID_INFO_ALGID_KEY, &alg, szOID_OIWSEC_sha1, CALG_SHA1 },
+        { CRYPT_OID_INFO_SIGN_KEY, algs, szOID_RSA_MD5RSA, CALG_MD5 },
+        { CRYPT_OID_INFO_OID_KEY, oid_sha256, szOID_NIST_sha256, CALG_SHA_256, -1 },
+    };
     PCCRYPT_OID_INFO info;
+    int i;
 
     info = CryptFindOIDInfo(0, NULL, 0);
     ok(info == NULL, "Expected NULL\n");
-    info = CryptFindOIDInfo(CRYPT_OID_INFO_OID_KEY, oid_rsa_md5, 0);
-    ok(info != NULL, "Expected to find szOID_RSA_MD5\n");
+
+    for (i = 0; i < ARRAY_SIZE(oid_test_info); i++)
+    {
+        const struct oid_info *test = &oid_test_info[i];
+
+        info = CryptFindOIDInfo(test->key_type, test->key, 0);
+        ok(info != NULL, "Failed to find %s.\n", test->oid);
+        if (info)
+        {
+            ok(!strcmp(info->pszOID, test->oid), "Unexpected OID %s, expected %s\n", info->pszOID, test->oid);
+            ok(U(*info).Algid == test->algid || broken(U(*info).Algid == test->broken_algid),
+                "Unexpected Algid %d, expected %d\n", U(*info).Algid, test->algid);
+        }
+    }
+
+    info = CryptFindOIDInfo(CRYPT_OID_INFO_OID_KEY, oid_ecdsa_sha256, 0);
     if (info)
     {
-        ok(!strcmp(info->pszOID, szOID_RSA_MD5), "Expected %s, got %s\n",
-         szOID_RSA_MD5, info->pszOID);
-        ok(U(*info).Algid == CALG_MD5, "Expected CALG_MD5, got %d\n",
-           U(*info).Algid);
+        DWORD *data;
+
+        ok(info->cbSize == sizeof(*info), "Unexpected structure size %d.\n", info->cbSize);
+        ok(!strcmp(info->pszOID, oid_ecdsa_sha256), "Expected %s, got %s\n", oid_ecdsa_sha256, info->pszOID);
+        ok(!lstrcmpW(info->pwszName, sha256ECDSA), "Expected %s, got %s\n",
+            wine_dbgstr_w(sha256ECDSA), wine_dbgstr_w(info->pwszName));
+        ok(info->dwGroupId == CRYPT_SIGN_ALG_OID_GROUP_ID,
+           "Expected CRYPT_SIGN_ALG_OID_GROUP_ID, got %u\n", info->dwGroupId);
+        ok(U(*info).Algid == CALG_OID_INFO_CNG_ONLY,
+           "Expected CALG_OID_INFO_CNG_ONLY, got %d\n", U(*info).Algid);
+
+        data = (DWORD *)info->ExtraInfo.pbData;
+        ok(info->ExtraInfo.cbData == 8, "Expected 8, got %d\n", info->ExtraInfo.cbData);
+        ok(data[0] == CALG_OID_INFO_PARAMETERS, "Expected CALG_OID_INFO_PARAMETERS, got %x\n", data[0]);
+        ok(data[1] == CRYPT_OID_NO_NULL_ALGORITHM_PARA_FLAG,
+            "Expected CRYPT_OID_NO_NULL_ALGORITHM_PARA_FLAG, got %x\n", data[1]);
+
+        ok(!lstrcmpW(info->pwszCNGAlgid, BCRYPT_SHA256_ALGORITHM), "Expected %s, got %s\n",
+           wine_dbgstr_w(BCRYPT_SHA256_ALGORITHM), wine_dbgstr_w(info->pwszCNGAlgid));
+        ok(!lstrcmpW(info->pwszCNGExtraAlgid, CRYPT_OID_INFO_ECC_PARAMETERS_ALGORITHM), "Expected %s, got %s\n",
+           wine_dbgstr_w(CRYPT_OID_INFO_ECC_PARAMETERS_ALGORITHM), wine_dbgstr_w(info->pwszCNGExtraAlgid));
     }
-    info = CryptFindOIDInfo(CRYPT_OID_INFO_NAME_KEY, sha1, 0);
-    ok(info != NULL, "Expected to find sha1\n");
-    if (info)
+    else
+        win_skip("Host does not support ECDSA_SHA256, skipping test\n");
+}
+
+static void test_registerOIDInfo(void)
+{
+    static const WCHAR winetestW[] = { 'w','i','n','e','t','e','s','t',0 };
+    static char test_oid[] = "1.2.3.4.5.6.7.8.9.10";
+    CRYPT_OID_INFO info1;
+    const CRYPT_OID_INFO *info2;
+    HKEY key;
+    DWORD ret, size, type, value;
+    char buf[256];
+
+    SetLastError(0xdeadbeef);
+    ret = CryptUnregisterOIDInfo(NULL);
+    ok(!ret, "should fail\n");
+    ok(GetLastError() == E_INVALIDARG, "got %#x\n", GetLastError());
+
+    memset(&info1, 0, sizeof(info1));
+    SetLastError(0xdeadbeef);
+    ret = CryptUnregisterOIDInfo(&info1);
+    ok(!ret, "should fail\n");
+    ok(GetLastError() == E_INVALIDARG, "got %#x\n", GetLastError());
+
+    info1.cbSize = sizeof(info1);
+    SetLastError(0xdeadbeef);
+    ret = CryptUnregisterOIDInfo(&info1);
+    ok(!ret, "should fail\n");
+    ok(GetLastError() == E_INVALIDARG, "got %#x\n", GetLastError());
+
+    info1.pszOID = test_oid;
+    SetLastError(0xdeadbeef);
+    ret = CryptUnregisterOIDInfo(&info1);
+    ok(!ret, "should fail\n");
+    ok(GetLastError() == ERROR_FILE_NOT_FOUND, "got %u\n", GetLastError());
+
+    info2 = CryptFindOIDInfo(CRYPT_OID_INFO_OID_KEY, (void *)test_oid, 0);
+    ok(!info2, "should fail\n");
+
+    SetLastError(0xdeadbeef);
+    /* While it succeeds, the next call does not write anything to the
+     * registry on Windows because dwGroupId == 0.
+     */
+    ret = CryptRegisterOIDInfo(&info1, 0);
+    ok(ret, "got %u\n", GetLastError());
+
+    ret = RegOpenKeyA(HKEY_LOCAL_MACHINE, "Software\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptDllFindOIDInfo\\1.2.3.4.5.6.7.8.9.10!1", &key);
+    ok(ret == ERROR_FILE_NOT_FOUND, "got %u\n", ret);
+
+    info2 = CryptFindOIDInfo(CRYPT_OID_INFO_OID_KEY, (void *)test_oid, 0);
+    ok(!info2, "should fail\n");
+
+    info1.pwszName = winetestW;
+    info1.dwGroupId = CRYPT_HASH_ALG_OID_GROUP_ID;
+    SetLastError(0xdeadbeef);
+    ret = CryptRegisterOIDInfo(&info1, CRYPT_INSTALL_OID_INFO_BEFORE_FLAG);
+    if (!ret && GetLastError() == ERROR_ACCESS_DENIED)
     {
-        ok(!strcmp(info->pszOID, szOID_OIWSEC_sha1), "Expected %s, got %s\n",
-         szOID_OIWSEC_sha1, info->pszOID);
-        ok(U(*info).Algid == CALG_SHA1, "Expected CALG_SHA1, got %d\n",
-           U(*info).Algid);
+        skip("Need admin rights\n");
+        return;
     }
-    info = CryptFindOIDInfo(CRYPT_OID_INFO_ALGID_KEY, &alg, 0);
-    ok(info != NULL, "Expected to find sha1\n");
-    if (info)
-    {
-        ok(!strcmp(info->pszOID, szOID_OIWSEC_sha1), "Expected %s, got %s\n",
-         szOID_OIWSEC_sha1, info->pszOID);
-        ok(U(*info).Algid == CALG_SHA1, "Expected CALG_SHA1, got %d\n",
-           U(*info).Algid);
-    }
-    info = CryptFindOIDInfo(CRYPT_OID_INFO_SIGN_KEY, algs, 0);
-    ok(info != NULL, "Expected to find md5RSA\n");
-    if (info)
-    {
-        ok(!strcmp(info->pszOID, szOID_RSA_MD5RSA), "Expected %s, got %s\n",
-         szOID_RSA_MD5RSA, info->pszOID);
-        ok(U(*info).Algid == CALG_MD5, "Expected CALG_MD5, got %d\n",
-           U(*info).Algid);
-    }
+    ok(ret, "got %u\n", GetLastError());
+
+    /* It looks like crypt32 reads the OID info from registry only on load,
+     * and CryptFindOIDInfo will find the registered OID on next run
+     */
+    info2 = CryptFindOIDInfo(CRYPT_OID_INFO_OID_KEY, (void *)test_oid, 0);
+    ok(!info2, "should fail\n");
+
+    ret = RegCreateKeyA(HKEY_LOCAL_MACHINE, "Software\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptDllFindOIDInfo\\1.2.3.4.5.6.7.8.9.10!1", &key);
+    ok(!ret, "got %u\n", ret);
+
+    memset(buf, 0, sizeof(buf));
+    size = sizeof(buf);
+    ret = RegQueryValueExA(key, "Name", NULL, &type, (BYTE *)buf, &size);
+    ok(!ret, "got %u\n", ret);
+    ok(type == REG_SZ, "got %u\n", type);
+    ok(!strcmp(buf, "winetest"), "got %s\n", buf);
+
+    value = 0xdeadbeef;
+    size = sizeof(value);
+    ret = RegQueryValueExA(key, "Flags", NULL, &type, (BYTE *)&value, &size);
+    ok(!ret, "got %u\n", ret);
+    ok(type == REG_DWORD, "got %u\n", type);
+    ok(value == 1, "got %u\n", value);
+
+    RegCloseKey(key);
+
+    CryptUnregisterOIDInfo(&info1);
+
+    ret = RegOpenKeyA(HKEY_LOCAL_MACHINE, "Software\\Microsoft\\Cryptography\\OID\\EncodingType 0\\CryptDllFindOIDInfo\\1.2.3.4.5.6.7.8.9.10!1", &key);
+    ok(ret == ERROR_FILE_NOT_FOUND, "got %u\n", ret);
 }
 
 START_TEST(oid)
@@ -596,6 +715,7 @@ START_TEST(oid)
     testAlgIDToOID();
     test_enumOIDInfo();
     test_findOIDInfo();
+    test_registerOIDInfo();
     test_oidFunctionSet();
     test_installOIDFunctionAddress();
     test_registerOIDFunction();

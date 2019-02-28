@@ -32,6 +32,7 @@
 #include "wine/debug.h"
 #include "ddk/hidsdi.h"
 #include "ddk/hidtypes.h"
+#include "ddk/wdm.h"
 
 #include "initguid.h"
 #include "devguid.h"
@@ -41,12 +42,6 @@ WINE_DECLARE_DEBUG_CHANNEL(hid_report);
 
 static const WCHAR device_name_fmtW[] = {'\\','D','e','v','i','c','e',
     '\\','H','I','D','#','%','p','&','%','p',0};
-static const WCHAR device_link_fmtW[] = {'\\','?','?','\\','%','s','#','%','s',0};
-/* GUID_DEVINTERFACE_HID */
-static const WCHAR class_guid[] = {'{','4','D','1','E','5','5','B','2',
-    '-','F','1','6','F','-','1','1','C','F','-','8','8','C','B','-','0','0',
-    '1','1','1','1','0','0','0','0','3','0','}',0};
-
 
 NTSTATUS HID_CreateDevice(DEVICE_OBJECT *native_device, HID_MINIDRIVER_REGISTRATION *driver, DEVICE_OBJECT **device)
 {
@@ -74,7 +69,7 @@ NTSTATUS HID_CreateDevice(DEVICE_OBJECT *native_device, HID_MINIDRIVER_REGISTRAT
     ext->deviceExtension.NextDeviceObject = native_device;
     ext->device_name = HeapAlloc(GetProcessHeap(), 0, (lstrlenW(dev_name) + 1) * sizeof(WCHAR));
     lstrcpyW(ext->device_name, dev_name);
-    ext->link_name = NULL;
+    ext->link_name.Buffer = NULL;
 
     IoAttachDeviceToDeviceStack(*device, native_device);
 
@@ -83,10 +78,8 @@ NTSTATUS HID_CreateDevice(DEVICE_OBJECT *native_device, HID_MINIDRIVER_REGISTRAT
 
 NTSTATUS HID_LinkDevice(DEVICE_OBJECT *device)
 {
-    WCHAR dev_link[255];
-    WCHAR *ptr;
     SP_DEVINFO_DATA Data;
-    UNICODE_STRING nameW, linkW;
+    UNICODE_STRING nameW;
     NTSTATUS status;
     HDEVINFO devinfo;
     GUID hidGuid;
@@ -95,25 +88,7 @@ NTSTATUS HID_LinkDevice(DEVICE_OBJECT *device)
     HidD_GetHidGuid(&hidGuid);
     ext = device->DeviceExtension;
 
-    sprintfW(dev_link, device_link_fmtW, ext->instance_id, class_guid);
-    ptr = dev_link + 4;
-    do { if (*ptr == '\\') *ptr = '#'; } while (*ptr++);
-    struprW(dev_link);
-
     RtlInitUnicodeString( &nameW, ext->device_name);
-    RtlInitUnicodeString( &linkW, dev_link );
-
-    TRACE("Create link %s\n", debugstr_w(dev_link));
-
-    ext->link_name = HeapAlloc(GetProcessHeap(), 0, sizeof(WCHAR) * (lstrlenW(dev_link) + 1));
-    lstrcpyW(ext->link_name, dev_link);
-
-    status = IoCreateSymbolicLink( &linkW, &nameW );
-    if (status)
-    {
-        FIXME( "failed to create link error %x\n", status );
-        return status;
-    }
 
     devinfo = SetupDiGetClassDevsW(&GUID_DEVCLASS_HIDCLASS, NULL, NULL, DIGCF_DEVICEINTERFACE);
     if (!devinfo)
@@ -137,13 +112,15 @@ NTSTATUS HID_LinkDevice(DEVICE_OBJECT *device)
         FIXME( "failed to Register Device Info %x\n", GetLastError());
         goto error;
     }
-    if (!SetupDiCreateDeviceInterfaceW( devinfo, &Data,  &hidGuid, NULL, 0, NULL))
+    SetupDiDestroyDeviceInfoList(devinfo);
+
+    status = IoRegisterDeviceInterface(device, &hidGuid, NULL, &ext->link_name);
+    if (status != STATUS_SUCCESS)
     {
-        FIXME( "failed to Create Device Interface %x\n", GetLastError());
-        goto error;
+        FIXME( "failed to register device interface %x\n", status );
+        return status;
     }
 
-    SetupDiDestroyDeviceInfoList(devinfo);
     return STATUS_SUCCESS;
 
 error:
@@ -153,23 +130,11 @@ error:
 
 void HID_DeleteDevice(HID_MINIDRIVER_REGISTRATION *driver, DEVICE_OBJECT *device)
 {
-    NTSTATUS status;
     BASE_DEVICE_EXTENSION *ext;
-    UNICODE_STRING linkW;
     LIST_ENTRY *entry;
     IRP *irp;
 
     ext = device->DeviceExtension;
-
-    if (ext->link_name)
-    {
-        TRACE("Delete link %s\n", debugstr_w(ext->link_name));
-        RtlInitUnicodeString(&linkW, ext->link_name);
-
-        status = IoDeleteSymbolicLink(&linkW);
-        if (status != STATUS_SUCCESS)
-            ERR("Delete Symbolic Link failed (%x)\n",status);
-    }
 
     if (ext->thread)
     {
@@ -193,7 +158,7 @@ void HID_DeleteDevice(HID_MINIDRIVER_REGISTRATION *driver, DEVICE_OBJECT *device
 
     TRACE("Delete device(%p) %s\n", device, debugstr_w(ext->device_name));
     HeapFree(GetProcessHeap(), 0, ext->device_name);
-    HeapFree(GetProcessHeap(), 0, ext->link_name);
+    RtlFreeUnicodeString(&ext->link_name);
 
     IoDeleteDevice(device);
 }
@@ -316,7 +281,7 @@ static DWORD CALLBACK hid_device_thread(void *args)
 
             IoCompleteRequest(irp, IO_NO_INCREMENT );
 
-            rc = WaitForSingleObject(ext->halt_event, ext->poll_interval);
+            rc = WaitForSingleObject(ext->halt_event, ext->poll_interval ? ext->poll_interval : DEFAULT_POLL_INTERVAL);
 
             if (rc == WAIT_OBJECT_0)
                 break;
@@ -546,9 +511,7 @@ NTSTATUS WINAPI HID_Device_ioctl(DEVICE_OBJECT *device, IRP *irp)
                 break;
             }
             poll_interval = *(ULONG *)irp->AssociatedIrp.SystemBuffer;
-            if (poll_interval == 0)
-                FIXME("Handle opportunistic reads\n");
-            else if (poll_interval <= MAX_POLL_INTERVAL_MSEC)
+            if (poll_interval <= MAX_POLL_INTERVAL_MSEC)
             {
                 extension->poll_interval = poll_interval;
                 irp->IoStatus.u.Status = STATUS_SUCCESS;
@@ -668,6 +631,7 @@ NTSTATUS WINAPI HID_Device_read(DEVICE_OBJECT *device, IRP *irp)
     BASE_DEVICE_EXTENSION *ext = device->DeviceExtension;
     UINT buffer_size = RingBuffer_GetBufferSize(ext->ring_buffer);
     NTSTATUS rc = STATUS_SUCCESS;
+    IO_STACK_LOCATION *irpsp = IoGetCurrentIrpStackLocation(irp);
     int ptr = -1;
 
     packet = HeapAlloc(GetProcessHeap(), 0, buffer_size);
@@ -691,9 +655,30 @@ NTSTATUS WINAPI HID_Device_read(DEVICE_OBJECT *device, IRP *irp)
     }
     else
     {
-        TRACE_(hid_report)("Queue irp\n");
-        InsertTailList(&ext->irp_queue, &irp->Tail.Overlay.s.ListEntry);
-        rc = STATUS_PENDING;
+        BASE_DEVICE_EXTENSION *extension = device->DeviceExtension;
+        if (extension->poll_interval)
+        {
+            TRACE_(hid_report)("Queue irp\n");
+            InsertTailList(&ext->irp_queue, &irp->Tail.Overlay.s.ListEntry);
+            rc = STATUS_PENDING;
+        }
+        else
+        {
+            HID_XFER_PACKET packet;
+            TRACE("No packet, but opportunistic reads enabled\n");
+            packet.reportId = ((BYTE*)irp->AssociatedIrp.SystemBuffer)[0];
+            packet.reportBuffer = &((BYTE*)irp->AssociatedIrp.SystemBuffer)[1];
+            packet.reportBufferLen = irpsp->Parameters.Read.Length - 1;
+            rc = call_minidriver(IOCTL_HID_GET_INPUT_REPORT, device, NULL, 0, &packet, sizeof(packet));
+
+            if (rc == STATUS_SUCCESS)
+            {
+                ((BYTE*)irp->AssociatedIrp.SystemBuffer)[0] = packet.reportId;
+                irp->IoStatus.Information = packet.reportBufferLen + 1;
+                irp->IoStatus.u.Status = rc;
+            }
+            IoCompleteRequest(irp, IO_NO_INCREMENT);
+        }
     }
     HeapFree(GetProcessHeap(), 0, packet);
 

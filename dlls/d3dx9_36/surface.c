@@ -29,6 +29,7 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3dx);
 
+HRESULT WINAPI WICCreateImagingFactory_Proxy(UINT, IWICImagingFactory**);
 
 /* Wine-specific WIC GUIDs */
 DEFINE_GUID(GUID_WineContainerFormatTga, 0x0c44fda1,0xa5c5,0x4298,0x96,0x85,0x47,0x3f,0xc1,0x7c,0xd3,0x22);
@@ -53,7 +54,7 @@ static D3DFORMAT wic_guid_to_d3dformat(const GUID *guid)
 {
     unsigned int i;
 
-    for (i = 0; i < sizeof(wic_pixel_formats) / sizeof(wic_pixel_formats[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(wic_pixel_formats); i++)
     {
         if (IsEqualGUID(wic_pixel_formats[i].wic_guid, guid))
             return wic_pixel_formats[i].d3dformat;
@@ -66,7 +67,7 @@ static const GUID *d3dformat_to_wic_guid(D3DFORMAT format)
 {
     unsigned int i;
 
-    for (i = 0; i < sizeof(wic_pixel_formats) / sizeof(wic_pixel_formats[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(wic_pixel_formats); i++)
     {
         if (wic_pixel_formats[i].d3dformat == format)
             return wic_pixel_formats[i].wic_guid;
@@ -164,7 +165,7 @@ static D3DFORMAT dds_fourcc_to_d3dformat(DWORD fourcc)
         D3DFMT_A32B32G32R32F,
     };
 
-    for (i = 0; i < sizeof(known_fourcc) / sizeof(known_fourcc[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(known_fourcc); i++)
     {
         if (known_fourcc[i] == fourcc)
             return fourcc;
@@ -199,11 +200,79 @@ static const struct {
     { 32, 0x000000ff, 0x0000ff00, 0x00ff0000, 0x00000000, D3DFMT_X8B8G8R8 },
 };
 
+HRESULT lock_surface(IDirect3DSurface9 *surface, D3DLOCKED_RECT *lock,
+        IDirect3DSurface9 **temp_surface, BOOL write)
+{
+    IDirect3DDevice9 *device;
+    D3DSURFACE_DESC desc;
+    DWORD lock_flag;
+    HRESULT hr;
+
+    lock_flag = write ? D3DLOCK_DISCARD : D3DLOCK_READONLY;
+    *temp_surface = NULL;
+    if (FAILED(hr = IDirect3DSurface9_LockRect(surface, lock, NULL, lock_flag)))
+    {
+        IDirect3DSurface9_GetDevice(surface, &device);
+        IDirect3DSurface9_GetDesc(surface, &desc);
+
+        hr = write ? IDirect3DDevice9_CreateOffscreenPlainSurface(device, desc.Width, desc.Height,
+                desc.Format, D3DPOOL_SYSTEMMEM, temp_surface, NULL)
+                : IDirect3DDevice9_CreateRenderTarget(device, desc.Width, desc.Height,
+                desc.Format, D3DMULTISAMPLE_NONE, 0, TRUE, temp_surface, NULL);
+        if (FAILED(hr))
+        {
+            WARN("Failed to create temporary surface, surface %p, format %#x,"
+                    " usage %#x, pool %#x, write %#x, width %u, height %u.\n",
+                    surface, desc.Format, desc.Usage, desc.Pool, write, desc.Width, desc.Height);
+            IDirect3DDevice9_Release(device);
+            return hr;
+        }
+
+        if (write || SUCCEEDED(hr = IDirect3DDevice9_StretchRect(device, surface, NULL,
+                *temp_surface, NULL, D3DTEXF_NONE)))
+            hr = IDirect3DSurface9_LockRect(*temp_surface, lock, NULL, lock_flag);
+
+        IDirect3DDevice9_Release(device);
+        if (FAILED(hr))
+        {
+            WARN("Failed to lock surface %p, write %#x, usage %#x, pool %#x.\n",
+                    surface, write, desc.Usage, desc.Pool);
+            IDirect3DSurface9_Release(*temp_surface);
+            *temp_surface = NULL;
+            return hr;
+        }
+        TRACE("Created temporary surface %p.\n", surface);
+    }
+    return hr;
+}
+
+HRESULT unlock_surface(IDirect3DSurface9 *surface, D3DLOCKED_RECT *lock,
+        IDirect3DSurface9 *temp_surface, BOOL update)
+{
+    IDirect3DDevice9 *device;
+    HRESULT hr;
+
+    if (!temp_surface)
+        return IDirect3DSurface9_UnlockRect(surface);
+
+    hr = IDirect3DSurface9_UnlockRect(temp_surface);
+    if (update)
+    {
+        IDirect3DSurface9_GetDevice(surface, &device);
+        if (FAILED(hr = IDirect3DDevice9_UpdateSurface(device, temp_surface, NULL, surface, NULL)))
+            WARN("Updating surface failed, hr %#x, surface %p, temp_surface %p.\n",
+                    hr, surface, temp_surface);
+        IDirect3DDevice9_Release(device);
+    }
+    IDirect3DSurface9_Release(temp_surface);
+    return hr;
+}
+
 static D3DFORMAT dds_rgb_to_d3dformat(const struct dds_pixel_format *pixel_format)
 {
     unsigned int i;
 
-    for (i = 0; i < sizeof(rgb_pixel_formats) / sizeof(rgb_pixel_formats[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(rgb_pixel_formats); i++)
     {
         if (rgb_pixel_formats[i].bpp == pixel_format->bpp
             && rgb_pixel_formats[i].rmask == pixel_format->rmask
@@ -297,7 +366,7 @@ static HRESULT d3dformat_to_dds_pixel_format(struct dds_pixel_format *pixel_form
 
     pixel_format->size = sizeof(*pixel_format);
 
-    for (i = 0; i < sizeof(rgb_pixel_formats) / sizeof(rgb_pixel_formats[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(rgb_pixel_formats); i++)
     {
         if (rgb_pixel_formats[i].format == d3dformat)
         {
@@ -462,6 +531,7 @@ static HRESULT save_dds_surface_to_memory(ID3DXBuffer **dst_buffer, IDirect3DSur
     BYTE *pixels;
     struct volume volume;
     const struct pixel_format_desc *pixel_format;
+    IDirect3DSurface9 *temp_surface;
 
     if (src_rect)
     {
@@ -501,7 +571,7 @@ static HRESULT save_dds_surface_to_memory(ID3DXBuffer **dst_buffer, IDirect3DSur
         return hr;
     }
 
-    hr = IDirect3DSurface9_LockRect(src_surface, &locked_rect, NULL, D3DLOCK_READONLY);
+    hr = lock_surface(src_surface, &locked_rect, &temp_surface, FALSE);
     if (FAILED(hr))
     {
         ID3DXBuffer_Release(buffer);
@@ -514,7 +584,7 @@ static HRESULT save_dds_surface_to_memory(ID3DXBuffer **dst_buffer, IDirect3DSur
     copy_pixels(locked_rect.pBits, locked_rect.Pitch, 0, pixels, dst_pitch, 0,
         &volume, pixel_format);
 
-    IDirect3DSurface9_UnlockRect(src_surface);
+    unlock_surface(src_surface, &locked_rect, temp_surface, FALSE);
 
     *dst_buffer = buffer;
     return D3D_OK;
@@ -792,7 +862,6 @@ HRESULT WINAPI D3DXGetImageInfoFromFileInMemory(const void *data, UINT datasize,
     IWICBitmapDecoder *decoder = NULL;
     IWICStream *stream;
     HRESULT hr;
-    HRESULT initresult;
     BOOL dib;
 
     TRACE("(%p, %d, %p)\n", data, datasize, info);
@@ -811,9 +880,7 @@ HRESULT WINAPI D3DXGetImageInfoFromFileInMemory(const void *data, UINT datasize,
     /* In case of DIB file, convert it to BMP */
     dib = convert_dib_to_bmp((void**)&data, &datasize);
 
-    initresult = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
-
-    hr = CoCreateInstance(&CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, &IID_IWICImagingFactory, (void**)&factory);
+    hr = WICCreateImagingFactory_Proxy(WINCODEC_SDK_VERSION, &factory);
 
     if (SUCCEEDED(hr)) {
         IWICImagingFactory_CreateStream(factory, &stream);
@@ -898,9 +965,6 @@ HRESULT WINAPI D3DXGetImageInfoFromFileInMemory(const void *data, UINT datasize,
 
     if (decoder)
         IWICBitmapDecoder_Release(decoder);
-
-    if (SUCCEEDED(initresult))
-        CoUninitialize();
 
     if (dib)
         HeapFree(GetProcessHeap(), 0, (void*)data);
@@ -1039,7 +1103,7 @@ HRESULT WINAPI D3DXLoadSurfaceFromFileInMemory(IDirect3DSurface9 *pDestSurface,
         const RECT *pSrcRect, DWORD dwFilter, D3DCOLOR Colorkey, D3DXIMAGE_INFO *pSrcInfo)
 {
     D3DXIMAGE_INFO imginfo;
-    HRESULT hr, com_init;
+    HRESULT hr;
 
     IWICImagingFactory *factory = NULL;
     IWICBitmapDecoder *decoder;
@@ -1092,9 +1156,7 @@ HRESULT WINAPI D3DXLoadSurfaceFromFileInMemory(IDirect3DSurface9 *pDestSurface,
     if (imginfo.ImageFileFormat == D3DXIFF_DIB)
         convert_dib_to_bmp((void**)&pSrcData, &SrcDataSize);
 
-    com_init = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
-
-    if (FAILED(CoCreateInstance(&CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, &IID_IWICImagingFactory, (void**)&factory)))
+    if (FAILED(WICCreateImagingFactory_Proxy(WINCODEC_SDK_VERSION, &factory)))
         goto cleanup_err;
 
     if (FAILED(IWICImagingFactory_CreateStream(factory, &stream)))
@@ -1194,9 +1256,6 @@ cleanup_bmp:
 cleanup_err:
     if (factory)
         IWICImagingFactory_Release(factory);
-
-    if (SUCCEEDED(com_init))
-        CoUninitialize();
 
     if (imginfo.ImageFileFormat == D3DXIFF_DIB)
         HeapFree(GetProcessHeap(), 0, (void*)pSrcData);
@@ -1753,9 +1812,11 @@ HRESULT WINAPI D3DXLoadSurfaceFromMemory(IDirect3DSurface9 *dst_surface,
         DWORD filter, D3DCOLOR color_key)
 {
     const struct pixel_format_desc *srcformatdesc, *destformatdesc;
+    IDirect3DSurface9 *surface;
     D3DSURFACE_DESC surfdesc;
     D3DLOCKED_RECT lockrect;
     struct volume src_size, dst_size;
+    HRESULT hr;
 
     TRACE("(%p, %p, %s, %p, %#x, %u, %p, %s, %#x, 0x%08x)\n",
             dst_surface, dst_palette, wine_dbgstr_rect(dst_rect), src_memory, src_format,
@@ -1811,6 +1872,9 @@ HRESULT WINAPI D3DXLoadSurfaceFromMemory(IDirect3DSurface9 *dst_surface,
         return E_NOTIMPL;
     }
 
+    if (FAILED(hr = lock_surface(dst_surface, &lockrect, &surface, TRUE)))
+        return hr;
+
     if (src_format == surfdesc.Format
             && dst_size.width == src_size.width
             && dst_size.height == src_size.height
@@ -1824,16 +1888,12 @@ HRESULT WINAPI D3DXLoadSurfaceFromMemory(IDirect3DSurface9 *dst_surface,
                     && src_size.height != surfdesc.Height))
         {
             WARN("Source rect %s is misaligned.\n", wine_dbgstr_rect(src_rect));
+            unlock_surface(dst_surface, &lockrect, surface, FALSE);
             return D3DXERR_INVALIDDATA;
         }
 
-        if (FAILED(IDirect3DSurface9_LockRect(dst_surface, &lockrect, dst_rect, 0)))
-            return D3DXERR_INVALIDDATA;
-
         copy_pixels(src_memory, src_pitch, 0, lockrect.pBits, lockrect.Pitch, 0,
                 &src_size, srcformatdesc);
-
-        IDirect3DSurface9_UnlockRect(dst_surface);
     }
     else /* Stretching or format conversion. */
     {
@@ -1841,11 +1901,9 @@ HRESULT WINAPI D3DXLoadSurfaceFromMemory(IDirect3DSurface9 *dst_surface,
                 || !is_conversion_to_supported(destformatdesc))
         {
             FIXME("Unsupported format conversion %#x -> %#x.\n", src_format, surfdesc.Format);
+            unlock_surface(dst_surface, &lockrect, surface, FALSE);
             return E_NOTIMPL;
         }
-
-        if (FAILED(IDirect3DSurface9_LockRect(dst_surface, &lockrect, dst_rect, 0)))
-            return D3DXERR_INVALIDDATA;
 
         if ((filter & 0xf) == D3DX_FILTER_NONE)
         {
@@ -1862,11 +1920,9 @@ HRESULT WINAPI D3DXLoadSurfaceFromMemory(IDirect3DSurface9 *dst_surface,
             point_filter_argb_pixels(src_memory, src_pitch, 0, &src_size, srcformatdesc,
                     lockrect.pBits, lockrect.Pitch, 0, &dst_size, destformatdesc, color_key, src_palette);
         }
-
-        IDirect3DSurface9_UnlockRect(dst_surface);
     }
 
-    return D3D_OK;
+    return unlock_surface(dst_surface, &lockrect, surface, TRUE);
 }
 
 /************************************************************
@@ -1895,10 +1951,13 @@ HRESULT WINAPI D3DXLoadSurfaceFromSurface(IDirect3DSurface9 *dst_surface,
         const PALETTEENTRY *dst_palette, const RECT *dst_rect, IDirect3DSurface9 *src_surface,
         const PALETTEENTRY *src_palette, const RECT *src_rect, DWORD filter, D3DCOLOR color_key)
 {
-    RECT rect;
+    IDirect3DSurface9 *temp_surface;
+    D3DTEXTUREFILTERTYPE d3d_filter;
+    IDirect3DDevice9 *device;
+    D3DSURFACE_DESC src_desc;
     D3DLOCKED_RECT lock;
-    D3DSURFACE_DESC SrcDesc;
     HRESULT hr;
+    RECT s;
 
     TRACE("dst_surface %p, dst_palette %p, dst_rect %s, src_surface %p, "
             "src_palette %p, src_rect %s, filter %#x, color_key 0x%08x.\n",
@@ -1908,20 +1967,53 @@ HRESULT WINAPI D3DXLoadSurfaceFromSurface(IDirect3DSurface9 *dst_surface,
     if (!dst_surface || !src_surface)
         return D3DERR_INVALIDCALL;
 
-    IDirect3DSurface9_GetDesc(src_surface, &SrcDesc);
+    if (!dst_palette && !src_palette && !color_key)
+    {
+        switch (filter)
+        {
+            case D3DX_FILTER_NONE:
+                d3d_filter = D3DTEXF_NONE;
+                break;
+
+            case D3DX_FILTER_POINT:
+                d3d_filter = D3DTEXF_POINT;
+                break;
+
+            case D3DX_FILTER_LINEAR:
+                d3d_filter = D3DTEXF_LINEAR;
+                break;
+
+            default:
+                d3d_filter = ~0u;
+                break;
+        }
+
+        if (d3d_filter != ~0u)
+        {
+            IDirect3DSurface9_GetDevice(src_surface, &device);
+            hr = IDirect3DDevice9_StretchRect(device, src_surface, src_rect, dst_surface, dst_rect, d3d_filter);
+            IDirect3DDevice9_Release(device);
+            if (SUCCEEDED(hr))
+                return D3D_OK;
+        }
+    }
+
+    IDirect3DSurface9_GetDesc(src_surface, &src_desc);
 
     if (!src_rect)
-        SetRect(&rect, 0, 0, SrcDesc.Width, SrcDesc.Height);
-    else
-        rect = *src_rect;
+    {
+        SetRect(&s, 0, 0, src_desc.Width, src_desc.Height);
+        src_rect = &s;
+    }
 
-    if (FAILED(IDirect3DSurface9_LockRect(src_surface, &lock, NULL, D3DLOCK_READONLY)))
+    if (FAILED(lock_surface(src_surface, &lock, &temp_surface, FALSE)))
         return D3DXERR_INVALIDDATA;
 
-    hr = D3DXLoadSurfaceFromMemory(dst_surface, dst_palette, dst_rect,
-            lock.pBits, SrcDesc.Format, lock.Pitch, src_palette, &rect, filter, color_key);
+    hr = D3DXLoadSurfaceFromMemory(dst_surface, dst_palette, dst_rect, lock.pBits,
+            src_desc.Format, lock.Pitch, src_palette, src_rect, filter, color_key);
 
-    IDirect3DSurface9_UnlockRect(src_surface);
+    if (FAILED(unlock_surface(src_surface, &lock, temp_surface, FALSE)))
+        return D3DXERR_INVALIDDATA;
 
     return hr;
 }
@@ -1985,12 +2077,13 @@ HRESULT WINAPI D3DXSaveSurfaceToFileInMemory(ID3DXBuffer **dst_buffer, D3DXIMAGE
     IPropertyBag2 *encoder_options = NULL;
     IStream *stream = NULL;
     HRESULT hr;
-    HRESULT initresult;
-    const CLSID *encoder_clsid;
+    const GUID *container_format;
     const GUID *pixel_format_guid;
     WICPixelFormatGUID wic_pixel_format;
+    IWICImagingFactory *factory;
     D3DFORMAT d3d_pixel_format;
     D3DSURFACE_DESC src_surface_desc;
+    IDirect3DSurface9 *temp_surface;
     D3DLOCKED_RECT locked_rect;
     int width, height;
     STATSTG stream_stats;
@@ -1998,7 +2091,7 @@ HRESULT WINAPI D3DXSaveSurfaceToFileInMemory(ID3DXBuffer **dst_buffer, D3DXIMAGE
     ID3DXBuffer *buffer;
     DWORD size;
 
-    TRACE("(%p, %#x, %p, %p, %s)\n",
+    TRACE("dst_buffer %p, file_format %#x, src_surface %p, src_palette %p, src_rect %s.\n",
         dst_buffer, file_format, src_surface, src_palette, wine_dbgstr_rect(src_rect));
 
     if (!dst_buffer || !src_surface) return D3DERR_INVALIDCALL;
@@ -2013,13 +2106,13 @@ HRESULT WINAPI D3DXSaveSurfaceToFileInMemory(ID3DXBuffer **dst_buffer, D3DXIMAGE
     {
         case D3DXIFF_BMP:
         case D3DXIFF_DIB:
-            encoder_clsid = &CLSID_WICBmpEncoder;
+            container_format = &GUID_ContainerFormatBmp;
             break;
         case D3DXIFF_PNG:
-            encoder_clsid = &CLSID_WICPngEncoder;
+            container_format = &GUID_ContainerFormatPng;
             break;
         case D3DXIFF_JPG:
-            encoder_clsid = &CLSID_WICJpegEncoder;
+            container_format = &GUID_ContainerFormatJpeg;
             break;
         case D3DXIFF_DDS:
             return save_dds_surface_to_memory(dst_buffer, src_surface, src_rect);
@@ -2057,10 +2150,11 @@ HRESULT WINAPI D3DXSaveSurfaceToFileInMemory(ID3DXBuffer **dst_buffer, D3DXIMAGE
         height = src_surface_desc.Height;
     }
 
-    initresult = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    hr = WICCreateImagingFactory_Proxy(WINCODEC_SDK_VERSION, &factory);
+    if (FAILED(hr)) goto cleanup_err;
 
-    hr = CoCreateInstance(encoder_clsid, NULL, CLSCTX_INPROC_SERVER,
-        &IID_IWICBitmapEncoder, (void **)&encoder);
+    hr = IWICImagingFactory_CreateEncoder(factory, container_format, NULL, &encoder);
+    IWICImagingFactory_Release(factory);
     if (FAILED(hr)) goto cleanup_err;
 
     hr = CreateStreamOnHGlobal(NULL, TRUE, &stream);
@@ -2092,16 +2186,14 @@ HRESULT WINAPI D3DXSaveSurfaceToFileInMemory(ID3DXBuffer **dst_buffer, D3DXIMAGE
     if (SUCCEEDED(hr) && d3d_pixel_format != D3DFMT_UNKNOWN)
     {
         TRACE("Using pixel format %s %#x\n", debugstr_guid(&wic_pixel_format), d3d_pixel_format);
-
         if (src_surface_desc.Format == d3d_pixel_format) /* Simple copy */
         {
-            hr = IDirect3DSurface9_LockRect(src_surface, &locked_rect, src_rect, D3DLOCK_READONLY);
-            if (SUCCEEDED(hr))
-            {
-                IWICBitmapFrameEncode_WritePixels(frame, height,
-                    locked_rect.Pitch, height * locked_rect.Pitch, locked_rect.pBits);
-                IDirect3DSurface9_UnlockRect(src_surface);
-            }
+            if (FAILED(hr = lock_surface(src_surface, &locked_rect, &temp_surface, FALSE)))
+                goto cleanup;
+
+            IWICBitmapFrameEncode_WritePixels(frame, height,
+                locked_rect.Pitch, height * locked_rect.Pitch, locked_rect.pBits);
+            unlock_surface(src_surface, &locked_rect, temp_surface, FALSE);
         }
         else /* Pixel format conversion */
         {
@@ -2131,14 +2223,14 @@ HRESULT WINAPI D3DXSaveSurfaceToFileInMemory(ID3DXBuffer **dst_buffer, D3DXIMAGE
                 hr = E_OUTOFMEMORY;
                 goto cleanup;
             }
-
-            hr = IDirect3DSurface9_LockRect(src_surface, &locked_rect, src_rect, D3DLOCK_READONLY);
-            if (SUCCEEDED(hr))
+            if (FAILED(hr = lock_surface(src_surface, &locked_rect, &temp_surface, FALSE)))
             {
-                convert_argb_pixels(locked_rect.pBits, locked_rect.Pitch, 0, &size, src_format_desc,
-                    dst_data, dst_pitch, 0, &size, dst_format_desc, 0, NULL);
-                IDirect3DSurface9_UnlockRect(src_surface);
+                HeapFree(GetProcessHeap(), 0, dst_data);
+                goto cleanup;
             }
+            convert_argb_pixels(locked_rect.pBits, locked_rect.Pitch, 0, &size, src_format_desc,
+                dst_data, dst_pitch, 0, &size, dst_format_desc, 0, NULL);
+            unlock_surface(src_surface, &locked_rect, temp_surface, FALSE);
 
             IWICBitmapFrameEncode_WritePixels(frame, height, dst_pitch, dst_pitch * height, dst_data);
             HeapFree(GetProcessHeap(), 0, dst_data);
@@ -2192,8 +2284,6 @@ cleanup:
     if (encoder_options) IPropertyBag2_Release(encoder_options);
 
     if (encoder) IWICBitmapEncoder_Release(encoder);
-
-    if (SUCCEEDED(initresult)) CoUninitialize();
 
     return hr;
 }

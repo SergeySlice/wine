@@ -43,6 +43,9 @@ WINE_DEFAULT_DEBUG_CHANNEL(file);
 
 #define MAX_PATHNAME_LEN        1024
 
+static int path_safe_mode = -1;  /* path mode set by SetSearchPathMode */
+
+static const WCHAR wildcardsW[] = {'*','?',0};
 
 /* check if a file name is for an executable file (.exe or .com) */
 static inline BOOL is_executable( const WCHAR *name )
@@ -294,6 +297,8 @@ DWORD WINAPI GetLongPathNameW( LPCWSTR shortpath, LPWSTR longpath, DWORD longlen
     HANDLE              goit;
     BOOL                is_legal_8dot3;
 
+    TRACE("%s,%p,%u\n", debugstr_w(shortpath), longpath, longlen);
+
     if (!shortpath)
     {
         SetLastError(ERROR_INVALID_PARAMETER);
@@ -304,8 +309,6 @@ DWORD WINAPI GetLongPathNameW( LPCWSTR shortpath, LPWSTR longpath, DWORD longlen
         SetLastError(ERROR_PATH_NOT_FOUND);
         return 0;
     }
-
-    TRACE("%s,%p,%d\n", debugstr_w(shortpath), longpath, longlen);
 
     if (shortpath[0] == '\\' && shortpath[1] == '\\')
     {
@@ -328,6 +331,12 @@ DWORD WINAPI GetLongPathNameW( LPCWSTR shortpath, LPWSTR longpath, DWORD longlen
         tmplongpath[0] = shortpath[0];
         tmplongpath[1] = ':';
         lp = sp = 2;
+    }
+
+    if (strpbrkW(shortpath + sp, wildcardsW))
+    {
+        SetLastError(ERROR_INVALID_NAME);
+        return 0;
     }
 
     while (shortpath[sp])
@@ -444,7 +453,7 @@ DWORD WINAPI GetShortPathNameW( LPCWSTR longpath, LPWSTR shortpath, DWORD shortl
     WIN32_FIND_DATAW    wfd;
     HANDLE              goit;
 
-    TRACE("%s\n", debugstr_w(longpath));
+    TRACE("%s,%p,%u\n", debugstr_w(longpath), shortpath, shortlen);
 
     if (!longpath)
     {
@@ -471,6 +480,13 @@ DWORD WINAPI GetShortPathNameW( LPCWSTR longpath, LPWSTR shortpath, DWORD shortl
     {
         memcpy(tmpshortpath, longpath, 4 * sizeof(WCHAR));
         sp = lp = 4;
+    }
+
+    if (strpbrkW(longpath + lp, wildcardsW))
+    {
+        HeapFree(GetProcessHeap(), 0, tmpshortpath);
+        SetLastError(ERROR_INVALID_NAME);
+        return 0;
     }
 
     /* check for drive letter */
@@ -753,6 +769,51 @@ UINT WINAPI GetTempFileNameW( LPCWSTR path, LPCWSTR prefix, UINT unique, LPWSTR 
 
 
 /***********************************************************************
+ *           get_path_safe_mode
+ */
+static BOOL get_path_safe_mode(void)
+{
+    static const WCHAR keyW[] = {'\\','R','e','g','i','s','t','r','y','\\',
+                                 'M','a','c','h','i','n','e','\\',
+                                 'S','y','s','t','e','m','\\',
+                                 'C','u','r','r','e','n','t','C','o','n','t','r','o','l','S','e','t','\\',
+                                 'C','o','n','t','r','o','l','\\',
+                                 'S','e','s','s','i','o','n',' ','M','a','n','a','g','e','r',0};
+    static const WCHAR valueW[] = {'S','a','f','e','P','r','o','c','e','s','s','S','e','a','r','c','h','M','o','d','e',0};
+
+    if (path_safe_mode == -1)
+    {
+        char buffer[offsetof(KEY_VALUE_PARTIAL_INFORMATION, Data[sizeof(DWORD)])];
+        KEY_VALUE_PARTIAL_INFORMATION *info = (KEY_VALUE_PARTIAL_INFORMATION *)buffer;
+        OBJECT_ATTRIBUTES attr;
+        UNICODE_STRING nameW;
+        HANDLE hkey;
+        DWORD size = sizeof(buffer);
+        BOOL mode = FALSE;
+
+        attr.Length = sizeof(attr);
+        attr.RootDirectory = 0;
+        attr.ObjectName = &nameW;
+        attr.Attributes = 0;
+        attr.SecurityDescriptor = NULL;
+        attr.SecurityQualityOfService = NULL;
+
+        RtlInitUnicodeString( &nameW, keyW );
+        if (!NtOpenKey( &hkey, KEY_READ, &attr ))
+        {
+            RtlInitUnicodeString( &nameW, valueW );
+            if (!NtQueryValueKey( hkey, &nameW, KeyValuePartialInformation, buffer, size, &size ) &&
+                info->Type == REG_DWORD && info->DataLength == sizeof(DWORD))
+                mode = !!*(DWORD *)info->Data;
+            NtClose( hkey );
+        }
+        InterlockedCompareExchange( &path_safe_mode, mode, -1 );
+    }
+    return path_safe_mode != 0;
+}
+
+
+/***********************************************************************
  *           contains_pathW
  *
  * Check if the file name contains a path; helper for SearchPathW.
@@ -847,7 +908,7 @@ static NTSTATUS find_actctx_dllpath(const WCHAR *libname, WCHAR **path)
     strcpyW( p, DIR_Windows );
     p += strlenW(p);
     memcpy( p, winsxsW, sizeof(winsxsW) );
-    p += sizeof(winsxsW) / sizeof(WCHAR);
+    p += ARRAY_SIZE( winsxsW );
     memcpy( p, info->lpAssemblyDirectoryName, info->ulAssemblyDirectoryNameLength );
     p += info->ulAssemblyDirectoryNameLength / sizeof(WCHAR);
     *p++ = '\\';
@@ -991,7 +1052,7 @@ DWORD WINAPI SearchPathW( LPCWSTR path, LPCWSTR name, LPCWSTR ext, DWORD buflen,
         }
         else
         {
-            if ((dll_path = MODULE_get_dll_load_path( NULL )))
+            if ((dll_path = MODULE_get_dll_load_path( NULL, get_path_safe_mode() )))
             {
                 ret = RtlDosSearchPath_U( dll_path, name, NULL, buflen * sizeof(WCHAR),
                                           buffer, lastpart ) / sizeof(WCHAR);
@@ -1222,6 +1283,25 @@ BOOL WINAPI CopyFileExA(LPCSTR sourceFilename, LPCSTR destFilename,
     return ret;
 }
 
+/**************************************************************************
+ *           MoveFileTransactedA   (KERNEL32.@)
+ */
+BOOL WINAPI MoveFileTransactedA(const char *source, const char *dest, LPPROGRESS_ROUTINE progress, void *data, DWORD flags, HANDLE handle)
+{
+    FIXME("(%s, %s, %p, %p, %d, %p)\n", debugstr_a(source), debugstr_a(dest), progress, data, flags, handle);
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
+
+/**************************************************************************
+ *           MoveFileTransactedW   (KERNEL32.@)
+ */
+BOOL WINAPI MoveFileTransactedW(const WCHAR *source, const WCHAR *dest, LPPROGRESS_ROUTINE progress, void *data, DWORD flags, HANDLE handle)
+{
+    FIXME("(%s, %s, %p, %p, %d, %p)\n", debugstr_w(source), debugstr_w(dest), progress, data, flags, handle);
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
 
 /**************************************************************************
  *           MoveFileWithProgressW   (KERNEL32.@)
@@ -1235,8 +1315,9 @@ BOOL WINAPI MoveFileWithProgressW( LPCWSTR source, LPCWSTR dest,
     OBJECT_ATTRIBUTES attr;
     IO_STATUS_BLOCK io;
     NTSTATUS status;
-    HANDLE source_handle = 0, dest_handle;
+    HANDLE source_handle = 0, dest_handle = 0;
     ANSI_STRING source_unix, dest_unix;
+    DWORD options;
 
     TRACE("(%s,%s,%p,%p,%04x)\n",
           debugstr_w(source), debugstr_w(dest), fnProgress, param, flag );
@@ -1246,9 +1327,6 @@ BOOL WINAPI MoveFileWithProgressW( LPCWSTR source, LPCWSTR dest,
 
     if (!dest)
         return DeleteFileW( source );
-
-    if (flag & MOVEFILE_WRITE_THROUGH)
-        FIXME("MOVEFILE_WRITE_THROUGH unimplemented\n");
 
     /* check if we are allowed to rename the source */
 
@@ -1266,7 +1344,8 @@ BOOL WINAPI MoveFileWithProgressW( LPCWSTR source, LPCWSTR dest,
     attr.SecurityDescriptor = NULL;
     attr.SecurityQualityOfService = NULL;
 
-    status = NtOpenFile( &source_handle, SYNCHRONIZE, &attr, &io, 0, FILE_SYNCHRONOUS_IO_NONALERT );
+    status = NtOpenFile( &source_handle, DELETE | SYNCHRONIZE, &attr, &io,
+                         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_SYNCHRONOUS_IO_NONALERT );
     if (status == STATUS_SUCCESS)
         status = wine_nt_to_unix_file_name( &nt_name, &source_unix, FILE_OPEN, FALSE );
     RtlFreeUnicodeString( &nt_name );
@@ -1290,22 +1369,30 @@ BOOL WINAPI MoveFileWithProgressW( LPCWSTR source, LPCWSTR dest,
         SetLastError( ERROR_PATH_NOT_FOUND );
         goto error;
     }
-    status = NtOpenFile( &dest_handle, GENERIC_READ | GENERIC_WRITE | SYNCHRONIZE, &attr, &io, 0,
-                         FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT );
+    options = FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT;
+    if (flag & MOVEFILE_WRITE_THROUGH)
+        options |= FILE_WRITE_THROUGH;
+    status = NtOpenFile( &dest_handle, GENERIC_READ | GENERIC_WRITE | SYNCHRONIZE, &attr, &io,
+                         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, options );
     if (status == STATUS_SUCCESS)  /* destination exists */
     {
-        NtClose( dest_handle );
         if (!(flag & MOVEFILE_REPLACE_EXISTING))
         {
-            SetLastError( ERROR_ALREADY_EXISTS );
-            RtlFreeUnicodeString( &nt_name );
-            goto error;
+            if (!is_same_file( source_handle, dest_handle ))
+            {
+                SetLastError( ERROR_ALREADY_EXISTS );
+                RtlFreeUnicodeString( &nt_name );
+                goto error;
+            }
         }
         else if (info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) /* cannot replace directory */
         {
             SetLastError( ERROR_ACCESS_DENIED );
             goto error;
         }
+
+        NtClose( dest_handle );
+        dest_handle = NULL;
     }
     else if (status != STATUS_OBJECT_NAME_NOT_FOUND)
     {
@@ -1331,8 +1418,9 @@ BOOL WINAPI MoveFileWithProgressW( LPCWSTR source, LPCWSTR dest,
             NtClose( source_handle );
             RtlFreeAnsiString( &source_unix );
             RtlFreeAnsiString( &dest_unix );
-            if (!CopyFileExW( source, dest, fnProgress,
-                              param, NULL, COPY_FILE_FAIL_IF_EXISTS ))
+            if (!CopyFileExW( source, dest, fnProgress, param, NULL,
+                              flag & MOVEFILE_REPLACE_EXISTING ?
+                              0 : COPY_FILE_FAIL_IF_EXISTS ))
                 return FALSE;
             return DeleteFileW( source );
         }
@@ -1365,6 +1453,7 @@ BOOL WINAPI MoveFileWithProgressW( LPCWSTR source, LPCWSTR dest,
 
 error:
     if (source_handle) NtClose( source_handle );
+    if (dest_handle) NtClose( dest_handle );
     RtlFreeAnsiString( &source_unix );
     RtlFreeAnsiString( &dest_unix );
     return FALSE;
@@ -2075,19 +2164,32 @@ BOOL WINAPI CheckNameLegalDOS8Dot3W(const WCHAR *name, char *oemname, DWORD oemn
 /*************************************************************************
  *           SetSearchPathMode   (KERNEL32.@)
  */
-BOOL WINAPI SetSearchPathMode(DWORD flags)
+BOOL WINAPI SetSearchPathMode( DWORD flags )
 {
-    FIXME("(%x): stub\n", flags);
-    SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
-    return FALSE;
-}
+    int val;
 
-/*************************************************************************
- *           SetDefaultDllDirectories   (KERNEL32.@)
- */
-BOOL WINAPI SetDefaultDllDirectories(DWORD flags)
-{
-    FIXME("(%x): stub\n", flags);
-    SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
+    switch (flags)
+    {
+    case BASE_SEARCH_PATH_ENABLE_SAFE_SEARCHMODE:
+        val = 1;
+        break;
+    case BASE_SEARCH_PATH_DISABLE_SAFE_SEARCHMODE:
+        val = 0;
+        break;
+    case BASE_SEARCH_PATH_ENABLE_SAFE_SEARCHMODE | BASE_SEARCH_PATH_PERMANENT:
+        InterlockedExchange( &path_safe_mode, 2 );
+        return TRUE;
+    default:
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+
+    for (;;)
+    {
+        int prev = path_safe_mode;
+        if (prev == 2) break;  /* permanently set */
+        if (InterlockedCompareExchange( &path_safe_mode, val, prev ) == prev) return TRUE;
+    }
+    SetLastError( ERROR_ACCESS_DENIED );
     return FALSE;
 }

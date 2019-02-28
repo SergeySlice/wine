@@ -1,5 +1,6 @@
 /*
  * Copyright 2009 Henri Verbeet for CodeWeavers
+ * Copyright 2015-2017 Józef Kucia for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -71,6 +72,14 @@ static ULONG STDMETHODCALLTYPE d3d11_query_AddRef(ID3D11Query *iface)
 
     TRACE("%p increasing refcount to %u.\n", query, refcount);
 
+    if (refcount == 1)
+    {
+        ID3D11Device2_AddRef(query->device);
+        wined3d_mutex_lock();
+        wined3d_query_incref(query->wined3d_query);
+        wined3d_mutex_unlock();
+    }
+
     return refcount;
 }
 
@@ -83,12 +92,13 @@ static ULONG STDMETHODCALLTYPE d3d11_query_Release(ID3D11Query *iface)
 
     if (!refcount)
     {
-        ID3D11Device_Release(query->device);
+        ID3D11Device2 *device = query->device;
+
         wined3d_mutex_lock();
         wined3d_query_decref(query->wined3d_query);
-        wined3d_private_store_cleanup(&query->private_store);
         wined3d_mutex_unlock();
-        HeapFree(GetProcessHeap(), 0, query);
+
+        ID3D11Device2_Release(device);
     }
 
     return refcount;
@@ -100,7 +110,7 @@ static void STDMETHODCALLTYPE d3d11_query_GetDevice(ID3D11Query *iface, ID3D11De
 
     TRACE("iface %p, device %p.\n", iface, device);
 
-    *device = query->device;
+    *device = (ID3D11Device *)query->device;
     ID3D11Device_AddRef(*device);
 }
 
@@ -150,7 +160,11 @@ static UINT STDMETHODCALLTYPE d3d11_query_GetDataSize(ID3D11Query *iface)
 
 static void STDMETHODCALLTYPE d3d11_query_GetDesc(ID3D11Query *iface, D3D11_QUERY_DESC *desc)
 {
-    FIXME("iface %p, desc %p stub!\n", iface, desc);
+    struct d3d_query *query = impl_from_ID3D11Query(iface);
+
+    TRACE("iface %p, desc %p.\n", iface, desc);
+
+    *desc = query->desc;
 }
 
 static const struct ID3D11QueryVtbl d3d11_query_vtbl =
@@ -168,6 +182,19 @@ static const struct ID3D11QueryVtbl d3d11_query_vtbl =
     d3d11_query_GetDataSize,
     /* ID3D11Query methods */
     d3d11_query_GetDesc,
+};
+
+static void STDMETHODCALLTYPE d3d_query_wined3d_object_destroyed(void *parent)
+{
+    struct d3d_query *query = parent;
+
+    wined3d_private_store_cleanup(&query->private_store);
+    heap_free(parent);
+}
+
+static const struct wined3d_parent_ops d3d_query_wined3d_parent_ops =
+{
+    d3d_query_wined3d_object_destroyed,
 };
 
 struct d3d_query *unsafe_impl_from_ID3D11Query(ID3D11Query *iface)
@@ -227,7 +254,7 @@ static void STDMETHODCALLTYPE d3d10_query_GetDevice(ID3D10Query *iface, ID3D10De
 
     TRACE("iface %p, device %p.\n", iface, device);
 
-    ID3D11Device_QueryInterface(query->device, &IID_ID3D10Device, (void **)device);
+    ID3D11Device2_QueryInterface(query->device, &IID_ID3D10Device, (void **)device);
 }
 
 static HRESULT STDMETHODCALLTYPE d3d10_query_GetPrivateData(ID3D10Query *iface,
@@ -293,6 +320,8 @@ static void STDMETHODCALLTYPE d3d10_query_End(ID3D10Query *iface)
 static HRESULT STDMETHODCALLTYPE d3d10_query_GetData(ID3D10Query *iface, void *data, UINT data_size, UINT flags)
 {
     struct d3d_query *query = impl_from_ID3D10Query(iface);
+    D3D11_QUERY_DATA_PIPELINE_STATISTICS d3d11_data;
+    void *d3d10_data_pointer = NULL;
     unsigned int wined3d_flags;
     HRESULT hr;
 
@@ -300,6 +329,21 @@ static HRESULT STDMETHODCALLTYPE d3d10_query_GetData(ID3D10Query *iface, void *d
 
     if (!data && data_size)
         return E_INVALIDARG;
+
+  if (query->desc.Query == D3D11_QUERY_SO_OVERFLOW_PREDICATE) {
+    char *tmp = (char*)data;
+    *tmp = 0;
+    return S_OK;
+  }
+
+
+    if (query->desc.Query == D3D11_QUERY_PIPELINE_STATISTICS
+            && data_size == sizeof(D3D10_QUERY_DATA_PIPELINE_STATISTICS))
+    {
+        data_size = sizeof(D3D11_QUERY_DATA_PIPELINE_STATISTICS);
+        d3d10_data_pointer = data;
+        data = &d3d11_data;
+    }
 
     wined3d_flags = wined3d_getdata_flags_from_d3d11_async_getdata_flags(flags);
 
@@ -317,6 +361,9 @@ static HRESULT STDMETHODCALLTYPE d3d10_query_GetData(ID3D10Query *iface, void *d
     }
     wined3d_mutex_unlock();
 
+    if (d3d10_data_pointer && hr == S_OK)
+        memcpy(d3d10_data_pointer, data, sizeof(D3D10_QUERY_DATA_PIPELINE_STATISTICS));
+
     return hr;
 }
 
@@ -325,11 +372,16 @@ static UINT STDMETHODCALLTYPE d3d10_query_GetDataSize(ID3D10Query *iface)
     struct d3d_query *query = impl_from_ID3D10Query(iface);
     unsigned int data_size;
 
-    TRACE("iface %p.\n", iface);
+ //   TRACE("iface %p.\n", iface);
+  if (query->desc.Query == D3D11_QUERY_SO_OVERFLOW_PREDICATE)
+    return 1;
 
     wined3d_mutex_lock();
     data_size = wined3d_query_get_data_size(query->wined3d_query);
     wined3d_mutex_unlock();
+
+    if (query->desc.Query == D3D11_QUERY_PIPELINE_STATISTICS)
+        data_size = sizeof(D3D10_QUERY_DATA_PIPELINE_STATISTICS);
 
     return data_size;
 }
@@ -338,7 +390,11 @@ static UINT STDMETHODCALLTYPE d3d10_query_GetDataSize(ID3D10Query *iface)
 
 static void STDMETHODCALLTYPE d3d10_query_GetDesc(ID3D10Query *iface, D3D10_QUERY_DESC *desc)
 {
-    FIXME("iface %p, desc %p stub!\n", iface, desc);
+    struct d3d_query *query = impl_from_ID3D10Query(iface);
+
+    TRACE("iface %p, desc %p.\n", iface, desc);
+
+    memcpy(desc, &query->desc, sizeof(*desc));
 }
 
 static const struct ID3D10QueryVtbl d3d10_query_vtbl =
@@ -376,17 +432,25 @@ static HRESULT d3d_query_init(struct d3d_query *query, struct d3d_device *device
 
     static const enum wined3d_query_type query_type_map[] =
     {
-        /* D3D11_QUERY_EVENT                    */  WINED3D_QUERY_TYPE_EVENT,
-        /* D3D11_QUERY_OCCLUSION                */  WINED3D_QUERY_TYPE_OCCLUSION,
-        /* D3D11_QUERY_TIMESTAMP                */  WINED3D_QUERY_TYPE_TIMESTAMP,
-        /* D3D11_QUERY_TIMESTAMP_DISJOINT       */  WINED3D_QUERY_TYPE_TIMESTAMP_DISJOINT,
-        /* D3D11_QUERY_PIPELINE_STATISTICS      */  WINED3D_QUERY_TYPE_PIPELINE_STATISTICS,
-        /* D3D11_QUERY_OCCLUSION_PREDICATE      */  WINED3D_QUERY_TYPE_OCCLUSION,
-        /* D3D11_QUERY_SO_STATISTICS            */  WINED3D_QUERY_TYPE_SO_STATISTICS,
-        /* D3D11_QUERY_SO_OVERFLOW_PREDICATE    */  WINED3D_QUERY_TYPE_SO_OVERFLOW,
+        /* D3D11_QUERY_EVENT                         */ WINED3D_QUERY_TYPE_EVENT,
+        /* D3D11_QUERY_OCCLUSION                     */ WINED3D_QUERY_TYPE_OCCLUSION,
+        /* D3D11_QUERY_TIMESTAMP                     */ WINED3D_QUERY_TYPE_TIMESTAMP,
+        /* D3D11_QUERY_TIMESTAMP_DISJOINT            */ WINED3D_QUERY_TYPE_TIMESTAMP_DISJOINT,
+        /* D3D11_QUERY_PIPELINE_STATISTICS           */ WINED3D_QUERY_TYPE_PIPELINE_STATISTICS,
+        /* D3D11_QUERY_OCCLUSION_PREDICATE           */ WINED3D_QUERY_TYPE_OCCLUSION,
+        /* D3D11_QUERY_SO_STATISTICS                 */ WINED3D_QUERY_TYPE_SO_STATISTICS,
+        /* D3D11_QUERY_SO_OVERFLOW_PREDICATE         */ WINED3D_QUERY_TYPE_SO_OVERFLOW,
+        /* D3D11_QUERY_SO_STATISTICS_STREAM0         */ WINED3D_QUERY_TYPE_SO_STATISTICS_STREAM0,
+        /* D3D11_QUERY_SO_OVERFLOW_PREDICATE_STREAM0 */ WINED3D_QUERY_TYPE_SO_OVERFLOW_STREAM0,
+        /* D3D11_QUERY_SO_STATISTICS_STREAM1         */ WINED3D_QUERY_TYPE_SO_STATISTICS_STREAM1,
+        /* D3D11_QUERY_SO_OVERFLOW_PREDICATE_STREAM1 */ WINED3D_QUERY_TYPE_SO_OVERFLOW_STREAM1,
+        /* D3D11_QUERY_SO_STATISTICS_STREAM2         */ WINED3D_QUERY_TYPE_SO_STATISTICS_STREAM2,
+        /* D3D11_QUERY_SO_OVERFLOW_PREDICATE_STREAM2 */ WINED3D_QUERY_TYPE_SO_OVERFLOW_STREAM2,
+        /* D3D11_QUERY_SO_STATISTICS_STREAM3         */ WINED3D_QUERY_TYPE_SO_STATISTICS_STREAM3,
+        /* D3D11_QUERY_SO_OVERFLOW_PREDICATE_STREAM3 */ WINED3D_QUERY_TYPE_SO_OVERFLOW_STREAM3,
     };
 
-    if (desc->Query >= sizeof(query_type_map) / sizeof(*query_type_map))
+    if (desc->Query >= ARRAY_SIZE(query_type_map))
     {
         FIXME("Unhandled query type %#x.\n", desc->Query);
         return E_INVALIDARG;
@@ -398,11 +462,14 @@ static HRESULT d3d_query_init(struct d3d_query *query, struct d3d_device *device
     query->ID3D11Query_iface.lpVtbl = &d3d11_query_vtbl;
     query->ID3D10Query_iface.lpVtbl = &d3d10_query_vtbl;
     query->refcount = 1;
+
+    query->desc = *desc;
+
     wined3d_mutex_lock();
     wined3d_private_store_init(&query->private_store);
 
-    if (FAILED(hr = wined3d_query_create(device->wined3d_device,
-            query_type_map[desc->Query], query, &query->wined3d_query)))
+    if (FAILED(hr = wined3d_query_create(device->wined3d_device, query_type_map[desc->Query],
+            query, &d3d_query_wined3d_parent_ops, &query->wined3d_query)))
     {
         WARN("Failed to create wined3d query, hr %#x.\n", hr);
         wined3d_private_store_cleanup(&query->private_store);
@@ -412,8 +479,7 @@ static HRESULT d3d_query_init(struct d3d_query *query, struct d3d_device *device
     wined3d_mutex_unlock();
 
     query->predicate = predicate;
-    query->device = &device->ID3D11Device_iface;
-    ID3D11Device_AddRef(query->device);
+    ID3D11Device2_AddRef(query->device = &device->ID3D11Device2_iface);
 
     return S_OK;
 }
@@ -444,13 +510,13 @@ HRESULT d3d_query_create(struct d3d_device *device, const D3D11_QUERY_DESC *desc
     if (is_predicate_type)
         predicate = TRUE;
 
-    if (!(object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*object))))
+    if (!(object = heap_alloc_zero(sizeof(*object))))
         return E_OUTOFMEMORY;
 
     if (FAILED(hr = d3d_query_init(object, device, desc, predicate)))
     {
         WARN("Failed to initialize predicate, hr %#x.\n", hr);
-        HeapFree(GetProcessHeap(), 0, object);
+        heap_free(object);
         return hr;
     }
 

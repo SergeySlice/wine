@@ -70,7 +70,7 @@ static const OTTable tables_templ[] = {
 };
 
 struct tagTYPE42 {
-    OTTable tables[sizeof(tables_templ)/sizeof(tables_templ[0])];
+    OTTable tables[ARRAY_SIZE(tables_templ)];
     int glyf_tab, loca_tab, head_tab; /* indices of glyf, loca and head tables */
     int hmtx_tab, maxp_tab;
     int num_of_written_tables;
@@ -100,10 +100,15 @@ struct tagTYPE42 {
 static BOOL LoadTable(HDC hdc, OTTable *table)
 {
     unsigned int i;
+    DWORD len;
 
     if(table->MS_tag == MS_MAKE_TAG('g','d','i','r')) return TRUE;
-    table->len = GetFontData(hdc, table->MS_tag, 0, NULL, 0);
-    table->data = HeapAlloc(GetProcessHeap(), 0, (table->len + 3) & ~3 );
+    table->len = 0;
+    len = GetFontData(hdc, table->MS_tag, 0, NULL, 0);
+    if(len == GDI_ERROR) return FALSE;
+    table->data = HeapAlloc(GetProcessHeap(), 0, (len + 3) & ~3);
+    if(!table->data) return FALSE;
+    table->len = len;
     memset(table->data + ((table->len - 1) & ~3), 0, sizeof(DWORD));
     GetFontData(hdc, table->MS_tag, 0, table->data, table->len);
     table->check = 0;
@@ -138,7 +143,7 @@ TYPE42 *T42_download_header(PHYSDEV dev, char *ps_name,
                             RECT *bbox, UINT emsize)
 {
     DWORD i, j, tablepos, nb_blocks, glyf_off = 0, loca_off = 0, cur_off;
-    WORD num_of_tables = sizeof(tables_templ) / sizeof(tables_templ[0]) - 1;
+    WORD num_of_tables = ARRAY_SIZE(tables_templ) - 1;
     char *buf;
     TYPE42 *t42;
     static const char start[] = /* name, fontbbox */
@@ -286,7 +291,7 @@ BOOL T42_download_glyph(PHYSDEV dev, DOWNLOAD *pdl, DWORD index,
     char *buf;
     TYPE42 *t42;
 
-    const char glyph_def[] = 
+    static const char glyph_def[] =
       "/%s findfont exch 1 index\n"
       "havetype42gdir\n"
       "{/GlyphDirectory get begin %d exch def end}\n"

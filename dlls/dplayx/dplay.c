@@ -245,6 +245,7 @@ static BOOL DP_DestroyDirectPlay2( LPVOID lpDP )
 
   NS_DeleteSessionCache( This->dp2->lpNameServerData );
 
+  HeapFree( GetProcessHeap(), 0, This->dp2->dplspData.lpCB);
   HeapFree( GetProcessHeap(), 0, This->dp2->lpSessionDesc );
 
   IDirectPlaySP_Release( This->dp2->spData.lpISP );
@@ -2890,8 +2891,14 @@ static HRESULT WINAPI IDirectPlay4Impl_GetPlayerCaps( IDirectPlay4 *iface, DPID 
 
     TRACE( "(%p)->(0x%08x,%p,0x%08x)\n", This, player, caps, flags);
 
+    if ( !caps )
+        return DPERR_INVALIDPARAMS;
+
     if ( This->dp2->connectionInitialized == NO_PROVIDER )
         return DPERR_UNINITIALIZED;
+
+    if( caps->dwSize != sizeof(DPCAPS) )
+        return DPERR_INVALIDPARAMS;
 
     /* Query the service provider */
     data.idPlayer = player;
@@ -4328,7 +4335,7 @@ static HRESULT WINAPI IDirectPlay4AImpl_EnumConnections( IDirectPlay4A *iface,
       RegCloseKey(hkServiceProvider);
 
       /* FIXME: Check return types to ensure we're interpreting data right */
-      MultiByteToWideChar( CP_ACP, 0, returnBuffer, -1, buff, sizeof(buff)/sizeof(WCHAR) );
+      MultiByteToWideChar( CP_ACP, 0, returnBuffer, -1, buff, ARRAY_SIZE( buff ));
       CLSIDFromString( buff, &serviceProviderGUID );
       /* FIXME: Have I got a memory leak on the serviceProviderGUID? */
 
@@ -4360,8 +4367,10 @@ static HRESULT WINAPI IDirectPlay4AImpl_EnumConnections( IDirectPlay4A *iface,
       if( !lpEnumCallback( &serviceProviderGUID, lpAddressBuffer, dwAddressBufferSize,
                            &dpName, dwFlags, lpContext ) )
       {
+         HeapFree( GetProcessHeap(), 0, lpAddressBuffer );
          return DP_OK;
       }
+      HeapFree( GetProcessHeap(), 0, lpAddressBuffer );
     }
   }
 
@@ -4379,8 +4388,7 @@ static HRESULT WINAPI IDirectPlay4AImpl_EnumConnections( IDirectPlay4A *iface,
     if( RegOpenKeyExA( HKEY_LOCAL_MACHINE, searchSubKey,
                          0, KEY_READ, &hkResult ) != ERROR_SUCCESS )
     {
-      /* Hmmm. Does this mean that there are no service providers? */
-      ERR(": no service providers?\n");
+      TRACE("No Lobby Providers have been registered.\n");
       return DP_OK;
     }
 
@@ -4425,7 +4433,7 @@ static HRESULT WINAPI IDirectPlay4AImpl_EnumConnections( IDirectPlay4A *iface,
       RegCloseKey(hkServiceProvider);
 
       /* FIXME: Check return types to ensure we're interpreting data right */
-      MultiByteToWideChar( CP_ACP, 0, returnBuffer, -1, buff, sizeof(buff)/sizeof(WCHAR) );
+      MultiByteToWideChar( CP_ACP, 0, returnBuffer, -1, buff, ARRAY_SIZE( buff ));
       CLSIDFromString( buff, &serviceProviderGUID );
       /* FIXME: Have I got a memory leak on the serviceProviderGUID? */
 
@@ -4482,8 +4490,8 @@ static HRESULT WINAPI IDirectPlay4Impl_EnumConnections( IDirectPlay4 *iface,
         const GUID *application, LPDPENUMCONNECTIONSCALLBACK enumcb, void *context, DWORD flags )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay4( iface );
-    FIXME( "(%p)->(%p,%p,%p,0x%08x): stub\n", This, application, enumcb, context, flags );
-    return DP_OK;
+    return IDirectPlayX_EnumConnections( &This->IDirectPlay4A_iface, application, enumcb, context,
+            flags );
 }
 
 static HRESULT WINAPI IDirectPlay3AImpl_EnumGroupsInGroup( IDirectPlay3A *iface, DPID group,
@@ -4674,7 +4682,7 @@ static HMODULE DP_LoadSP( LPCGUID lpcGuid, LPSPINITDATA lpSpData, LPBOOL lpbIsDp
       }
 
       /* FIXME: Check return types to ensure we're interpreting data right */
-      MultiByteToWideChar( CP_ACP, 0, returnBuffer, -1, buff, sizeof(buff)/sizeof(WCHAR) );
+      MultiByteToWideChar( CP_ACP, 0, returnBuffer, -1, buff, ARRAY_SIZE( buff ));
       CLSIDFromString( buff, &serviceProviderGUID );
       /* FIXME: Have I got a memory leak on the serviceProviderGUID? */
 
@@ -5803,7 +5811,7 @@ static HRESULT DirectPlayEnumerateAW(LPDPENUMDPCALLBACKA lpEnumCallbackA,
     dwIndex = 0;
     do
     {
-	sizeOfSubKeyName = sizeof(subKeyName) / sizeof(WCHAR);
+        sizeOfSubKeyName = ARRAY_SIZE(subKeyName);
 	ret_value = RegEnumKeyW(hkResult, dwIndex, subKeyName, sizeOfSubKeyName);
 	dwIndex++;
     }
@@ -5828,8 +5836,8 @@ static HRESULT DirectPlayEnumerateAW(LPDPENUMDPCALLBACKA lpEnumCallbackA,
 	HKEY  hkServiceProvider;
 	WCHAR guidKeyContent[(2 * 16) + 1 + 6 /* This corresponds to '{....-..-..-..-......}' */ ];
 	DWORD sizeOfGuidKeyContent = sizeof(guidKeyContent);
-	
-	sizeOfSubKeyName = sizeof(subKeyName) / sizeof(WCHAR);
+
+        sizeOfSubKeyName = ARRAY_SIZE(subKeyName);
 	ret_value = RegEnumKeyExW(hkResult, dwIndex, subKeyName, &sizeOfSubKeyName,
 				  NULL, NULL, NULL, &filetime);
 	if (ret_value == ERROR_NO_MORE_ITEMS)

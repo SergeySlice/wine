@@ -34,6 +34,12 @@ cpp_quote("#define TLMENUF_BACK             0x00000010")
 cpp_quote("#define TLMENUF_FORE             0x00000020")
 cpp_quote("#define TLMENUF_BACKANDFORTH     (TLMENUF_BACK | TLMENUF_FORE | TLMENUF_INCLUDECURRENT)")
 
+cpp_quote("#ifndef INTERNET_MAX_URL_LENGTH")
+cpp_quote("#define INTERNET_MAX_PATH_LENGTH   2048")
+cpp_quote("#define INTERNET_MAX_SCHEME_LENGTH   32")
+cpp_quote("#define INTERNET_MAX_URL_LENGTH (INTERNET_MAX_SCHEME_LENGTH + sizeof(\"://\")+ INTERNET_MAX_PATH_LENGTH)")
+cpp_quote("#endif")
+
 [
     hidden,
     local,
@@ -51,7 +57,7 @@ interface ITravelEntry : IUnknown
 
     HRESULT GetPidl(
         [out] LPITEMIDLIST *ppidl);
-};
+}
 
 [
     hidden,
@@ -109,7 +115,7 @@ interface ITravelLog : IUnknown
         [in] IUnknown *punk);
 
     HRESULT Revert();
-};
+}
 
 typedef void *CIE4ConnectionPoint;
 
@@ -137,7 +143,7 @@ interface IExpDispSupport : IUnknown
         VARIANT *pVarResult,
         EXCEPINFO *pexcepinfo,
         UINT *puArgErr);
-};
+}
 
 typedef enum tagBNSTATE
 {
@@ -214,7 +220,7 @@ interface IBrowserService : IUnknown
 
     HRESULT IEGetDisplayName(
         [in] PCIDLIST_ABSOLUTE pidl,
-        [out] LPWSTR pwszName,
+        [out, size_is(INTERNET_MAX_URL_LENGTH)] LPWSTR pwszName,
         [in] UINT uFlags);
 
     HRESULT IEParseDisplayName(
@@ -601,4 +607,4 @@ interface IBrowserService2 : IBrowserService
 
     HRESULT v_CheckZoneCrossing(
         [in, out] LPCITEMIDLIST pidl);
-};
+}

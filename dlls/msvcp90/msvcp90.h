@@ -25,6 +25,7 @@
 typedef unsigned char MSVCP_bool;
 typedef SIZE_T MSVCP_size_t;
 
+#define MSVCP_SIZE_T_MAX (~(MSVCP_size_t)0)
 #if _MSVCP_VER >= 100
 typedef __int64 DECLSPEC_ALIGN(8) streamoff;
 typedef __int64 DECLSPEC_ALIGN(8) streamsize;
@@ -46,6 +47,10 @@ int __cdecl _callnewh(size_t);
 extern void* (__cdecl *MSVCRT_operator_new)(MSVCP_size_t);
 extern void (__cdecl *MSVCRT_operator_delete)(void*);
 extern void* (__cdecl *MSVCRT_set_new_handler)(void*);
+
+#if _MSVCP_VER >= 140
+extern int* (__cdecl *UCRTBASE___processing_throw)(void);
+#endif
 
 #if _MSVCP_VER >= 110
 /* keep in sync with msvcrt/lock.c */
@@ -70,6 +75,10 @@ extern void (__thiscall *critical_section_dtor)(critical_section*);
 extern void (__thiscall *critical_section_lock)(critical_section*);
 extern void (__thiscall *critical_section_unlock)(critical_section*);
 extern MSVCP_bool (__thiscall *critical_section_trylock)(critical_section*);
+#endif
+
+#if _MSVCP_VER >= 100
+extern MSVCP_bool (__cdecl *Context_IsCurrentTaskCollectionCanceling)(void);
 #endif
 
 /* basic_string<char, char_traits<char>, allocator<char>> */

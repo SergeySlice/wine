@@ -74,8 +74,8 @@ static struct testfile_s {
     { 0, 0, FILE_ATTRIBUTE_DIRECTORY, {'.'},                  ". directory" },
     { 0, 0, FILE_ATTRIBUTE_DIRECTORY, {'.','.'},              ".. directory" }
 };
-static const int test_dir_count = sizeof(testfiles) / sizeof(testfiles[0]);
-static const int max_test_dir_size = sizeof(testfiles) / sizeof(testfiles[0]) + 5;  /* size of above plus some for .. etc */
+static const int test_dir_count = ARRAY_SIZE(testfiles);
+static const int max_test_dir_size = ARRAY_SIZE(testfiles) + 5;  /* size of above plus some for .. etc */
 
 static const WCHAR dummyW[] = {'d','u','m','m','y',0};
 static const WCHAR dotW[] = {'.',0};
@@ -353,6 +353,8 @@ static void test_NtQueryDirectoryFile_classes( HANDLE handle, UNICODE_STRING *ma
         switch (class)
         {
         case FileIdGlobalTxDirectoryInformation:
+        case FileIdExtdDirectoryInformation:
+        case FileIdExtdBothDirectoryInformation:
             if (status == STATUS_INVALID_INFO_CLASS || status == STATUS_NOT_IMPLEMENTED) continue;
             /* fall through */
         case FileDirectoryInformation:
@@ -502,8 +504,8 @@ static void test_NtQueryDirectoryFile(void)
     }
     status = pNtQueryInformationFile( dirh, &io, &pos_info, sizeof(pos_info), FilePositionInformation );
     ok( status == STATUS_SUCCESS, "NtQueryInformationFile failed %x\n", status );
-    ok( pos_info.CurrentByteOffset.QuadPart == 0, "wrong pos %x%08x\n",
-        (DWORD)(pos_info.CurrentByteOffset.QuadPart >> 32), (DWORD)pos_info.CurrentByteOffset.QuadPart );
+    ok( pos_info.CurrentByteOffset.QuadPart == 0, "wrong pos %s\n",
+        wine_dbgstr_longlong(pos_info.CurrentByteOffset.QuadPart));
 
     pos_info.CurrentByteOffset.QuadPart = 0xbeef;
     status = pNtSetInformationFile( dirh, &io, &pos_info, sizeof(pos_info), FilePositionInformation );
@@ -511,8 +513,8 @@ static void test_NtQueryDirectoryFile(void)
 
     status = pNtQueryInformationFile( dirh, &io, &pos_info, sizeof(pos_info), FilePositionInformation );
     ok( status == STATUS_SUCCESS, "NtQueryInformationFile failed %x\n", status );
-    ok( pos_info.CurrentByteOffset.QuadPart == 0xbeef, "wrong pos %x%08x\n",
-        (DWORD)(pos_info.CurrentByteOffset.QuadPart >> 32), (DWORD)pos_info.CurrentByteOffset.QuadPart );
+    ok( pos_info.CurrentByteOffset.QuadPart == 0xbeef, "wrong pos %s\n",
+        wine_dbgstr_longlong(pos_info.CurrentByteOffset.QuadPart));
 
     mask.Buffer = testfiles[0].name;
     mask.Length = mask.MaximumLength = lstrlenW(testfiles[0].name) * sizeof(WCHAR);
@@ -526,8 +528,8 @@ static void test_NtQueryDirectoryFile(void)
 
     status = pNtQueryInformationFile( dirh, &io, &pos_info, sizeof(pos_info), FilePositionInformation );
     ok( status == STATUS_SUCCESS, "NtQueryInformationFile failed %x\n", status );
-    ok( pos_info.CurrentByteOffset.QuadPart == 0xbeef, "wrong pos %x%08x\n",
-        (DWORD)(pos_info.CurrentByteOffset.QuadPart >> 32), (DWORD)pos_info.CurrentByteOffset.QuadPart );
+    ok( pos_info.CurrentByteOffset.QuadPart == 0xbeef, "wrong pos %s\n",
+        wine_dbgstr_longlong(pos_info.CurrentByteOffset.QuadPart) );
 
     mask.Length = mask.MaximumLength = fbdi->ShortNameLength;
     memcpy(short_name, fbdi->ShortName, mask.Length);
@@ -547,8 +549,8 @@ static void test_NtQueryDirectoryFile(void)
 
     status = pNtQueryInformationFile( dirh, &io, &pos_info, sizeof(pos_info), FilePositionInformation );
     ok( status == STATUS_SUCCESS, "NtQueryInformationFile failed %x\n", status );
-    ok( pos_info.CurrentByteOffset.QuadPart == 0xbeef, "wrong pos %x%08x\n",
-        (DWORD)(pos_info.CurrentByteOffset.QuadPart >> 32), (DWORD)pos_info.CurrentByteOffset.QuadPart );
+    ok( pos_info.CurrentByteOffset.QuadPart == 0xbeef, "wrong pos %s\n",
+        wine_dbgstr_longlong(pos_info.CurrentByteOffset.QuadPart) );
 
     /* tests with short buffer */
     memset( data, 0x55, data_size );
@@ -561,13 +563,17 @@ static void test_NtQueryDirectoryFile(void)
     ok( U(io).Status == STATUS_BUFFER_OVERFLOW, "wrong status %x\n", U(io).Status );
     ok( U(io).Information == data_size || broken( U(io).Information == 0),
         "wrong info %lx\n", U(io).Information );
-    ok( fbdi->NextEntryOffset == 0, "wrong offset %x\n",  fbdi->NextEntryOffset );
-    ok( fbdi->FileNameLength == lstrlenW(testfiles[0].name) * sizeof(WCHAR),
-        "wrong length %x\n", fbdi->FileNameLength );
-    ok( filename[0] == testfiles[0].name[0], "incorrect long file name: %s\n",
-        wine_dbgstr_wn(fbdi->FileName, fbdi->FileNameLength/sizeof(WCHAR)));
-    ok( filename[1] == 0x5555, "incorrect long file name: %s\n",
-        wine_dbgstr_wn(fbdi->FileName, fbdi->FileNameLength/sizeof(WCHAR)));
+    ok( fbdi->NextEntryOffset == 0 || fbdi->NextEntryOffset == 0x55555555, /* win10 >= 1709 */
+        "wrong offset %x\n",  fbdi->NextEntryOffset );
+    if (!fbdi->NextEntryOffset)
+    {
+        ok( fbdi->FileNameLength == lstrlenW(testfiles[0].name) * sizeof(WCHAR),
+            "wrong length %x\n", fbdi->FileNameLength );
+        ok( filename[0] == testfiles[0].name[0], "incorrect long file name: %s\n",
+            wine_dbgstr_wn(fbdi->FileName, fbdi->FileNameLength/sizeof(WCHAR)));
+        ok( filename[1] == 0x5555, "incorrect long file name: %s\n",
+            wine_dbgstr_wn(fbdi->FileName, fbdi->FileNameLength/sizeof(WCHAR)));
+    }
 
     test_NtQueryDirectoryFile_classes( dirh, &mask );
 

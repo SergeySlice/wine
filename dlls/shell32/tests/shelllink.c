@@ -27,6 +27,9 @@
 #include "shobjidl.h"
 #include "shlobj.h"
 #include "shellapi.h"
+#include "commoncontrols.h"
+
+#include "wine/heap.h"
 #include "wine/test.h"
 
 #include "shell32_test.h"
@@ -38,11 +41,13 @@
 static void (WINAPI *pILFree)(LPITEMIDLIST);
 static BOOL (WINAPI *pILIsEqual)(LPCITEMIDLIST, LPCITEMIDLIST);
 static HRESULT (WINAPI *pSHILCreateFromPath)(LPCWSTR, LPITEMIDLIST *,DWORD*);
+static HRESULT (WINAPI *pSHGetFolderLocation)(HWND,INT,HANDLE,DWORD,PIDLIST_ABSOLUTE*);
 static HRESULT (WINAPI *pSHDefExtractIconA)(LPCSTR, int, UINT, HICON*, HICON*, UINT);
 static HRESULT (WINAPI *pSHGetStockIconInfo)(SHSTOCKICONID, UINT, SHSTOCKICONINFO *);
 static DWORD (WINAPI *pGetLongPathNameA)(LPCSTR, LPSTR, DWORD);
 static DWORD (WINAPI *pGetShortPathNameA)(LPCSTR, LPSTR, DWORD);
 static UINT (WINAPI *pSHExtractIconsW)(LPCWSTR, int, int, int, HICON *, UINT *, UINT, UINT);
+static BOOL (WINAPI *pIsProcessDPIAware)(void);
 
 static const GUID _IID_IShellLinkDataList = {
     0x45e2b4ae, 0xb1c3, 0x11d0,
@@ -80,12 +85,12 @@ static LPITEMIDLIST path_to_pidl(const char* path)
         int len;
 
         len=MultiByteToWideChar(CP_ACP, 0, path, -1, NULL, 0);
-        pathW=HeapAlloc(GetProcessHeap(), 0, len*sizeof(WCHAR));
+        pathW = heap_alloc(len * sizeof(WCHAR));
         MultiByteToWideChar(CP_ACP, 0, path, -1, pathW, len);
 
         r=pSHILCreateFromPath(pathW, &pidl, NULL);
         ok(r == S_OK, "SHILCreateFromPath failed (0x%08x)\n", r);
-        HeapFree(GetProcessHeap(), 0, pathW);
+        heap_free(pathW);
     }
     return pidl;
 }
@@ -102,6 +107,7 @@ static void test_get_set(void)
     IShellLinkW *slW = NULL;
     char mypath[MAX_PATH];
     char buffer[INFOTIPSIZE];
+    WIN32_FIND_DATAA finddata;
     LPITEMIDLIST pidl, tmp_pidl;
     const char * str;
     int i;
@@ -154,11 +160,20 @@ static void test_get_set(void)
     /* Test Getting / Setting the path */
     strcpy(buffer,"garbage");
     r = IShellLinkA_GetPath(sl, buffer, sizeof(buffer), NULL, SLGP_RAWPATH);
-    todo_wine ok(r == S_FALSE || broken(r == S_OK) /* NT4/W2K */, "GetPath failed (0x%08x)\n", r);
+    ok(r == S_FALSE || broken(r == S_OK) /* NT4/W2K */, "GetPath failed (0x%08x)\n", r);
     ok(*buffer=='\0', "GetPath returned '%s'\n", buffer);
 
-    CoCreateInstance(&CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER,
-                     &IID_IShellLinkW, (LPVOID*)&slW);
+    strcpy(buffer,"garbage");
+    memset(&finddata, 0xaa, sizeof(finddata));
+    r = IShellLinkA_GetPath(sl, buffer, sizeof(buffer), &finddata, SLGP_RAWPATH);
+    ok(r == S_FALSE || broken(r == S_OK) /* NT4/W2K */, "GetPath failed (0x%08x)\n", r);
+    ok(*buffer=='\0', "GetPath returned '%s'\n", buffer);
+    ok(finddata.dwFileAttributes == 0, "unexpected attributes %x\n", finddata.dwFileAttributes);
+    ok(finddata.cFileName[0] == 0, "unexpected filename '%s'\n", finddata.cFileName);
+
+    r = CoCreateInstance(&CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER,
+                         &IID_IShellLinkW, (LPVOID*)&slW);
+    ok(r == S_OK, "CoCreateInstance failed (0x%08x)\n", r);
     if (!slW /* Win9x */ || !pGetLongPathNameA /* NT4 */)
         skip("SetPath with NULL parameter crashes on Win9x and some NT4\n");
     else
@@ -175,7 +190,7 @@ static void test_get_set(void)
 
     strcpy(buffer,"garbage");
     r = IShellLinkA_GetPath(sl, buffer, sizeof(buffer), NULL, SLGP_RAWPATH);
-    todo_wine ok(r == S_FALSE, "GetPath failed (0x%08x)\n", r);
+    ok(r == S_FALSE, "GetPath failed (0x%08x)\n", r);
     ok(*buffer=='\0', "GetPath returned '%s'\n", buffer);
 
     /* Win98 returns S_FALSE, but WinXP returns S_OK */
@@ -187,6 +202,14 @@ static void test_get_set(void)
     r = IShellLinkA_GetPath(sl, buffer, sizeof(buffer), NULL, SLGP_RAWPATH);
     ok(r == S_OK, "GetPath failed (0x%08x)\n", r);
     ok(lstrcmpiA(buffer,str)==0, "GetPath returned '%s'\n", buffer);
+
+    strcpy(buffer,"garbage");
+    memset(&finddata, 0xaa, sizeof(finddata));
+    r = IShellLinkA_GetPath(sl, buffer, sizeof(buffer), &finddata, SLGP_RAWPATH);
+    ok(r == S_OK, "GetPath failed (0x%08x)\n", r);
+    ok(lstrcmpiA(buffer,str)==0, "GetPath returned '%s'\n", buffer);
+    ok(finddata.dwFileAttributes == 0, "unexpected attributes %x\n", finddata.dwFileAttributes);
+    ok(lstrcmpiA(finddata.cFileName, "file") == 0, "unexpected filename '%s'\n", finddata.cFileName);
 
     /* Get some real path to play with */
     GetWindowsDirectoryA( mypath, sizeof(mypath)-12 );
@@ -237,8 +260,41 @@ static void test_get_set(void)
         strcpy(buffer,"garbage");
         r = IShellLinkA_GetPath(sl, buffer, sizeof(buffer), NULL, SLGP_RAWPATH);
         ok(r == S_OK, "GetPath failed (0x%08x)\n", r);
-        todo_wine
         ok(lstrcmpiA(buffer, mypath)==0, "GetPath returned '%s'\n", buffer);
+
+        strcpy(buffer,"garbage");
+        memset(&finddata, 0xaa, sizeof(finddata));
+        r = IShellLinkA_GetPath(sl, buffer, sizeof(buffer), &finddata, SLGP_RAWPATH);
+        ok(r == S_OK, "GetPath failed (0x%08x)\n", r);
+        ok(lstrcmpiA(buffer, mypath)==0, "GetPath returned '%s'\n", buffer);
+        ok(finddata.dwFileAttributes != 0, "unexpected attributes %x\n", finddata.dwFileAttributes);
+        ok(lstrcmpiA(finddata.cFileName, "regedit.exe") == 0, "unexpected filename '%s'\n", finddata.cFileName);
+    }
+
+    if (pSHGetFolderLocation)
+    {
+        LPITEMIDLIST pidl_controls;
+
+        r = pSHGetFolderLocation(NULL, CSIDL_CONTROLS, NULL, 0, &pidl_controls);
+        ok(r == S_OK, "SHGetFolderLocation failed (0x%08x)\n", r);
+
+        r = IShellLinkA_SetIDList(sl, pidl_controls);
+        ok(r == S_OK, "SetIDList failed (0x%08x)\n", r);
+
+        strcpy(buffer,"garbage");
+        r = IShellLinkA_GetPath(sl, buffer, sizeof(buffer), NULL, SLGP_RAWPATH);
+        ok(r == S_FALSE, "GetPath failed (0x%08x)\n", r);
+        ok(buffer[0] == 0, "GetPath returned '%s'\n", buffer);
+
+        strcpy(buffer,"garbage");
+        memset(&finddata, 0xaa, sizeof(finddata));
+        r = IShellLinkA_GetPath(sl, buffer, sizeof(buffer), &finddata, SLGP_RAWPATH);
+        ok(r == S_FALSE, "GetPath failed (0x%08x)\n", r);
+        ok(buffer[0] == 0, "GetPath returned '%s'\n", buffer);
+        ok(finddata.dwFileAttributes == 0, "unexpected attributes %x\n", finddata.dwFileAttributes);
+        ok(finddata.cFileName[0] == 0, "unexpected filename '%s'\n", finddata.cFileName);
+
+        pILFree(pidl_controls);
     }
 
     /* test path with quotes (IShellLinkA_SetPath returns S_FALSE on W2K and below and S_OK on XP and above */
@@ -917,6 +973,7 @@ static void test_shdefextracticon(void)
 
 static void test_GetIconLocation(void)
 {
+    IShellLinkW *slW;
     IShellLinkA *sl;
     const char *str;
     char buffer[INFOTIPSIZE], mypath[MAX_PATH];
@@ -970,8 +1027,34 @@ static void test_GetIconLocation(void)
     r = IShellLinkA_GetIconLocation(sl, buffer, sizeof(buffer), &i);
     ok(r == S_OK, "GetIconLocation failed (0x%08x)\n", r);
     ok(lstrcmpiA(buffer,str) == 0, "GetIconLocation returned '%s'\n", buffer);
-    ok(i == 0xbabecafe, "GetIconLocation returned %d'\n", i);
+    ok(i == 0xbabecafe, "GetIconLocation returned %#x.\n", i);
 
+    r = IShellLinkA_SetIconLocation(sl, NULL, 0xcafefe);
+    ok(r == S_OK, "SetIconLocation failed (0x%08x)\n", r);
+
+    i = 0xdeadbeef;
+    r = IShellLinkA_GetIconLocation(sl, buffer, sizeof(buffer), &i);
+    ok(r == S_OK, "GetIconLocation failed (0x%08x)\n", r);
+    ok(!*buffer, "GetIconLocation returned '%s'\n", buffer);
+    ok(i == 0xcafefe, "GetIconLocation returned %#x.\n", i);
+
+    r = IShellLinkA_QueryInterface(sl, &IID_IShellLinkW, (void **)&slW);
+    ok(SUCCEEDED(r), "Failed to get IShellLinkW, hr %#x.\n", r);
+
+    str = "c:\\nonexistent\\file";
+    r = IShellLinkA_SetIconLocation(sl, str, 0xbabecafe);
+    ok(r == S_OK, "SetIconLocation failed (0x%08x)\n", r);
+
+    r = IShellLinkA_SetIconLocation(sl, NULL, 0xcafefe);
+    ok(r == S_OK, "SetIconLocation failed (0x%08x)\n", r);
+
+    i = 0xdeadbeef;
+    r = IShellLinkA_GetIconLocation(sl, buffer, sizeof(buffer), &i);
+    ok(r == S_OK, "GetIconLocation failed (0x%08x)\n", r);
+    ok(!*buffer, "GetIconLocation returned '%s'\n", buffer);
+    ok(i == 0xcafefe, "GetIconLocation returned %#x.\n", i);
+
+    IShellLinkW_Release(slW);
     IShellLinkA_Release(sl);
 }
 
@@ -1159,6 +1242,8 @@ static void test_ExtractIcon(void)
     char path[MAX_PATH];
     HANDLE file;
     int r;
+    ICONINFO info;
+    BITMAP bm;
 
     /* specified instance handle */
     hicon = ExtractIconA(GetModuleHandleA("shell32.dll"), NULL, 0);
@@ -1214,6 +1299,10 @@ if (0)
     /* existing index */
     hicon = ExtractIconW(NULL, shell32W, 0);
     ok(hicon != NULL && HandleToLong(hicon) != -1, "Got icon %p\n", hicon);
+    GetIconInfo(hicon, &info);
+    GetObjectW(info.hbmColor, sizeof(bm), &bm);
+    ok(bm.bmWidth == GetSystemMetrics(SM_CXICON), "got %d\n", bm.bmWidth);
+    ok(bm.bmHeight == GetSystemMetrics(SM_CYICON), "got %d\n", bm.bmHeight);
     DestroyIcon(hicon);
 
     /* returns number of resources */
@@ -1225,7 +1314,7 @@ if (0)
     ok(hicon == NULL, "Got icon %p\n", hicon);
 
     /* Create a temporary non-executable file */
-    GetTempPathW(sizeof(pathW)/sizeof(pathW[0]), pathW);
+    GetTempPathW(ARRAY_SIZE(pathW), pathW);
     lstrcatW(pathW, nameW);
     file = CreateFileW(pathW, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     ok(file != INVALID_HANDLE_VALUE, "Failed to create a test file\n");
@@ -1297,20 +1386,114 @@ todo_wine {
     DestroyIcon(hicon);
 }
 
+static int get_shell_icon_size(void)
+{
+    char buf[10];
+    DWORD value = 32, size = sizeof(buf), type;
+    HKEY key;
+
+    if (!RegOpenKeyA( HKEY_CURRENT_USER, "Control Panel\\Desktop\\WindowMetrics", &key ))
+    {
+        if (!RegQueryValueExA( key, "Shell Icon Size", NULL, &type, (BYTE *)buf, &size ) && type == REG_SZ)
+            value = atoi( buf );
+        RegCloseKey( key );
+    }
+    return value;
+}
+
+static void test_SHGetImageList(void)
+{
+    HRESULT hr;
+    IImageList *list, *list2;
+    BOOL ret;
+    HIMAGELIST lg, sm;
+    ULONG start_refs, refs;
+    int i, width, height, expect;
+    BOOL dpi_aware = pIsProcessDPIAware && pIsProcessDPIAware();
+
+    hr = SHGetImageList( SHIL_LARGE, &IID_IImageList, (void **)&list );
+    ok( hr == S_OK, "got %08x\n", hr );
+    start_refs = IImageList_AddRef( list );
+    IImageList_Release( list );
+
+    hr = SHGetImageList( SHIL_LARGE, &IID_IImageList, (void **)&list2 );
+    ok( hr == S_OK, "got %08x\n", hr );
+    ok( list == list2, "lists differ\n" );
+    refs = IImageList_AddRef( list );
+    IImageList_Release( list );
+    ok( refs == start_refs + 1, "got %d, start_refs %d\n", refs, start_refs );
+    IImageList_Release( list2 );
+
+    hr = SHGetImageList( SHIL_SMALL, &IID_IImageList, (void **)&list2 );
+    ok( hr == S_OK, "got %08x\n", hr );
+
+    ret = Shell_GetImageLists( &lg, &sm );
+    ok( ret, "got %d\n", ret );
+    ok( lg == (HIMAGELIST)list, "mismatch\n" );
+    ok( sm == (HIMAGELIST)list2, "mismatch\n" );
+
+    /* Shell_GetImageLists doesn't take a reference */
+    refs = IImageList_AddRef( list );
+    IImageList_Release( list );
+    ok( refs == start_refs, "got %d, start_refs %d\n", refs, start_refs );
+
+    IImageList_Release( list2 );
+    IImageList_Release( list );
+
+    /* Test the icon sizes */
+    for (i = 0; i <= SHIL_LAST; i++)
+    {
+        hr = SHGetImageList( i, &IID_IImageList, (void **)&list );
+        ok( hr == S_OK || broken( i == SHIL_JUMBO && hr == E_INVALIDARG ), /* XP and 2003 */
+                "%d: got %08x\n", i, hr );
+        if (FAILED(hr)) continue;
+        IImageList_GetIconSize( list, &width, &height );
+        switch (i)
+        {
+        case SHIL_LARGE:
+            if (dpi_aware) expect = GetSystemMetrics( SM_CXICON );
+            else expect = get_shell_icon_size();
+            break;
+        case SHIL_SMALL:
+            if (dpi_aware) expect = GetSystemMetrics( SM_CXICON ) / 2;
+            else expect = GetSystemMetrics( SM_CXSMICON );
+            break;
+        case SHIL_EXTRALARGE:
+            expect = (GetSystemMetrics( SM_CXICON ) * 3) / 2;
+            break;
+        case SHIL_SYSSMALL:
+            expect = GetSystemMetrics( SM_CXSMICON );
+            break;
+        case SHIL_JUMBO:
+            expect = 256;
+            break;
+        }
+        todo_wine_if(i == SHIL_SYSSMALL && dpi_aware && expect != GetSystemMetrics( SM_CXICON ) / 2)
+        {
+            ok( width == expect, "%d: got %d expect %d\n", i, width, expect );
+            ok( height == expect, "%d: got %d expect %d\n", i, height, expect );
+        }
+        IImageList_Release( list );
+    }
+}
+
 START_TEST(shelllink)
 {
     HRESULT r;
     HMODULE hmod = GetModuleHandleA("shell32.dll");
     HMODULE hkernel32 = GetModuleHandleA("kernel32.dll");
+    HMODULE huser32 = GetModuleHandleA("user32.dll");
 
     pILFree = (void *)GetProcAddress(hmod, (LPSTR)155);
     pILIsEqual = (void *)GetProcAddress(hmod, (LPSTR)21);
     pSHILCreateFromPath = (void *)GetProcAddress(hmod, (LPSTR)28);
+    pSHGetFolderLocation = (void *)GetProcAddress(hmod, "SHGetFolderLocation");
     pSHDefExtractIconA = (void *)GetProcAddress(hmod, "SHDefExtractIconA");
     pSHGetStockIconInfo = (void *)GetProcAddress(hmod, "SHGetStockIconInfo");
     pGetLongPathNameA = (void *)GetProcAddress(hkernel32, "GetLongPathNameA");
     pGetShortPathNameA = (void *)GetProcAddress(hkernel32, "GetShortPathNameA");
     pSHExtractIconsW = (void *)GetProcAddress(hmod, "SHExtractIconsW");
+    pIsProcessDPIAware = (void *)GetProcAddress(huser32, "IsProcessDPIAware");
 
     r = CoInitialize(NULL);
     ok(r == S_OK, "CoInitialize failed (0x%08x)\n", r);
@@ -1327,6 +1510,7 @@ START_TEST(shelllink)
     test_propertystore();
     test_ExtractIcon();
     test_ExtractAssociatedIcon();
+    test_SHGetImageList();
 
     CoUninitialize();
 }

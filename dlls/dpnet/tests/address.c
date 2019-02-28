@@ -22,6 +22,8 @@
 #include <dplay8.h>
 #include "wine/test.h"
 
+#include "dpnet_test.h"
+
 /* {6733C6E8-A0D6-450E-8C18-CEACF331DC27} */
 static const GUID IID_Random = {0x6733c6e8, 0xa0d6, 0x450e, { 0x8c, 0x18, 0xce, 0xac, 0xf3, 0x31, 0xdc, 0x27 } };
 static const WCHAR localhost[] = {'l','o','c','a','l','h','o','s','t',0};
@@ -353,39 +355,19 @@ static void address_duplicate(void)
     }
 }
 
-/* taken from programs/winetest/main.c */
-static BOOL is_stub_dll(const char *filename)
-{
-    DWORD size, ver;
-    BOOL isstub = FALSE;
-    char *p, *data;
-
-    size = GetFileVersionInfoSizeA(filename, &ver);
-    if (!size) return FALSE;
-
-    data = HeapAlloc(GetProcessHeap(), 0, size);
-    if (!data) return FALSE;
-
-    if (GetFileVersionInfoA(filename, ver, size, data))
-    {
-        char buf[256];
-
-        sprintf(buf, "\\StringFileInfo\\%04x%04x\\OriginalFilename", MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US), 1200);
-        if (VerQueryValueA(data, buf, (void**)&p, &size))
-            isstub = !lstrcmpiA("wcodstub.dll", p);
-    }
-    HeapFree(GetProcessHeap(), 0, data);
-
-    return isstub;
-}
-
 START_TEST(address)
 {
     HRESULT hr;
+    char path[MAX_PATH];
 
-    if (!winetest_interactive &&
-        (is_stub_dll("c:\\windows\\system32\\dpnet.dll") ||
-         is_stub_dll("c:\\windows\\syswow64\\dpnet.dll")))
+    if(!GetSystemDirectoryA(path, MAX_PATH))
+    {
+        skip("Failed to get systems directory\n");
+        return;
+    }
+    strcat(path, "\\dpnet.dll");
+
+    if (!winetest_interactive && is_stub_dll(path))
     {
         win_skip("dpnet is a stub dll, skipping tests\n");
         return;

@@ -18,9 +18,10 @@
 
 #include <windows.h>
 #include <commdlg.h>
-#include "resource.h"
-
 #include <stdio.h>
+
+#include "resource.h"
+#include "wine/unicode.h"
 
 static HINSTANCE hInst;
 static HWND hMainWnd;
@@ -51,11 +52,16 @@ typedef struct
 
 static BOOL FileOpen(HWND hWnd, WCHAR *fn, int fnsz)
 {
-  static const WCHAR filter[] = {'M','e','t','a','f','i','l','e','s','\0','*','.','w','m','f',';','*','.','e','m','f','\0',0};
+  WCHAR filter[120], metafileFilter[100];
+  static const WCHAR filterW[] = {'%','s','%','c','*','.','w','m','f',';','*','.','e','m','f','%','c',0};
   OPENFILENAMEW ofn = { sizeof(OPENFILENAMEW),
                         0, 0, NULL, NULL, 0, 0, NULL,
                         fnsz, NULL, 0, NULL, NULL,
                         OFN_SHOWHELP, 0, 0, NULL, 0, NULL };
+
+  LoadStringW( hInst, IDS_OPEN_META_STRING, metafileFilter, ARRAY_SIZE(metafileFilter) );
+  snprintfW( filter, ARRAY_SIZE(filter), filterW, metafileFilter, 0, 0 );
+
   ofn.lpstrFilter = filter;
   ofn.hwndOwner = hWnd;
   ofn.lpstrFile = fn;
@@ -214,12 +220,12 @@ static void UpdateWindowCaption(void)
   WCHAR szView[MAX_PATH];
   static const WCHAR hyphenW[] = { ' ','-',' ',0 };
 
-  LoadStringW(hInst, IDS_DESCRIPTION, szView, sizeof(szView)/sizeof(WCHAR));
+  LoadStringW(hInst, IDS_DESCRIPTION, szView, ARRAY_SIZE(szView));
 
   if (szFileTitle[0] != '\0')
   {
     lstrcpyW(szCaption, szFileTitle);
-    LoadStringW(hInst, IDS_DESCRIPTION, szView, sizeof(szView)/sizeof(WCHAR));
+    LoadStringW(hInst, IDS_DESCRIPTION, szView, ARRAY_SIZE(szView));
     lstrcatW(szCaption, hyphenW);
     lstrcatW(szCaption, szView);
   }
@@ -260,10 +266,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT uMessage, WPARAM wparam, LPARAM 
 	case IDM_OPEN:
 	  {
               WCHAR filename[MAX_PATH];
-              if (FileOpen(hwnd, filename, sizeof(filename)/sizeof(WCHAR)))
+              if (FileOpen(hwnd, filename, ARRAY_SIZE(filename)))
               {
                   szFileTitle[0] = 0;
-                  GetFileTitleW(filename, szFileTitle, sizeof(szFileTitle)/sizeof(WCHAR));
+                  GetFileTitleW(filename, szFileTitle, ARRAY_SIZE(szFileTitle));
                   DoOpenFile(filename);
                   UpdateWindowCaption();
               }
@@ -323,7 +329,7 @@ static BOOL InitApplication(HINSTANCE hInstance)
   WNDCLASSEXW wc;
 
   /* Load the application description strings */
-  LoadStringW(hInstance, IDS_DESCRIPTION, szTitle, sizeof(szTitle)/sizeof(WCHAR));
+  LoadStringW(hInstance, IDS_DESCRIPTION, szTitle, ARRAY_SIZE(szTitle));
 
   /* Fill in window class structure with parameters that describe the
      main window */
@@ -390,7 +396,7 @@ static void HandleCommandLine(LPWSTR cmdline)
             cmdline[lstrlenW(cmdline) - 1] = 0;
         }
         szFileTitle[0] = 0;
-        GetFileTitleW(cmdline, szFileTitle, sizeof(szFileTitle)/sizeof(WCHAR));
+        GetFileTitleW(cmdline, szFileTitle, ARRAY_SIZE(szFileTitle));
         DoOpenFile(cmdline);
         UpdateWindowCaption();
     }

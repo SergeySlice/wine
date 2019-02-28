@@ -35,33 +35,25 @@ static HRESULT (WINAPI *pCreateAssemblyCacheNet10)( IAssemblyCache **, DWORD );
 static HRESULT (WINAPI *pCreateAssemblyCacheNet11)( IAssemblyCache **, DWORD );
 static HRESULT (WINAPI *pCreateAssemblyCacheNet20)( IAssemblyCache **, DWORD );
 static HRESULT (WINAPI *pCreateAssemblyCacheNet40)( IAssemblyCache **, DWORD );
-static HRESULT (WINAPI *pCreateAssemblyCacheSxs)( IAssemblyCache **, DWORD );
-static HRESULT (WINAPI *pLoadLibraryShim)( LPCWSTR, LPCWSTR, LPVOID, HMODULE * );
 static HRESULT (WINAPI *pGetFileVersion)( LPCWSTR, LPWSTR, DWORD, DWORD * );
 static HRESULT (WINAPI *pCreateAssemblyNameObject)( IAssemblyName **, LPCWSTR, DWORD, LPVOID );
 static HRESULT (WINAPI *pCreateAssemblyEnum)( IAssemblyEnum **, IUnknown *, IAssemblyName *, DWORD, LPVOID );
 
-static HMODULE hfusion10, hfusion11, hfusion20, hfusion40, hmscoree, hsxs;
+static HMODULE hfusion10, hfusion11, hfusion20, hfusion40, hmscoree;
+static BOOL assembly_caches_initialized;
 
 static BOOL init_function_pointers( void )
 {
     static const WCHAR szFusion[]    = {'f','u','s','i','o','n','.','d','l','l',0};
     static const WCHAR szMscoree[]   = {'\\','m','s','c','o','r','e','e','.','d','l','l',0};
-    static const WCHAR szSxs[]       = {'s','x','s','.','d','l','l',0};
     static const WCHAR szVersion10[] = {'v','1','.','0','.','3','7','0','5',0};
     static const WCHAR szVersion11[] = {'v','1','.','1','.','4','3','2','2',0};
     static const WCHAR szVersion20[] = {'v','2','.','0','.','5','0','7','2','7',0};
     static const WCHAR szVersion40[] = {'v','4','.','0','.','3','0','3','1','9',0};
+    HRESULT (WINAPI *pLoadLibraryShim)( LPCWSTR, LPCWSTR, LPVOID, HMODULE * );
     WCHAR path[MAX_PATH];
     DWORD len = GetSystemDirectoryW( path, MAX_PATH );
 
-    if (!hsxs && !(hsxs = LoadLibraryW( szSxs ))) return FALSE;
-    if (!(pCreateAssemblyCacheSxs = (void *)GetProcAddress( hsxs, "CreateAssemblyCache" )))
-    {
-        FreeLibrary( hsxs );
-        hsxs = NULL;
-        return FALSE;
-    }
     strcpyW( path + len, szMscoree );
     if (hmscoree || !(hmscoree = LoadLibraryW( path ))) return TRUE;
     pGetFileVersion = (void *)GetProcAddress( hmscoree, "GetFileVersion" ); /* missing from v1.0.3705 */
@@ -91,12 +83,16 @@ static BOOL init_function_pointers( void )
 
 BOOL msi_init_assembly_caches( MSIPACKAGE *package )
 {
+    if (assembly_caches_initialized) return TRUE;
     if (!init_function_pointers()) return FALSE;
-    if (pCreateAssemblyCacheSxs( &package->cache_sxs, 0 ) != S_OK) return FALSE;
+
+    if (CreateAssemblyCache( &package->cache_sxs, 0 ) != S_OK) return FALSE;
     if (pCreateAssemblyCacheNet10) pCreateAssemblyCacheNet10( &package->cache_net[CLR_VERSION_V10], 0 );
     if (pCreateAssemblyCacheNet11) pCreateAssemblyCacheNet11( &package->cache_net[CLR_VERSION_V11], 0 );
     if (pCreateAssemblyCacheNet20) pCreateAssemblyCacheNet20( &package->cache_net[CLR_VERSION_V20], 0 );
     if (pCreateAssemblyCacheNet40) pCreateAssemblyCacheNet40( &package->cache_net[CLR_VERSION_V40], 0 );
+
+    assembly_caches_initialized = TRUE;
     return TRUE;
 }
 
@@ -121,18 +117,19 @@ void msi_destroy_assembly_caches( MSIPACKAGE *package )
     pCreateAssemblyCacheNet11 = NULL;
     pCreateAssemblyCacheNet20 = NULL;
     pCreateAssemblyCacheNet40 = NULL;
+    pGetFileVersion = NULL;
+    pCreateAssemblyNameObject = NULL;
+    pCreateAssemblyEnum = NULL;
     FreeLibrary( hfusion10 );
     FreeLibrary( hfusion11 );
     FreeLibrary( hfusion20 );
     FreeLibrary( hfusion40 );
     FreeLibrary( hmscoree );
-    FreeLibrary( hsxs );
     hfusion10 = NULL;
     hfusion11 = NULL;
     hfusion20 = NULL;
     hfusion40 = NULL;
     hmscoree = NULL;
-    hsxs = NULL;
 }
 
 static MSIRECORD *get_assembly_record( MSIPACKAGE *package, const WCHAR *comp )
@@ -344,7 +341,7 @@ static const WCHAR *clr_version[] =
 
 static const WCHAR *get_clr_version_str( enum clr_version version )
 {
-    if (version >= sizeof(clr_version)/sizeof(clr_version[0])) return clr_version_unknown;
+    if (version >= ARRAY_SIZE( clr_version )) return clr_version_unknown;
     return clr_version[version];
 }
 
@@ -652,6 +649,9 @@ UINT ACTION_MsiPublishAssemblies( MSIPACKAGE *package )
 {
     MSICOMPONENT *comp;
 
+    if (package->script == SCRIPT_NONE)
+        return msi_schedule_action(package, SCRIPT_INSTALL, szMsiPublishAssemblies);
+
     LIST_FOR_EACH_ENTRY(comp, &package->components, MSICOMPONENT, entry)
     {
         LONG res;
@@ -684,6 +684,11 @@ UINT ACTION_MsiPublishAssemblies( MSIPACKAGE *package )
         if (assembly->application)
         {
             MSIFILE *file = msi_get_loaded_file( package, assembly->application );
+            if (!file)
+            {
+                WARN("no matching file %s for local assembly\n", debugstr_w(assembly->application));
+                continue;
+            }
             if ((res = open_local_assembly_key( package->Context, win32, file->TargetPath, &hkey )))
             {
                 WARN("failed to open local assembly key %d\n", res);
@@ -707,7 +712,7 @@ UINT ACTION_MsiPublishAssemblies( MSIPACKAGE *package )
 
         uirow = MSI_CreateRecord( 2 );
         MSI_RecordSetStringW( uirow, 2, assembly->display_name );
-        msi_ui_actiondata( package, szMsiPublishAssemblies, uirow );
+        MSI_ProcessMessage(package, INSTALLMESSAGE_ACTIONDATA, uirow);
         msiobj_release( &uirow->hdr );
     }
     return ERROR_SUCCESS;
@@ -716,6 +721,9 @@ UINT ACTION_MsiPublishAssemblies( MSIPACKAGE *package )
 UINT ACTION_MsiUnpublishAssemblies( MSIPACKAGE *package )
 {
     MSICOMPONENT *comp;
+
+    if (package->script == SCRIPT_NONE)
+        return msi_schedule_action(package, SCRIPT_INSTALL, szMsiUnpublishAssemblies);
 
     LIST_FOR_EACH_ENTRY(comp, &package->components, MSICOMPONENT, entry)
     {
@@ -738,6 +746,11 @@ UINT ACTION_MsiUnpublishAssemblies( MSIPACKAGE *package )
         if (assembly->application)
         {
             MSIFILE *file = msi_get_loaded_file( package, assembly->application );
+            if (!file)
+            {
+                WARN("no matching file %s for local assembly\n", debugstr_w(assembly->application));
+                continue;
+            }
             if ((res = delete_local_assembly_key( package->Context, win32, file->TargetPath )))
                 WARN("failed to delete local assembly key %d\n", res);
         }
@@ -756,7 +769,7 @@ UINT ACTION_MsiUnpublishAssemblies( MSIPACKAGE *package )
 
         uirow = MSI_CreateRecord( 2 );
         MSI_RecordSetStringW( uirow, 2, assembly->display_name );
-        msi_ui_actiondata( package, szMsiPublishAssemblies, uirow );
+        MSI_ProcessMessage(package, INSTALLMESSAGE_ACTIONDATA, uirow);
         msiobj_release( &uirow->hdr );
     }
     return ERROR_SUCCESS;

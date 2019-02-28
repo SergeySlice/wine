@@ -92,8 +92,8 @@ typedef enum {
     LDAP_NO_MEMORY                  =   0x5a,
     LDAP_CONNECT_ERROR              =   0x5b,
     LDAP_NOT_SUPPORTED              =   0x5c,
-    LDAP_NO_RESULTS_RETURNED        =   0x5e,
     LDAP_CONTROL_NOT_FOUND          =   0x5d,
+    LDAP_NO_RESULTS_RETURNED        =   0x5e,
     LDAP_MORE_RESULTS_TO_RETURN     =   0x5f,
 
     LDAP_CLIENT_LOOP                =   0x60,
@@ -628,9 +628,9 @@ void CDECL ber_free(BerElement*,INT);
 BerElement* CDECL ber_init(BERVAL*);
 ULONG CDECL ber_next_element(BerElement*,ULONG*,CHAR*);
 ULONG CDECL ber_peek_tag(BerElement*,ULONG*);
-INT CDECL ber_printf(BerElement*,PCHAR,...);
+INT WINAPIV ber_printf(BerElement*,PCHAR,...);
 ULONG CDECL ber_skip_tag(BerElement*,ULONG*);
-INT CDECL ber_scanf(BerElement*,PCHAR,...);
+INT WINAPIV ber_scanf(BerElement*,PCHAR,...);
 
 ULONG CDECL LdapGetLastError(void);
 ULONG CDECL LdapMapErrorToWin32(ULONG);

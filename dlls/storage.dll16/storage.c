@@ -70,7 +70,7 @@ struct storage_pps_entry {
 	GUID	pps_guid;	/* 50: class ID */
 	DWORD	pps_unknown1;	/* 60: unknown */
 	FILETIME pps_ft1;	/* 64: filetime1 */
-	FILETIME pps_ft2;	/* 70: filetime2 */
+	FILETIME pps_ft2;	/* 6C: filetime2 */
 	DWORD	pps_sb;		/* 74: data startblock */
 	DWORD	pps_size;	/* 78: datalength. (<0x1000)?small:big blocks*/
 	DWORD	pps_unknown2;	/* 7C: unknown */
@@ -600,7 +600,7 @@ STORAGE_get_next_small_blocknr(stream_access16 *str,int blocknr) {
  */
 static int
 STORAGE_get_nth_next_small_blocknr(stream_access16*str,int blocknr,int nr) {
-	int	lastblocknr=-1;
+	int	lastblocknr=-129;
 	BYTE	block[BIGSIZE];
 	LPINT	sbd = (LPINT)block;
 	struct storage_header sth;
@@ -776,8 +776,8 @@ STORAGE_init_storage(stream_access16 *str) {
 	/* block 1 is the root directory entry */
 	memset(block,0x00,sizeof(block));
 	stde = (struct storage_pps_entry*)block;
-        MultiByteToWideChar( CP_ACP, 0, "RootEntry", -1, stde->pps_rawname,
-                             sizeof(stde->pps_rawname)/sizeof(WCHAR));
+        MultiByteToWideChar(CP_ACP, 0, "RootEntry", -1, stde->pps_rawname,
+                            ARRAY_SIZE(stde->pps_rawname));
 	stde->pps_sizeofname	= (strlenW(stde->pps_rawname)+1) * sizeof(WCHAR);
 	stde->pps_type		= 5;
 	stde->pps_dir		= -1;
@@ -1179,44 +1179,33 @@ ULONG CDECL IStream16_fnRelease(IStream16 *iface)
  *    Does not handle 64 bits
  */
 HRESULT CDECL IStream16_fnSeek(IStream16 *iface, LARGE_INTEGER offset, DWORD whence,
-	ULARGE_INTEGER *newpos)
+                               ULARGE_INTEGER *newpos)
 {
-	IStream16Impl *This = impl_from_IStream16(iface);
-	TRACE_(relay)("(%p)->([%d.%d],%d,%p)\n",This,offset.u.HighPart,offset.u.LowPart,whence,newpos);
+    IStream16Impl *This = impl_from_IStream16(iface);
+    TRACE_(relay)("(%p)->([%d.%d],%d,%p)\n",This,offset.u.HighPart,offset.u.LowPart,whence,newpos);
 
-	switch (whence) {
-	/* unix SEEK_xx should be the same as win95 ones */
-	case SEEK_SET:
-		/* offset must be ==0 (<0 is invalid, and >0 cannot be handled
-		 * right now.
-		 */
-		assert(offset.u.HighPart==0);
-		This->offset.u.HighPart = offset.u.HighPart;
-		This->offset.u.LowPart = offset.u.LowPart;
-		break;
-	case SEEK_CUR:
-		if (offset.u.HighPart < 0) {
-			/* FIXME: is this negation correct ? */
-			offset.u.HighPart = -offset.u.HighPart;
-			offset.u.LowPart = (0xffffffff ^ offset.u.LowPart)+1;
+    switch (whence) {
+    case STREAM_SEEK_SET:
+        This->offset.QuadPart = offset.QuadPart;
+        break;
+    case STREAM_SEEK_CUR:
+        if ((offset.QuadPart < 0 && -offset.QuadPart > This->offset.QuadPart) ||
+            (offset.QuadPart > 0 && -offset.QuadPart <= This->offset.QuadPart))
+            return STG_E_INVALIDFUNCTION;
+        This->offset.QuadPart += offset.QuadPart;
+        break;
+    case STREAM_SEEK_END:
+        if (-offset.QuadPart > This->stde.pps_size)
+            return STG_E_INVALIDFUNCTION;
 
-			assert(offset.u.HighPart==0);
-			assert(This->offset.u.LowPart >= offset.u.LowPart);
-			This->offset.u.LowPart -= offset.u.LowPart;
-		} else {
-			assert(offset.u.HighPart==0);
-			This->offset.u.LowPart+= offset.u.LowPart;
-		}
-		break;
-	case SEEK_END:
-		assert(offset.u.HighPart==0);
-		This->offset.u.LowPart = This->stde.pps_size-offset.u.LowPart;
-		break;
-	}
-	if (This->offset.u.LowPart>This->stde.pps_size)
-		This->offset.u.LowPart=This->stde.pps_size;
-	if (newpos) *newpos = This->offset;
-	return S_OK;
+        This->offset.QuadPart = This->stde.pps_size + offset.QuadPart;
+        break;
+    }
+
+    if (This->offset.QuadPart>This->stde.pps_size)
+        This->offset.QuadPart=This->stde.pps_size;
+    if (newpos) *newpos = This->offset;
+    return S_OK;
 }
 
 /******************************************************************************
@@ -1761,8 +1750,8 @@ HRESULT CDECL IStorage16_fnCreateStorage(IStorage16 *iface, LPCOLESTR16 pwcsName
 	assert(ret);
 	nPPSEntries = STORAGE_get_pps_entry(&lpstg->str,ppsent,&(lpstg->stde));
 	assert(nPPSEntries == 1);
-        MultiByteToWideChar( CP_ACP, 0, pwcsName, -1, lpstg->stde.pps_rawname,
-                             sizeof(lpstg->stde.pps_rawname)/sizeof(WCHAR));
+        MultiByteToWideChar(CP_ACP, 0, pwcsName, -1, lpstg->stde.pps_rawname,
+                            ARRAY_SIZE(lpstg->stde.pps_rawname));
 	lpstg->stde.pps_sizeofname = (strlenW(lpstg->stde.pps_rawname)+1)*sizeof(WCHAR);
 	lpstg->stde.pps_next	= -1;
 	lpstg->stde.pps_prev	= -1;
@@ -1824,8 +1813,8 @@ HRESULT CDECL IStorage16_fnCreateStream(IStorage16 *iface, LPCOLESTR16 pwcsName,
 	assert(ret);
 	nPPSEntries = STORAGE_get_pps_entry(&lpstr->str,ppsent,&(lpstr->stde));
 	assert(nPPSEntries == 1);
-        MultiByteToWideChar( CP_ACP, 0, pwcsName, -1, lpstr->stde.pps_rawname,
-                             sizeof(lpstr->stde.pps_rawname)/sizeof(WCHAR));
+        MultiByteToWideChar(CP_ACP, 0, pwcsName, -1, lpstr->stde.pps_rawname,
+                            ARRAY_SIZE(lpstr->stde.pps_rawname));
 	lpstr->stde.pps_sizeofname = (strlenW(lpstr->stde.pps_rawname)+1) * sizeof(WCHAR);
 	lpstr->stde.pps_next	= -1;
 	lpstr->stde.pps_prev	= -1;
@@ -1866,15 +1855,17 @@ HRESULT CDECL IStorage16_fnOpenStorage(IStorage16 *iface, LPCOLESTR16 pwcsName,
 	    lpstg->str.lockbytes = This->str.lockbytes;
 	    _ilockbytes16_addref(This->str.lockbytes);
 	}
-        MultiByteToWideChar( CP_ACP, 0, pwcsName, -1, name, sizeof(name)/sizeof(WCHAR));
+        MultiByteToWideChar(CP_ACP, 0, pwcsName, -1, name, ARRAY_SIZE(name));
 	newpps = STORAGE_look_for_named_pps(&lpstg->str,This->stde.pps_dir,name);
 	if (newpps==-1) {
 		IStorage16_fnRelease(&lpstg->IStorage16_iface);
+		*ppstg = NULL;
 		return E_FAIL;
 	}
 
 	if (1!=STORAGE_get_pps_entry(&lpstg->str,newpps,&(lpstg->stde))) {
 		IStorage16_fnRelease(&lpstg->IStorage16_iface);
+		*ppstg = NULL;
 		return E_FAIL;
 	}
 	lpstg->ppsent		= newpps;
@@ -1906,15 +1897,17 @@ HRESULT CDECL IStorage16_fnOpenStream(IStorage16 *iface, LPCOLESTR16 pwcsName, v
 	    lpstr->str.lockbytes = This->str.lockbytes;
 	    _ilockbytes16_addref(This->str.lockbytes);
 	}
-        MultiByteToWideChar( CP_ACP, 0, pwcsName, -1, name, sizeof(name)/sizeof(WCHAR));
+        MultiByteToWideChar(CP_ACP, 0, pwcsName, -1, name, ARRAY_SIZE(name));
 	newpps = STORAGE_look_for_named_pps(&lpstr->str,This->stde.pps_dir,name);
 	if (newpps==-1) {
 		IStream16_fnRelease(&lpstr->IStream16_iface);
+		*ppstm = NULL;
 		return E_FAIL;
 	}
 
 	if (1!=STORAGE_get_pps_entry(&lpstr->str,newpps,&(lpstr->stde))) {
 		IStream16_fnRelease(&lpstr->IStream16_iface);
+		*ppstm = NULL;
 		return E_FAIL;
 	}
 	lpstr->offset.u.LowPart		= 0;

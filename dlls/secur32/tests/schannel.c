@@ -202,6 +202,7 @@ static void test_supported_protocols(CredHandle *handle, unsigned exprots)
     X(SP_PROT_TLS1_0_CLIENT, "TLS 1.0 client");
     X(SP_PROT_TLS1_1_CLIENT, "TLS 1.1 client");
     X(SP_PROT_TLS1_2_CLIENT, "TLS 1.2 client");
+    X(SP_PROT_TLS1_3_CLIENT, "TLS 1.3 client");
 #undef X
 
     if(protocols.grbitProtocol)
@@ -560,11 +561,11 @@ static void test_remote_cert(PCCERT_CONTEXT remote_cert)
         cert_cnt++;
     }
 
-    ok(cert_cnt == 2 || cert_cnt == 3, "cert_cnt = %u\n", cert_cnt);
+    ok(cert_cnt == 4, "cert_cnt = %u\n", cert_cnt);
     ok(incl_remote, "context does not contain cert itself\n");
 }
 
-static const char http_request[] = "HEAD /test.html HTTP/1.1\r\nHost: www.winehq.org\r\nConnection: close\r\n\r\n";
+static const char http_request[] = "HEAD /test.html HTTP/1.1\r\nHost: test.winehq.org\r\nConnection: close\r\n\r\n";
 
 static void init_buffers(SecBufferDesc *desc, unsigned count, unsigned size)
 {
@@ -684,11 +685,13 @@ static void test_communication(void)
     SecPkgCredentials_NamesA names;
     SecPkgContext_StreamSizes sizes;
     SecPkgContext_ConnectionInfo conn_info;
+    SecPkgContext_KeyInfoA key_info;
     CERT_CONTEXT *cert;
+    SecPkgContext_NegotiationInfoA info;
 
     SecBufferDesc buffers[2];
     SecBuffer *buf;
-    unsigned buf_size = 4000;
+    unsigned buf_size = 8192;
     unsigned char *data;
     unsigned data_size;
 
@@ -698,7 +701,7 @@ static void test_communication(void)
         return;
     }
 
-    /* Create a socket and connect to www.winehq.org */
+    /* Create a socket and connect to test.winehq.org */
     ret = WSAStartup(0x0202, &wsa_data);
     if (ret)
     {
@@ -706,10 +709,10 @@ static void test_communication(void)
         return;
     }
 
-    host = gethostbyname("www.winehq.org");
+    host = gethostbyname("test.winehq.org");
     if (!host)
     {
-        skip("Can't resolve www.winehq.org\n");
+        skip("Can't resolve test.winehq.org\n");
         return;
     }
 
@@ -726,7 +729,7 @@ static void test_communication(void)
     ret = connect(sock, (struct sockaddr *)&addr, sizeof(addr));
     if (ret == SOCKET_ERROR)
     {
-        skip("Can't connect to www.winehq.org\n");
+        skip("Can't connect to test.winehq.org\n");
         return;
     }
 
@@ -770,7 +773,6 @@ todo_wine
             ISC_REQ_CONFIDENTIALITY|ISC_REQ_STREAM,
             0, 0, &buffers[1], 0, NULL, &buffers[0], &attrs, NULL);
     ok(status == SEC_E_INVALID_TOKEN, "Expected SEC_E_INVALID_TOKEN, got %08x\n", status);
-todo_wine
     ok(buffers[0].pBuffers[0].cbBuffer == 0, "Output buffer size was not set to 0.\n");
 
     buffers[0].pBuffers[0].cbBuffer = 0;
@@ -780,9 +782,15 @@ todo_wine
 todo_wine
     ok(status == SEC_E_INSUFFICIENT_MEMORY || status == SEC_E_INVALID_TOKEN,
        "Expected SEC_E_INSUFFICIENT_MEMORY or SEC_E_INVALID_TOKEN, got %08x\n", status);
+    ok(buffers[0].pBuffers[0].cbBuffer == 0, "Output buffer size was not set to 0.\n");
+
+    status = InitializeSecurityContextA(&cred_handle, NULL, (SEC_CHAR *)"localhost",
+            ISC_REQ_CONFIDENTIALITY|ISC_REQ_STREAM,
+            0, 0, NULL, 0, &context, NULL, &attrs, NULL);
+todo_wine
+    ok(status == SEC_E_INVALID_TOKEN, "Expected SEC_E_INVALID_TOKEN, got %08x\n", status);
 
     buffers[0].pBuffers[0].cbBuffer = buf_size;
-
     status = InitializeSecurityContextA(&cred_handle, NULL, (SEC_CHAR *)"localhost",
             ISC_REQ_CONFIDENTIALITY|ISC_REQ_STREAM,
             0, 0, NULL, 0, &context, &buffers[0], &attrs, NULL);
@@ -799,7 +807,7 @@ todo_wine
     ok(buffers[0].pBuffers[0].cbBuffer == buf_size, "Output buffer size changed.\n");
     ok(buffers[0].pBuffers[0].BufferType == SECBUFFER_TOKEN, "Output buffer type changed.\n");
 
-    buffers[1].cBuffers = 4;
+    buffers[1].cBuffers = 1;
     buffers[1].pBuffers[0].cbBuffer = 0;
 
     status = InitializeSecurityContextA(&cred_handle, &context, (SEC_CHAR *)"localhost",
@@ -835,7 +843,7 @@ todo_wine
 
     buffers[1].pBuffers[0].cbBuffer = ret;
     status = InitializeSecurityContextA(&cred_handle, &context, (SEC_CHAR *)"localhost",
-            ISC_REQ_CONFIDENTIALITY|ISC_REQ_STREAM,
+            ISC_REQ_CONFIDENTIALITY|ISC_REQ_STREAM|ISC_REQ_USE_SUPPLIED_CREDS,
             0, 0, &buffers[1], 0, NULL, &buffers[0], &attrs, NULL);
     buffers[1].pBuffers[0].cbBuffer = buf_size;
     while (status == SEC_I_CONTINUE_NEEDED)
@@ -852,17 +860,19 @@ todo_wine
         buf->BufferType = SECBUFFER_TOKEN;
 
         status = InitializeSecurityContextA(&cred_handle, &context, (SEC_CHAR *)"localhost",
-            ISC_REQ_CONFIDENTIALITY|ISC_REQ_STREAM,
+            ISC_REQ_USE_SUPPLIED_CREDS,
             0, 0, &buffers[1], 0, NULL, &buffers[0], &attrs, NULL);
         buffers[1].pBuffers[0].cbBuffer = buf_size;
     }
 
-    ok(status == SEC_E_OK || broken(status == SEC_E_INVALID_TOKEN) /* WinNT */,
-        "InitializeSecurityContext failed: %08x\n", status);
+    ok(buffers[0].pBuffers[0].cbBuffer == 0, "Output buffer size was not set to 0.\n");
+    ok(status == SEC_E_OK, "InitializeSecurityContext failed: %08x\n", status);
     if(status != SEC_E_OK) {
-        win_skip("Handshake failed\n");
+        skip("Handshake failed\n");
         return;
     }
+    ok(attrs == (ISC_RET_REPLAY_DETECT|ISC_RET_SEQUENCE_DETECT|ISC_RET_CONFIDENTIALITY|ISC_RET_STREAM|ISC_RET_USED_SUPPLIED_CREDS),
+       "got %08x\n", attrs);
 
     status = QueryCredentialsAttributesA(&cred_handle, SECPKG_CRED_ATTR_NAMES, &names);
     ok(status == SEC_E_NO_CREDENTIALS || status == SEC_E_UNSUPPORTED_FUNCTION /* before Vista */, "expected SEC_E_NO_CREDENTIALS, got %08x\n", status);
@@ -870,7 +880,49 @@ todo_wine
     status = pQueryContextAttributesA(&context, SECPKG_ATTR_REMOTE_CERT_CONTEXT, (void*)&cert);
     ok(status == SEC_E_OK, "QueryContextAttributesW(SECPKG_ATTR_REMOTE_CERT_CONTEXT) failed: %08x\n", status);
     if(status == SEC_E_OK) {
+        SecPkgContext_Bindings bindings = {0xdeadbeef, (void*)0xdeadbeef};
+
         test_remote_cert(cert);
+
+        status = pQueryContextAttributesA(&context, SECPKG_ATTR_ENDPOINT_BINDINGS, &bindings);
+        ok(status == SEC_E_OK || broken(status == SEC_E_UNSUPPORTED_FUNCTION),
+           "QueryContextAttributesW(SECPKG_ATTR_ENDPOINT_BINDINGS) failed: %08x\n", status);
+        if(status == SEC_E_OK) {
+            static const char prefix[] = "tls-server-end-point:";
+            const char *p;
+            BYTE hash[64];
+            DWORD hash_size;
+
+            ok(bindings.BindingsLength == sizeof(*bindings.Bindings) + sizeof(prefix)-1 + 32 /* hash size */,
+               "bindings.BindingsLength = %u\n", bindings.BindingsLength);
+            ok(!bindings.Bindings->dwInitiatorAddrType, "dwInitiatorAddrType = %x\n", bindings.Bindings->dwInitiatorAddrType);
+            ok(!bindings.Bindings->cbInitiatorLength, "cbInitiatorLength = %x\n", bindings.Bindings->cbInitiatorLength);
+            ok(!bindings.Bindings->dwInitiatorOffset, "dwInitiatorOffset = %x\n", bindings.Bindings->dwInitiatorOffset);
+            ok(!bindings.Bindings->dwAcceptorAddrType, "dwAcceptorAddrType = %x\n", bindings.Bindings->dwAcceptorAddrType);
+            ok(!bindings.Bindings->cbAcceptorLength, "cbAcceptorLength = %x\n", bindings.Bindings->cbAcceptorLength);
+            ok(!bindings.Bindings->dwAcceptorOffset, "dwAcceptorOffset = %x\n", bindings.Bindings->dwAcceptorOffset);
+            ok(sizeof(*bindings.Bindings) + bindings.Bindings->cbApplicationDataLength == bindings.BindingsLength,
+               "cbApplicationDataLength = %x\n", bindings.Bindings->cbApplicationDataLength);
+            ok(bindings.Bindings->dwApplicationDataOffset == sizeof(*bindings.Bindings),
+               "dwApplicationDataOffset = %x\n", bindings.Bindings->dwApplicationDataOffset);
+            p = (const char*)(bindings.Bindings+1);
+            ok(!memcmp(p, prefix, sizeof(prefix)-1), "missing prefix\n");
+            p += sizeof(prefix)-1;
+
+            hash_size = sizeof(hash);
+            ret = CryptHashCertificate(0, CALG_SHA_256, 0, cert->pbCertEncoded, cert->cbCertEncoded, hash, &hash_size);
+            if(ret) {
+                ok(hash_size == 32, "hash_size = %u\n", hash_size);
+                ok(!memcmp(hash, p, hash_size), "unexpected hash part\n");
+            }else {
+                win_skip("SHA 256 hash not supported.\n");
+            }
+
+            FreeContextBuffer(bindings.Bindings);
+        }else {
+            win_skip("SECPKG_ATTR_ENDPOINT_BINDINGS not supported\n");
+        }
+
         CertFreeCertificateContext(cert);
     }
 
@@ -881,8 +933,23 @@ todo_wine
         ok(conn_info.dwHashStrength >= 128, "conn_info.dwHashStrength = %d\n", conn_info.dwHashStrength);
     }
 
+    status = pQueryContextAttributesA(&context, SECPKG_ATTR_KEY_INFO, &key_info);
+    ok(status == SEC_E_OK, "QueryContextAttributesW(SECPKG_ATTR_KEY_INFO) failed: %08x\n", status);
+    if(status == SEC_E_OK) {
+        ok(broken(key_info.SignatureAlgorithm == 0 /* WinXP,2003 */) ||
+           key_info.SignatureAlgorithm == CALG_RSA_SIGN,
+           "key_info.SignatureAlgorithm = %04x\n", key_info.SignatureAlgorithm);
+        ok(broken(key_info.SignatureAlgorithm == 0 /* WinXP,2003 */) ||
+           !strcmp(key_info.sSignatureAlgorithmName, "RSA"),
+           "key_info.sSignatureAlgorithmName = %s\n", key_info.sSignatureAlgorithmName);
+        ok(key_info.KeySize >= 128, "key_info.KeySize = %d\n", key_info.KeySize);
+    }
+
     status = pQueryContextAttributesA(&context, SECPKG_ATTR_STREAM_SIZES, &sizes);
     ok(status == SEC_E_OK, "QueryContextAttributesW(SECPKG_ATTR_STREAM_SIZES) failed: %08x\n", status);
+
+    status = QueryContextAttributesA(&context, SECPKG_ATTR_NEGOTIATION_INFO, &info);
+    ok(status == SEC_E_UNSUPPORTED_FUNCTION, "QueryContextAttributesA returned %08x\n", status);
 
     reset_buffers(&buffers[0]);
 

@@ -436,6 +436,15 @@ NTSTATUS WINAPI RtlDeleteCriticalSection( RTL_CRITICAL_SECTION *crit )
 NTSTATUS WINAPI RtlpWaitForCriticalSection( RTL_CRITICAL_SECTION *crit )
 {
     LONGLONG timeout = NtCurrentTeb()->Peb->CriticalSectionTimeout.QuadPart / -10000000;
+
+    /* Don't allow blocking on a critical section during process termination */
+    if (RtlDllShutdownInProgress())
+    {
+        WARN( "process %s is shutting down, returning STATUS_SUCCESS\n",
+              debugstr_w(NtCurrentTeb()->Peb->ProcessParameters->ImagePathName.Buffer) );
+        return STATUS_SUCCESS;
+    }
+
     for (;;)
     {
         EXCEPTION_RECORD rec;
@@ -665,7 +674,11 @@ BOOL WINAPI RtlIsCriticalSectionLockedByThread( RTL_CRITICAL_SECTION *crit )
  */
 NTSTATUS WINAPI RtlLeaveCriticalSection( RTL_CRITICAL_SECTION *crit )
 {
-    if (--crit->RecursionCount) interlocked_dec( &crit->LockCount );
+    if (--crit->RecursionCount)
+    {
+        if (crit->RecursionCount > 0) interlocked_dec( &crit->LockCount );
+        else ERR( "section %p is not acquired\n", crit );
+    }
     else
     {
         crit->OwningThread = 0;

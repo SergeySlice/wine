@@ -136,7 +136,7 @@ typedef struct FileDialogImpl {
     LPWSTR custom_filenamelabel;
 
     UINT cctrl_width, cctrl_def_height, cctrls_cols;
-    UINT cctrl_indent;
+    UINT cctrl_indent, dpi_x, dpi_y;
     HWND cctrls_hwnd;
     struct list cctrls;
     UINT_PTR cctrl_next_dlgid;
@@ -424,7 +424,7 @@ static void fill_filename_from_selection(FileDialogImpl *This)
                 (!(This->options & FOS_PICKFOLDERS) &&  (attr & SFGAO_FOLDER))))
                 continue;
 
-            hr = IShellItem_GetDisplayName(psi, SIGDN_PARENTRELATIVEPARSING, &names[valid_count]);
+            hr = IShellItem_GetDisplayName(psi, (This->options & FOS_PICKFOLDERS) ? SIGDN_FILESYSPATH : SIGDN_PARENTRELATIVEPARSING, &names[valid_count]);
             if(SUCCEEDED(hr))
             {
                 len_total += lstrlenW(names[valid_count]) + 3;
@@ -657,7 +657,7 @@ static HRESULT on_default_action(FileDialogImpl *This)
                 if(hr != S_OK)
                 {
                     WCHAR buf[64];
-                    LoadStringW(COMDLG32_hInstance, IDS_INVALID_FOLDERNAME, buf, sizeof(buf)/sizeof(WCHAR));
+                    LoadStringW(COMDLG32_hInstance, IDS_INVALID_FOLDERNAME, buf, ARRAY_SIZE(buf));
 
                     MessageBoxW(This->dlg_hwnd, buf, This->custom_title, MB_OK | MB_ICONEXCLAMATION);
 
@@ -862,6 +862,7 @@ static void ctrl_resize(HWND hctrl, UINT min_width, UINT max_width, BOOL multili
     RECT rc;
     HDC hdc;
     WCHAR *c;
+    HFONT font;
 
     TRACE("\n");
 
@@ -871,7 +872,10 @@ static void ctrl_resize(HWND hctrl, UINT min_width, UINT max_width, BOOL multili
     SendMessageW(hctrl, WM_GETTEXT, len+1, (LPARAM)text);
 
     hdc = GetDC(hctrl);
+    font = (HFONT)SendMessageW(hctrl, WM_GETFONT, 0, 0);
+    font = SelectObject(hdc, font);
     GetTextExtentPoint32W(hdc, text, lstrlenW(text), &size);
+    SelectObject(hdc, font);
     ReleaseDC(hctrl, hdc);
 
     if(len && multiline)
@@ -934,7 +938,7 @@ static void customctrl_resize(FileDialogImpl *This, customctrl *ctrl)
 {
     RECT rc;
     UINT total_height;
-    UINT max_width;
+    UINT max_width, size;
     customctrl *sub_ctrl;
 
     switch(ctrl->type)
@@ -943,7 +947,8 @@ static void customctrl_resize(FileDialogImpl *This, customctrl *ctrl)
     case IDLG_CCTRL_COMBOBOX:
     case IDLG_CCTRL_CHECKBUTTON:
     case IDLG_CCTRL_TEXT:
-        ctrl_resize(ctrl->hwnd, 160, 160, TRUE);
+        size = MulDiv(160, This->dpi_x, USER_DEFAULT_SCREEN_DPI);
+        ctrl_resize(ctrl->hwnd, size, size, TRUE);
         GetWindowRect(ctrl->hwnd, &rc);
         SetWindowPos(ctrl->wrapper_hwnd, NULL, 0, 0, rc.right-rc.left, rc.bottom-rc.top,
                      SWP_NOZORDER|SWP_NOMOVE);
@@ -985,7 +990,8 @@ static void customctrl_resize(FileDialogImpl *This, customctrl *ctrl)
 
         LIST_FOR_EACH_ENTRY(item, &ctrl->sub_items, cctrl_item, entry)
         {
-            ctrl_resize(item->hwnd, 160, 160, TRUE);
+            size = MulDiv(160, This->dpi_x, USER_DEFAULT_SCREEN_DPI);
+            ctrl_resize(item->hwnd, size, size, TRUE);
             SetWindowPos(item->hwnd, NULL, 0, total_height, 0, 0,
                          SWP_NOZORDER|SWP_NOSIZE);
 
@@ -1200,8 +1206,8 @@ static UINT ctrl_container_resize(FileDialogImpl *This, UINT container_width)
     UINT cur_col_pos, cur_row_pos;
     customctrl *ctrl;
     BOOL fits_height;
-    static const UINT cspacing = 90;    /* Columns are spaced with 90px */
-    static const UINT rspacing = 4;     /* Rows are spaced with 4 px. */
+    UINT cspacing = MulDiv(90, This->dpi_x, USER_DEFAULT_SCREEN_DPI);    /* Columns are spaced with 90px */
+    UINT rspacing = MulDiv(4, This->dpi_y, USER_DEFAULT_SCREEN_DPI);     /* Rows are spaced with 4 px. */
 
     /* Given the new width of the container, this function determines the
      * needed height of the container and places the controls according to
@@ -1314,13 +1320,34 @@ static UINT ctrl_container_resize(FileDialogImpl *This, UINT container_width)
     return container_height;
 }
 
+static void ctrl_set_font(customctrl *ctrl, HFONT font)
+{
+    customctrl *sub_ctrl;
+    cctrl_item* item;
+
+    SendMessageW(ctrl->hwnd, WM_SETFONT, (WPARAM)font, TRUE);
+
+    LIST_FOR_EACH_ENTRY(sub_ctrl, &ctrl->sub_cctrls, customctrl, sub_cctrls_entry)
+    {
+        ctrl_set_font(sub_ctrl, font);
+    }
+
+    if (ctrl->type == IDLG_CCTRL_RADIOBUTTONLIST)
+    {
+        LIST_FOR_EACH_ENTRY(item, &ctrl->sub_items, cctrl_item, entry)
+        {
+            SendMessageW(item->hwnd, WM_SETFONT, (WPARAM)font, TRUE);
+        }
+    }
+}
+
 static void ctrl_container_reparent(FileDialogImpl *This, HWND parent)
 {
     LONG wndstyle;
 
     if(parent)
     {
-        customctrl *ctrl, *sub_ctrl;
+        customctrl *ctrl;
         HFONT font;
 
         wndstyle = GetWindowLongW(This->cctrls_hwnd, GWL_STYLE);
@@ -1338,23 +1365,7 @@ static void ctrl_container_reparent(FileDialogImpl *This, HWND parent)
 
         LIST_FOR_EACH_ENTRY(ctrl, &This->cctrls, customctrl, entry)
         {
-            if(font) SendMessageW(ctrl->hwnd, WM_SETFONT, (WPARAM)font, TRUE);
-
-            /* If this is a VisualGroup */
-            LIST_FOR_EACH_ENTRY(sub_ctrl, &ctrl->sub_cctrls, customctrl, sub_cctrls_entry)
-            {
-                if(font) SendMessageW(sub_ctrl->hwnd, WM_SETFONT, (WPARAM)font, TRUE);
-            }
-
-            if (ctrl->type == IDLG_CCTRL_RADIOBUTTONLIST)
-            {
-                cctrl_item* item;
-                LIST_FOR_EACH_ENTRY(item, &ctrl->sub_items, cctrl_item, entry)
-                {
-                    if (font) SendMessageW(item->hwnd, WM_SETFONT, (WPARAM)font, TRUE);
-                }
-            }
-
+            if(font) ctrl_set_font(ctrl, font);
             customctrl_resize(This, ctrl);
         }
     }
@@ -1480,19 +1491,11 @@ static LRESULT CALLBACK radiobuttonlist_proc(HWND hwnd, UINT message, WPARAM wpa
 static HRESULT init_custom_controls(FileDialogImpl *This)
 {
     WNDCLASSW wc;
+    HDC hdc;
     static const WCHAR ctrl_container_classname[] =
         {'i','d','l','g','_','c','o','n','t','a','i','n','e','r','_','p','a','n','e',0};
 
     InitCommonControlsEx(NULL);
-
-    This->cctrl_width = 160;      /* Controls have a fixed width */
-    This->cctrl_indent = 100;
-    This->cctrl_def_height = 23;
-    This->cctrls_cols = 0;
-
-    This->cctrl_next_dlgid = 0x2000;
-    list_init(&This->cctrls);
-    This->cctrl_active_vg = NULL;
 
     if( !GetClassInfoW(COMDLG32_hInstance, ctrl_container_classname, &wc) )
     {
@@ -1516,6 +1519,20 @@ static HRESULT init_custom_controls(FileDialogImpl *This)
                                         COMDLG32_hInstance, This);
     if(!This->cctrls_hwnd)
         return E_FAIL;
+
+    hdc = GetDC(This->cctrls_hwnd);
+    This->dpi_x = GetDeviceCaps(hdc, LOGPIXELSX);
+    This->dpi_y = GetDeviceCaps(hdc, LOGPIXELSY);
+    ReleaseDC(This->cctrls_hwnd, hdc);
+
+    This->cctrl_width = MulDiv(160, This->dpi_x, USER_DEFAULT_SCREEN_DPI);      /* Controls have a fixed width */
+    This->cctrl_indent = MulDiv(100, This->dpi_x, USER_DEFAULT_SCREEN_DPI);
+    This->cctrl_def_height = MulDiv(23, This->dpi_y, USER_DEFAULT_SCREEN_DPI);
+    This->cctrls_cols = 0;
+
+    This->cctrl_next_dlgid = 0x2000;
+    list_init(&This->cctrls);
+    This->cctrl_active_vg = NULL;
 
     SetWindowLongW(This->cctrls_hwnd, GWL_STYLE, WS_TABSTOP);
 
@@ -1918,6 +1935,8 @@ static void update_control_text(FileDialogImpl *This)
     HWND hitem;
     LPCWSTR custom_okbutton;
     cctrl_item* item;
+    UINT min_width = MulDiv(50, This->dpi_x, USER_DEFAULT_SCREEN_DPI);
+    UINT max_width = MulDiv(250, This->dpi_x, USER_DEFAULT_SCREEN_DPI);
 
     if(This->custom_title)
         SetWindowTextW(This->dlg_hwnd, This->custom_title);
@@ -1931,21 +1950,21 @@ static void update_control_text(FileDialogImpl *This)
        (hitem = GetDlgItem(This->dlg_hwnd, IDOK)))
     {
         SetWindowTextW(hitem, custom_okbutton);
-        ctrl_resize(hitem, 50, 250, FALSE);
+        ctrl_resize(hitem, min_width, max_width, FALSE);
     }
 
     if(This->custom_cancelbutton &&
        (hitem = GetDlgItem(This->dlg_hwnd, IDCANCEL)))
     {
         SetWindowTextW(hitem, This->custom_cancelbutton);
-        ctrl_resize(hitem, 50, 250, FALSE);
+        ctrl_resize(hitem, min_width, max_width, FALSE);
     }
 
     if(This->custom_filenamelabel &&
        (hitem = GetDlgItem(This->dlg_hwnd, IDC_FILENAMESTATIC)))
     {
         SetWindowTextW(hitem, This->custom_filenamelabel);
-        ctrl_resize(hitem, 50, 250, FALSE);
+        ctrl_resize(hitem, min_width, max_width, FALSE);
     }
 }
 
@@ -2486,10 +2505,20 @@ static HRESULT WINAPI IFileDialog2_fnSetOptions(IFileDialog2 *iface, FILEOPENDIA
     FileDialogImpl *This = impl_from_IFileDialog2(iface);
     TRACE("%p (0x%x)\n", This, fos);
 
+    if (fos & ~(FOS_OVERWRITEPROMPT | FOS_STRICTFILETYPES | FOS_NOCHANGEDIR | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM
+            | FOS_ALLNONSTORAGEITEMS | FOS_NOVALIDATE | FOS_ALLOWMULTISELECT | FOS_PATHMUSTEXIST | FOS_FILEMUSTEXIST
+            | FOS_CREATEPROMPT | FOS_SHAREAWARE | FOS_NOREADONLYRETURN | FOS_NOTESTFILECREATE | FOS_HIDEMRUPLACES
+            | FOS_HIDEPINNEDPLACES | FOS_NODEREFERENCELINKS | FOS_DONTADDTORECENT | FOS_FORCESHOWHIDDEN
+            | FOS_DEFAULTNOMINIMODE | FOS_FORCEPREVIEWPANEON | FOS_SUPPORTSTREAMABLEITEMS))
+    {
+        WARN("Invalid option %#x\n", fos);
+        return E_INVALIDARG;
+    }
+
     if( !(This->options & FOS_PICKFOLDERS) && (fos & FOS_PICKFOLDERS) )
     {
         WCHAR buf[30];
-        LoadStringW(COMDLG32_hInstance, IDS_SELECT_FOLDER, buf, sizeof(buf)/sizeof(WCHAR));
+        LoadStringW(COMDLG32_hInstance, IDS_SELECT_FOLDER, buf, ARRAY_SIZE(buf));
         IFileDialog2_SetTitle(iface, buf);
     }
 
@@ -4578,7 +4607,7 @@ static HRESULT FileDialog_constructor(IUnknown *pUnkOuter, REFIID riid, void **p
     if(pUnkOuter)
         return CLASS_E_NOAGGREGATION;
 
-    fdimpl = HeapAlloc(GetProcessHeap(), 0, sizeof(FileDialogImpl));
+    fdimpl = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(FileDialogImpl));
     if(!fdimpl)
         return E_OUTOFMEMORY;
 
@@ -4604,32 +4633,12 @@ static HRESULT FileDialog_constructor(IUnknown *pUnkOuter, REFIID riid, void **p
         fdimpl->u.IFileSaveDialog_iface.lpVtbl = &vt_IFileSaveDialog;
         fdimpl->options = FOS_OVERWRITEPROMPT | FOS_NOREADONLYRETURN | FOS_PATHMUSTEXIST | FOS_NOCHANGEDIR;
 
-        LoadStringW(COMDLG32_hInstance, IDS_SAVE, buf, sizeof(buf)/sizeof(WCHAR));
+        LoadStringW(COMDLG32_hInstance, IDS_SAVE, buf, ARRAY_SIZE(buf));
         fdimpl->custom_title = StrDupW(buf);
         fdimpl->custom_okbutton = StrDupW(buf);
     }
 
-    fdimpl->filterspecs = NULL;
-    fdimpl->filterspec_count = 0;
-    fdimpl->filetypeindex = 0;
-
-    fdimpl->psia_selection = fdimpl->psia_results = NULL;
-    fdimpl->psi_setfolder = fdimpl->psi_folder = NULL;
-
     list_init(&fdimpl->events_clients);
-    fdimpl->events_next_cookie = 0;
-
-    fdimpl->dlg_hwnd = NULL;
-    fdimpl->peb = NULL;
-
-    fdimpl->set_filename = NULL;
-    fdimpl->default_ext = NULL;
-    fdimpl->custom_cancelbutton = fdimpl->custom_filenamelabel = NULL;
-
-    fdimpl->client_guid = GUID_NULL;
-
-    fdimpl->hmenu_opendropdown = NULL;
-    fdimpl->hfont_opendropdown = NULL;
 
     /* FIXME: The default folder setting should be restored for the
      * application if it was previously set. */

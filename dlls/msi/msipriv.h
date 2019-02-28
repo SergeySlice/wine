@@ -38,6 +38,9 @@
 #include "wine/list.h"
 #include "wine/debug.h"
 
+#include "msiserver.h"
+#include "winemsi.h"
+
 static const BOOL is_64bit = sizeof(void *) > sizeof(int);
 BOOL is_wow64 DECLSPEC_HIDDEN;
 
@@ -78,7 +81,7 @@ struct tagMSIOBJECTHDR
 };
 
 #define MSI_INITIAL_MEDIA_TRANSFORM_OFFSET 10000
-#define MSI_INITIAL_MEDIA_TRANSFORM_DISKID 30000
+#define MSI_INITIAL_MEDIA_TRANSFORM_DISKID 32000
 
 typedef struct tagMSISTREAM
 {
@@ -129,7 +132,6 @@ typedef struct tagMSIFIELD
     union
     {
         INT iVal;
-        INT_PTR pVal;
         LPWSTR szwVal;
         IStream *stream;
     } u;
@@ -140,6 +142,7 @@ typedef struct tagMSIRECORD
 {
     MSIOBJECTHDR hdr;
     UINT count;       /* as passed to MsiCreateRecord */
+    UINT64 cookie;
     MSIFIELD fields[1]; /* nb. array size is count+1 */
 } MSIRECORD;
 
@@ -170,6 +173,7 @@ typedef struct tagMSIMEDIAINFO
     LPWSTR disk_prompt;
     LPWSTR cabinet;
     LPWSTR volume_label;
+    LPWSTR last_volume;
     BOOL is_continuous;
     BOOL is_extracted;
     WCHAR sourcedir[MAX_PATH];
@@ -192,6 +196,7 @@ typedef struct tagMSIPATCHINFO
     LPWSTR filename;
     LPWSTR localfile;
     MSIPATCHSTATE state;
+    DWORD uninstallable;
     BOOL delete_on_close;
     BOOL registered;
     UINT disk_id;
@@ -202,7 +207,6 @@ typedef struct tagMSIBINARY
     struct list entry;
     WCHAR *source;
     WCHAR *tmpfile;
-    HMODULE module;
 } MSIBINARY;
 
 typedef struct _column_info
@@ -239,10 +243,25 @@ typedef struct tagMSIVIEWOPS
     UINT (*fetch_stream)( struct tagMSIVIEW *view, UINT row, UINT col, IStream **stm );
 
     /*
-     * get_row - gets values from a row
-     *
+     * set_int - set the integer value at {row, col}
+     * This function has undefined behaviour if the column does not contain
+     * integers.
      */
-    UINT (*get_row)( struct tagMSIVIEW *view, UINT row, MSIRECORD **rec );
+    UINT (*set_int)( struct tagMSIVIEW *view, UINT row, UINT col, int val );
+
+    /*
+     * set_string - set the string value at {row, col}
+     * This function has undefined behaviour if the column does not contain
+     * strings.
+     */
+    UINT (*set_string)( struct tagMSIVIEW *view, UINT row, UINT col, const WCHAR *val, int len );
+
+    /*
+     * set_stream - set the stream value at {row, col}
+     * This function has undefined behaviour if the column does not contain
+     * streams.
+     */
+    UINT (*set_stream)( struct tagMSIVIEW *view, UINT row, UINT col, IStream *stream );
 
     /*
      * set_row - sets values in a row as specified by mask
@@ -298,19 +317,6 @@ typedef struct tagMSIVIEWOPS
     UINT (*delete)( struct tagMSIVIEW * );
 
     /*
-     * find_matching_rows - iterates through rows that match a value
-     *
-     * If the column type is a string then a string ID should be passed in.
-     *  If the value to be looked up is an integer then no transformation of
-     *  the input value is required, except if the column is a string, in which
-     *  case a string ID should be passed in.
-     * The handle is an input/output parameter that keeps track of the current
-     *  position in the iteration. It must be initialised to zero before the
-     *  first call and continued to be passed in to subsequent calls.
-     */
-    UINT (*find_matching_rows)( struct tagMSIVIEW *view, UINT col, UINT val, UINT *row, MSIITERHANDLE *handle );
-
-    /*
      * add_ref - increases the reference count of the table
      */
     UINT (*add_ref)( struct tagMSIVIEW *view );
@@ -324,11 +330,6 @@ typedef struct tagMSIVIEWOPS
      * add_column - adds a column to the table
      */
     UINT (*add_column)( struct tagMSIVIEW *view, LPCWSTR table, UINT number, LPCWSTR column, UINT type, BOOL hold );
-
-    /*
-     * remove_column - removes the column represented by table name and column number from the table
-     */
-    UINT (*remove_column)( struct tagMSIVIEW *view, LPCWSTR table, UINT number );
 
     /*
      * sort - orders the table by columns
@@ -358,7 +359,8 @@ enum platform
     PLATFORM_INTEL,
     PLATFORM_INTEL64,
     PLATFORM_X64,
-    PLATFORM_ARM
+    PLATFORM_ARM,
+    PLATFORM_ARM64
 };
 
 enum clr_version
@@ -368,6 +370,15 @@ enum clr_version
     CLR_VERSION_V20,
     CLR_VERSION_V40,
     CLR_VERSION_MAX
+};
+
+enum script
+{
+    SCRIPT_NONE     = -1,
+    SCRIPT_INSTALL  = 0,
+    SCRIPT_COMMIT   = 1,
+    SCRIPT_ROLLBACK = 2,
+    SCRIPT_MAX      = 3
 };
 
 typedef struct tagMSIPACKAGE
@@ -389,6 +400,8 @@ typedef struct tagMSIPACKAGE
     struct list cabinet_streams;
     LPWSTR ActionFormat;
     LPWSTR LastAction;
+    LPWSTR LastActionTemplate;
+    UINT   LastActionResult;
     UINT   action_progress_increment;
     HANDLE log_file;
     IAssemblyCache *cache_net[CLR_VERSION_MAX];
@@ -400,18 +413,27 @@ typedef struct tagMSIPACKAGE
     struct list mimes;
     struct list appids;
 
-    struct tagMSISCRIPT *script;
+    enum script script;
+    LPWSTR *script_actions[SCRIPT_MAX];
+    int    script_actions_count[SCRIPT_MAX];
+    LPWSTR *unique_actions;
+    int    unique_actions_count;
+    BOOL   ExecuteSequenceRun;
+    UINT   InWhatSequence;
 
     struct list RunningActions;
 
-    LPWSTR BaseURL;
+    HANDLE custom_server_32_process;
+    HANDLE custom_server_64_process;
+    HANDLE custom_server_32_pipe;
+    HANDLE custom_server_64_pipe;
+
     LPWSTR PackagePath;
     LPWSTR ProductCode;
     LPWSTR localfile;
     BOOL delete_on_close;
 
     INSTALLUILEVEL ui_level;
-    UINT CurrentInstallState;
     msi_dialog *dialog;
     LPWSTR next_dialog;
     float center_x;
@@ -431,7 +453,7 @@ typedef struct tagMSIPACKAGE
     unsigned char need_reboot_at_end : 1;
     unsigned char need_reboot_now : 1;
     unsigned char need_rollback : 1;
-    unsigned char full_reinstall : 1;
+    unsigned char rpc_server_started : 1;
 } MSIPACKAGE;
 
 typedef struct tagMSIPREVIEW
@@ -542,8 +564,6 @@ typedef struct tagMSIFOLDER
     LPWSTR ResolvedSource;
     enum folder_state State;
     BOOL persistent;
-    INT Cost;
-    INT Space;
 } MSIFOLDER;
 
 typedef struct tagFolderList
@@ -677,28 +697,8 @@ struct tagMSIMIME
     MSICLASS *Class;
 };
 
-enum SCRIPTS
-{
-    SCRIPT_NONE     = -1,
-    SCRIPT_INSTALL  = 0,
-    SCRIPT_COMMIT   = 1,
-    SCRIPT_ROLLBACK = 2,
-    SCRIPT_MAX      = 3
-};
-
 #define SEQUENCE_UI       0x1
 #define SEQUENCE_EXEC     0x2
-#define SEQUENCE_INSTALL  0x10
-
-typedef struct tagMSISCRIPT
-{
-    LPWSTR  *Actions[SCRIPT_MAX];
-    UINT    ActionCount[SCRIPT_MAX];
-    BOOL    ExecuteSequenceRun;
-    UINT    InWhatSequence;
-    LPWSTR  *UniqueActions;
-    UINT    UniqueActionsCount;
-} MSISCRIPT;
 
 #define MSIHANDLETYPE_ANY 0
 #define MSIHANDLETYPE_DATABASE 1
@@ -737,15 +737,13 @@ typedef struct {
 UINT msi_strcpy_to_awstring(const WCHAR *, int, awstring *, DWORD *) DECLSPEC_HIDDEN;
 
 /* msi server interface */
-extern HRESULT create_msi_custom_remote( IUnknown *pOuter, LPVOID *ppObj ) DECLSPEC_HIDDEN;
-extern HRESULT create_msi_remote_package( IUnknown *pOuter, LPVOID *ppObj ) DECLSPEC_HIDDEN;
-extern HRESULT create_msi_remote_database( IUnknown *pOuter, LPVOID *ppObj ) DECLSPEC_HIDDEN;
-extern IUnknown *msi_get_remote(MSIHANDLE handle) DECLSPEC_HIDDEN;
+extern MSIHANDLE msi_get_remote(MSIHANDLE handle) DECLSPEC_HIDDEN;
+extern LONG WINAPI rpc_filter(EXCEPTION_POINTERS *eptr) DECLSPEC_HIDDEN;
 
 /* handle functions */
 extern void *msihandle2msiinfo(MSIHANDLE handle, UINT type) DECLSPEC_HIDDEN;
 extern MSIHANDLE alloc_msihandle( MSIOBJECTHDR * ) DECLSPEC_HIDDEN;
-extern MSIHANDLE alloc_msi_remote_handle( IUnknown *unk ) DECLSPEC_HIDDEN;
+extern MSIHANDLE alloc_msi_remote_handle(MSIHANDLE remote) DECLSPEC_HIDDEN;
 extern void *alloc_msiobject(UINT type, UINT size, msihandledestructor destroy ) DECLSPEC_HIDDEN;
 extern void msiobj_addref(MSIOBJECTHDR *) DECLSPEC_HIDDEN;
 extern int msiobj_release(MSIOBJECTHDR *) DECLSPEC_HIDDEN;
@@ -759,13 +757,7 @@ extern UINT msi_commit_streams( MSIDATABASE *db ) DECLSPEC_HIDDEN;
 
 
 /* string table functions */
-enum StringPersistence
-{
-    StringPersistent = 0,
-    StringNonPersistent = 1
-};
-
-extern BOOL msi_add_string( string_table *st, const WCHAR *data, int len, enum StringPersistence persistence ) DECLSPEC_HIDDEN;
+extern BOOL msi_add_string( string_table *st, const WCHAR *data, int len, BOOL persistent ) DECLSPEC_HIDDEN;
 extern UINT msi_string2id( const string_table *st, const WCHAR *data, int len, UINT *id ) DECLSPEC_HIDDEN;
 extern VOID msi_destroy_stringtable( string_table *st ) DECLSPEC_HIDDEN;
 extern const WCHAR *msi_string_lookup( const string_table *st, UINT id, int *len ) DECLSPEC_HIDDEN;
@@ -799,11 +791,13 @@ extern void msi_free_patchinfo( MSIPATCHINFO *patch ) DECLSPEC_HIDDEN;
 
 /* action internals */
 extern UINT MSI_InstallPackage( MSIPACKAGE *, LPCWSTR, LPCWSTR ) DECLSPEC_HIDDEN;
-extern UINT ACTION_DialogBox( MSIPACKAGE*, LPCWSTR) DECLSPEC_HIDDEN;
+extern INT ACTION_ShowDialog( MSIPACKAGE*, LPCWSTR) DECLSPEC_HIDDEN;
+extern INT ACTION_DialogBox( MSIPACKAGE*, LPCWSTR) DECLSPEC_HIDDEN;
 extern UINT ACTION_ForceReboot(MSIPACKAGE *package) DECLSPEC_HIDDEN;
 extern UINT MSI_Sequence( MSIPACKAGE *package, LPCWSTR szTable ) DECLSPEC_HIDDEN;
 extern UINT MSI_SetFeatureStates( MSIPACKAGE *package ) DECLSPEC_HIDDEN;
 extern UINT msi_parse_command_line( MSIPACKAGE *package, LPCWSTR szCommandLine, BOOL preserve_case ) DECLSPEC_HIDDEN;
+extern const WCHAR *msi_get_command_line_option( const WCHAR *cmd, const WCHAR *option, UINT *len ) DECLSPEC_HIDDEN;
 extern UINT msi_schedule_action( MSIPACKAGE *package, UINT script, const WCHAR *action ) DECLSPEC_HIDDEN;
 extern INSTALLSTATE msi_get_component_action( MSIPACKAGE *package, MSICOMPONENT *comp ) DECLSPEC_HIDDEN;
 extern INSTALLSTATE msi_get_feature_action( MSIPACKAGE *package, MSIFEATURE *feature ) DECLSPEC_HIDDEN;
@@ -818,13 +812,11 @@ extern UINT MSI_RecordGetIStream( MSIRECORD *, UINT, IStream **) DECLSPEC_HIDDEN
 extern const WCHAR *MSI_RecordGetString( const MSIRECORD *, UINT ) DECLSPEC_HIDDEN;
 extern MSIRECORD *MSI_CreateRecord( UINT ) DECLSPEC_HIDDEN;
 extern UINT MSI_RecordSetInteger( MSIRECORD *, UINT, int ) DECLSPEC_HIDDEN;
-extern UINT MSI_RecordSetIntPtr( MSIRECORD *, UINT, INT_PTR ) DECLSPEC_HIDDEN;
 extern UINT MSI_RecordSetStringW( MSIRECORD *, UINT, LPCWSTR ) DECLSPEC_HIDDEN;
 extern BOOL MSI_RecordIsNull( MSIRECORD *, UINT ) DECLSPEC_HIDDEN;
 extern UINT MSI_RecordGetStringW( MSIRECORD * , UINT, LPWSTR, LPDWORD) DECLSPEC_HIDDEN;
 extern UINT MSI_RecordGetStringA( MSIRECORD *, UINT, LPSTR, LPDWORD) DECLSPEC_HIDDEN;
 extern int MSI_RecordGetInteger( MSIRECORD *, UINT ) DECLSPEC_HIDDEN;
-extern INT_PTR MSI_RecordGetIntPtr( MSIRECORD *, UINT ) DECLSPEC_HIDDEN;
 extern UINT MSI_RecordReadStream( MSIRECORD *, UINT, char *, LPDWORD) DECLSPEC_HIDDEN;
 extern UINT MSI_RecordSetStream(MSIRECORD *, UINT, IStream *) DECLSPEC_HIDDEN;
 extern UINT MSI_RecordGetFieldCount( const MSIRECORD *rec ) DECLSPEC_HIDDEN;
@@ -836,6 +828,11 @@ extern BOOL MSI_RecordsAreEqual( MSIRECORD *, MSIRECORD * ) DECLSPEC_HIDDEN;
 extern BOOL MSI_RecordsAreFieldsEqual(MSIRECORD *a, MSIRECORD *b, UINT field) DECLSPEC_HIDDEN;
 extern UINT msi_record_set_string(MSIRECORD *, UINT, const WCHAR *, int) DECLSPEC_HIDDEN;
 extern const WCHAR *msi_record_get_string(const MSIRECORD *, UINT, int *) DECLSPEC_HIDDEN;
+extern void dump_record(MSIRECORD *) DECLSPEC_HIDDEN;
+extern UINT unmarshal_record(const struct wire_record *in, MSIHANDLE *out) DECLSPEC_HIDDEN;
+extern struct wire_record *marshal_record(MSIHANDLE handle) DECLSPEC_HIDDEN;
+extern void free_remote_record(struct wire_record *rec) DECLSPEC_HIDDEN;
+extern UINT copy_remote_record(const struct wire_record *rec, MSIHANDLE handle) DECLSPEC_HIDDEN;
 
 /* stream internals */
 extern void enum_stream_names( IStorage *stg ) DECLSPEC_HIDDEN;
@@ -865,9 +862,11 @@ extern UINT msi_view_get_row(MSIDATABASE *, MSIVIEW *, UINT, MSIRECORD **) DECLS
 extern UINT MSI_SetInstallLevel( MSIPACKAGE *package, int iInstallLevel ) DECLSPEC_HIDDEN;
 
 /* package internals */
-extern MSIPACKAGE *MSI_CreatePackage( MSIDATABASE *, LPCWSTR ) DECLSPEC_HIDDEN;
-extern UINT MSI_OpenPackageW( LPCWSTR szPackage, MSIPACKAGE **pPackage ) DECLSPEC_HIDDEN;
+#define WINE_OPENPACKAGEFLAGS_RECACHE 0x80000000
+extern MSIPACKAGE *MSI_CreatePackage( MSIDATABASE * ) DECLSPEC_HIDDEN;
+extern UINT MSI_OpenPackageW( LPCWSTR szPackage, DWORD dwOptions, MSIPACKAGE **pPackage ) DECLSPEC_HIDDEN;
 extern UINT MSI_SetTargetPathW( MSIPACKAGE *, LPCWSTR, LPCWSTR ) DECLSPEC_HIDDEN;
+extern INT MSI_ProcessMessageVerbatim( MSIPACKAGE *, INSTALLMESSAGE, MSIRECORD * ) DECLSPEC_HIDDEN;
 extern INT MSI_ProcessMessage( MSIPACKAGE *, INSTALLMESSAGE, MSIRECORD * ) DECLSPEC_HIDDEN;
 extern MSICONDITION MSI_EvaluateConditionW( MSIPACKAGE *, LPCWSTR ) DECLSPEC_HIDDEN;
 extern UINT MSI_GetComponentStateW( MSIPACKAGE *, LPCWSTR, INSTALLSTATE *, INSTALLSTATE * ) DECLSPEC_HIDDEN;
@@ -946,7 +945,6 @@ extern LONG msi_reg_set_subkey_val( HKEY hkey, LPCWSTR path, LPCWSTR name, LPCWS
 extern void msi_dialog_check_messages( HANDLE ) DECLSPEC_HIDDEN;
 extern void msi_dialog_destroy( msi_dialog* ) DECLSPEC_HIDDEN;
 extern void msi_dialog_unregister_class( void ) DECLSPEC_HIDDEN;
-extern UINT msi_spawn_error_dialog( MSIPACKAGE*, LPWSTR, LPWSTR ) DECLSPEC_HIDDEN;
 
 /* summary information */
 extern UINT msi_get_suminfo( IStorage *stg, UINT uiUpdateCount, MSISUMMARYINFO **si ) DECLSPEC_HIDDEN;
@@ -971,15 +969,17 @@ extern INSTALLUI_HANDLERA gUIHandlerA DECLSPEC_HIDDEN;
 extern INSTALLUI_HANDLERW gUIHandlerW DECLSPEC_HIDDEN;
 extern INSTALLUI_HANDLER_RECORD gUIHandlerRecord DECLSPEC_HIDDEN;
 extern DWORD gUIFilter DECLSPEC_HIDDEN;
+extern DWORD gUIFilterRecord DECLSPEC_HIDDEN;
 extern LPVOID gUIContext DECLSPEC_HIDDEN;
+extern LPVOID gUIContextRecord DECLSPEC_HIDDEN;
 extern WCHAR *gszLogFile DECLSPEC_HIDDEN;
 extern HINSTANCE msi_hInstance DECLSPEC_HIDDEN;
 
 /* action related functions */
-extern UINT ACTION_PerformAction(MSIPACKAGE *package, const WCHAR *action, UINT script) DECLSPEC_HIDDEN;
-extern UINT ACTION_PerformUIAction(MSIPACKAGE *package, const WCHAR *action, UINT script) DECLSPEC_HIDDEN;
+extern UINT ACTION_PerformAction(MSIPACKAGE *package, const WCHAR *action) DECLSPEC_HIDDEN;
 extern void ACTION_FinishCustomActions( const MSIPACKAGE* package) DECLSPEC_HIDDEN;
-extern UINT ACTION_CustomAction(MSIPACKAGE *, const WCHAR *, UINT) DECLSPEC_HIDDEN;
+extern UINT ACTION_CustomAction(MSIPACKAGE *package, const WCHAR *action) DECLSPEC_HIDDEN;
+extern void custom_stop_server(HANDLE process, HANDLE pipe) DECLSPEC_HIDDEN;
 
 /* actions in other modules */
 extern UINT ACTION_AppSearch(MSIPACKAGE *package) DECLSPEC_HIDDEN;
@@ -1016,7 +1016,7 @@ extern void msi_resolve_target_folder(MSIPACKAGE *package, const WCHAR *name, BO
 extern WCHAR *msi_normalize_path(const WCHAR *) DECLSPEC_HIDDEN;
 extern WCHAR *msi_resolve_file_source(MSIPACKAGE *package, MSIFILE *file) DECLSPEC_HIDDEN;
 extern const WCHAR *msi_get_target_folder(MSIPACKAGE *package, const WCHAR *name) DECLSPEC_HIDDEN;
-extern void msi_reset_folders( MSIPACKAGE *package, BOOL source ) DECLSPEC_HIDDEN;
+extern void msi_reset_source_folders( MSIPACKAGE *package ) DECLSPEC_HIDDEN;
 extern MSICOMPONENT *msi_get_loaded_component(MSIPACKAGE *package, const WCHAR *Component) DECLSPEC_HIDDEN;
 extern MSIFEATURE *msi_get_loaded_feature(MSIPACKAGE *package, const WCHAR *Feature) DECLSPEC_HIDDEN;
 extern MSIFILE *msi_get_loaded_file(MSIPACKAGE *package, const WCHAR *file) DECLSPEC_HIDDEN;
@@ -1031,7 +1031,6 @@ extern WCHAR *msi_create_component_advertise_string(MSIPACKAGE *, MSICOMPONENT *
 extern void ACTION_UpdateComponentStates(MSIPACKAGE *package, MSIFEATURE *feature) DECLSPEC_HIDDEN;
 extern UINT msi_register_unique_action(MSIPACKAGE *, const WCHAR *) DECLSPEC_HIDDEN;
 extern BOOL msi_action_is_unique(const MSIPACKAGE *, const WCHAR *) DECLSPEC_HIDDEN;
-extern WCHAR *msi_build_error_string(MSIPACKAGE *, UINT, DWORD, ...) DECLSPEC_HIDDEN;
 extern UINT msi_set_last_used_source(LPCWSTR product, LPCWSTR usersid,
                         MSIINSTALLCONTEXT context, DWORD options, LPCWSTR value) DECLSPEC_HIDDEN;
 extern UINT msi_create_empty_local_file(LPWSTR path, LPCWSTR suffix) DECLSPEC_HIDDEN;
@@ -1047,6 +1046,10 @@ extern WCHAR *msi_get_assembly_path(MSIPACKAGE *, const WCHAR *) DECLSPEC_HIDDEN
 extern WCHAR *msi_font_version_from_file(const WCHAR *) DECLSPEC_HIDDEN;
 extern WCHAR **msi_split_string(const WCHAR *, WCHAR) DECLSPEC_HIDDEN;
 extern UINT msi_set_original_database_property(MSIDATABASE *, const WCHAR *) DECLSPEC_HIDDEN;
+extern WCHAR *msi_get_error_message(MSIDATABASE *, int) DECLSPEC_HIDDEN;
+extern UINT msi_strncpyWtoA(const WCHAR *str, int len, char *buf, DWORD *sz, BOOL remote) DECLSPEC_HIDDEN;
+extern UINT msi_strncpyW(const WCHAR *str, int len, WCHAR *buf, DWORD *sz) DECLSPEC_HIDDEN;
+extern WCHAR *msi_get_package_code(MSIDATABASE *db) DECLSPEC_HIDDEN;
 
 /* media */
 
@@ -1096,7 +1099,6 @@ extern DWORD call_script(MSIHANDLE hPackage, INT type, LPCWSTR script, LPCWSTR f
 
 /* User interface messages from the actions */
 extern void msi_ui_progress(MSIPACKAGE *, int, int, int, int) DECLSPEC_HIDDEN;
-extern void msi_ui_actiondata(MSIPACKAGE *, const WCHAR *, MSIRECORD *) DECLSPEC_HIDDEN;
 
 /* common strings */
 static const WCHAR szSourceDir[] = {'S','o','u','r','c','e','D','i','r',0};
@@ -1176,10 +1178,12 @@ static const WCHAR szIntel64[] = {'I','n','t','e','l','6','4',0};
 static const WCHAR szX64[] = {'x','6','4',0};
 static const WCHAR szAMD64[] = {'A','M','D','6','4',0};
 static const WCHAR szARM[] = {'A','r','m',0};
+static const WCHAR szARM64[] = {'A','r','m','6','4',0};
 static const WCHAR szWow6432NodeCLSID[] = {'W','o','w','6','4','3','2','N','o','d','e','\\','C','L','S','I','D',0};
 static const WCHAR szStreams[] = {'_','S','t','r','e','a','m','s',0};
 static const WCHAR szStorages[] = {'_','S','t','o','r','a','g','e','s',0};
 static const WCHAR szMsiPublishAssemblies[] = {'M','s','i','P','u','b','l','i','s','h','A','s','s','e','m','b','l','i','e','s',0};
+static const WCHAR szMsiUnpublishAssemblies[] = {'M','s','i','U','n','p','u','b','l','i','s','h','A','s','s','e','m','b','l','i','e','s',0};
 static const WCHAR szCostingComplete[] = {'C','o','s','t','i','n','g','C','o','m','p','l','e','t','e',0};
 static const WCHAR szTempFolder[] = {'T','e','m','p','F','o','l','d','e','r',0};
 static const WCHAR szDatabase[] = {'D','A','T','A','B','A','S','E',0};
@@ -1198,6 +1202,9 @@ static const WCHAR szData[] = {'D','a','t','a',0};
 static const WCHAR szLangResource[] = {'\\','V','a','r','F','i','l','e','I','n','f','o','\\','T','r','a','n','s','l','a','t','i','o','n',0};
 static const WCHAR szInstallLocation[] = {'I','n','s','t','a','l','l','L','o','c','a','t','i','o','n',0};
 static const WCHAR szProperty[] = {'P','r','o','p','e','r','t','y',0};
+static const WCHAR szUninstallable[] = {'U','n','i','n','s','t','a','l','l','a','b','l','e',0};
+static const WCHAR szEXECUTEACTION[] = {'E','X','E','C','U','T','E','A','C','T','I','O','N',0};
+static const WCHAR szProductToBeRegistered[] = {'P','r','o','d','u','c','t','T','o','B','e','R','e','g','i','s','t','e','r','e','d',0};
 
 /* memory allocation macro functions */
 static void *msi_alloc( size_t len ) __WINE_ALLOC_SIZE(1);

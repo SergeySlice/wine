@@ -1,6 +1,6 @@
 @ stdcall ConvertDefaultLocale(long) kernel32.ConvertDefaultLocale
 @ stub FindNLSString
-@ stub FindNLSStringEx
+@ stdcall FindNLSStringEx(wstr long wstr long wstr long ptr ptr ptr long) kernel32.FindNLSStringEx
 @ stdcall GetACP() kernel32.GetACP
 @ stub GetCPFileNameFromRegistry
 @ stdcall GetCPInfo(long ptr) kernel32.GetCPInfo
@@ -39,7 +39,7 @@
 @ stub NlsUpdateLocale
 @ stub NlsUpdateSystemLocale
 @ stub NlsWriteEtwEvent
-@ stub ResolveLocaleName
+@ stdcall ResolveLocaleName(wstr ptr long) kernel32.ResolveLocaleName
 @ stdcall SetCalendarInfoW(long long long wstr) kernel32.SetCalendarInfoW
 @ stdcall SetLocaleInfoW(long long wstr) kernel32.SetLocaleInfoW
 @ stdcall SetThreadLocale(long) kernel32.SetThreadLocale

@@ -17,15 +17,6 @@
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
- *
- * NOTES
- *
- * This code was audited for completeness against the documented features
- * of Comctl32.dll version 6.0 on Oct. 8, 2004, by Dimitrie O. Paun.
- * 
- * Unless otherwise noted, we believe this code to be complete, as per
- * the specification mentioned above.
- * If you discover missing features, or bugs, please note them below.
  */
 
 #include "config.h"
@@ -58,6 +49,14 @@ typedef struct
     SCROLLBAR_INFO horz;
     SCROLLBAR_INFO vert;
 } WINSCROLLBAR_INFO, *LPWINSCROLLBAR_INFO;
+
+typedef struct
+{
+    DWORD magic;
+    SCROLLBAR_INFO info;
+} SCROLLBAR_WNDDATA;
+
+#define SCROLLBAR_MAGIC 0x5c6011ba
 
   /* Minimum size of the rectangle between the arrows */
 #define SCROLL_MIN_RECT  4
@@ -127,7 +126,7 @@ const struct builtin_class_descr SCROLL_builtin_class =
     scrollbarW,             /* name */
     CS_DBLCLKS | CS_VREDRAW | CS_HREDRAW | CS_PARENTDC, /* style  */
     WINPROC_SCROLLBAR,      /* proc */
-    sizeof(SCROLLBAR_INFO), /* extra */
+    sizeof(SCROLLBAR_WNDDATA), /* extra */
     IDC_ARROW,              /* cursor */
     0                       /* brush */
 };
@@ -168,7 +167,13 @@ static SCROLLBAR_INFO *SCROLL_GetInternalInfo( HWND hwnd, INT nBar, BOOL alloc )
             if (wndPtr->pScroll) infoPtr = &((LPWINSCROLLBAR_INFO)wndPtr->pScroll)->vert;
             break;
         case SB_CTL:
-            infoPtr = (SCROLLBAR_INFO *)wndPtr->wExtra;
+            if (wndPtr->cbWndExtra >= sizeof(SCROLLBAR_WNDDATA))
+            {
+                SCROLLBAR_WNDDATA *data = (SCROLLBAR_WNDDATA*)wndPtr->wExtra;
+                if (data->magic == SCROLLBAR_MAGIC)
+                    infoPtr = &data->info;
+            }
+            if (!infoPtr) WARN("window is not a scrollbar control\n");
             break;
         case SB_BOTH:
             WARN("with SB_BOTH\n");
@@ -1090,15 +1095,17 @@ static void SCROLL_HandleScrollEvent( HWND hwnd, INT nBar, UINT msg, POINT pt)
 void SCROLL_TrackScrollBar( HWND hwnd, INT scrollbar, POINT pt )
 {
     MSG msg;
+    RECT rect;
 
     if (scrollbar != SB_CTL)
     {
-        RECT rect;
         WIN_GetRectangles( hwnd, COORDS_CLIENT, &rect, NULL );
         ScreenToClient( hwnd, &pt );
         pt.x -= rect.left;
         pt.y -= rect.top;
     }
+    else
+        rect.left = rect.top = 0;
 
     SCROLL_HandleScrollEvent( hwnd, scrollbar, WM_LBUTTONDOWN, pt );
 
@@ -1110,8 +1117,8 @@ void SCROLL_TrackScrollBar( HWND hwnd, INT scrollbar, POINT pt )
             msg.message == WM_MOUSEMOVE ||
             (msg.message == WM_SYSTIMER && msg.wParam == SCROLL_TIMER))
         {
-            pt.x = (short)LOWORD(msg.lParam);
-            pt.y = (short)HIWORD(msg.lParam);
+            pt.x = (short)LOWORD(msg.lParam) - rect.left;
+            pt.y = (short)HIWORD(msg.lParam) - rect.top;
             SCROLL_HandleScrollEvent( hwnd, scrollbar, msg.message, pt );
         }
         else
@@ -1139,17 +1146,27 @@ void SCROLL_TrackScrollBar( HWND hwnd, INT scrollbar, POINT pt )
  */
 static void SCROLL_CreateScrollBar(HWND hwnd, LPCREATESTRUCTW lpCreate)
 {
-    LPSCROLLBAR_INFO info = SCROLL_GetInternalInfo(hwnd, SB_CTL, TRUE);
-    if (!info) return;
+    LPSCROLLBAR_INFO info = NULL;
+    WND *win;
 
     TRACE("hwnd=%p lpCreate=%p\n", hwnd, lpCreate);
+
+    win = WIN_GetPtr(hwnd);
+    if (win->cbWndExtra >= sizeof(SCROLLBAR_WNDDATA))
+    {
+        SCROLLBAR_WNDDATA *data = (SCROLLBAR_WNDDATA*)win->wExtra;
+        data->magic = SCROLLBAR_MAGIC;
+        info = &data->info;
+    }
+    else WARN("Not enough extra data\n");
+    WIN_ReleasePtr(win);
+    if (!info) return;
 
     if (lpCreate->style & WS_DISABLED)
     {
         info->flags = ESB_DISABLE_BOTH;
         TRACE("Created WS_DISABLED scrollbar\n");
     }
-
 
     if (lpCreate->style & (SBS_SIZEGRIP | SBS_SIZEBOX))
     {
@@ -1839,10 +1856,9 @@ INT WINAPI DECLSPEC_HOTPATCH SetScrollPos( HWND hwnd, INT nBar, INT nPos, BOOL b
 {
     SCROLLINFO info;
     SCROLLBAR_INFO *infoPtr;
-    INT oldPos;
+    INT oldPos = 0;
 
-    if (!(infoPtr = SCROLL_GetInternalInfo( hwnd, nBar, FALSE ))) return 0;
-    oldPos      = infoPtr->curVal;
+    if ((infoPtr = SCROLL_GetInternalInfo( hwnd, nBar, FALSE ))) oldPos = infoPtr->curVal;
     info.cbSize = sizeof(info);
     info.nPos   = nPos;
     info.fMask  = SIF_POS;

@@ -104,6 +104,9 @@ WINE_DEFAULT_DEBUG_CHANNEL(menubuilder);
 #define in_startmenu(csidl)   ((csidl)==CSIDL_STARTMENU || \
                                (csidl)==CSIDL_COMMON_STARTMENU)
 
+#define IS_OPTION_TRUE(ch) \
+    ((ch) == 'y' || (ch) == 'Y' || (ch) == 't' || (ch) == 'T' || (ch) == '1')
+
 /* link file formats */
 
 #include "pshpack1.h"
@@ -398,7 +401,7 @@ static HRESULT convert_to_native_icon(IStream *icoFile, int *indices, int numInd
         WINE_ERR("error 0x%08X creating output file %s\n", hr, wine_dbgstr_w(dosOutputFileName));
         goto end;
     }
-    hr = IWICBitmapEncoder_Initialize(encoder, outputFile, GENERIC_WRITE);
+    hr = IWICBitmapEncoder_Initialize(encoder, outputFile, WICBitmapEncoderNoCache);
     if (FAILED(hr))
     {
         WINE_ERR("error 0x%08X initializing encoder\n", hr);
@@ -1446,13 +1449,14 @@ static DWORD register_menus_entry(const char *unix_file, const char *windows_fil
 
 static BOOL write_desktop_entry(const char *unix_link, const char *location, const char *linkname,
                                 const char *path, const char *args, const char *descr,
-                                const char *workdir, const char *icon)
+                                const char *workdir, const char *icon, const char *wmclass)
 {
     FILE *file;
 
-    WINE_TRACE("(%s,%s,%s,%s,%s,%s,%s,%s)\n", wine_dbgstr_a(unix_link), wine_dbgstr_a(location),
+    WINE_TRACE("(%s,%s,%s,%s,%s,%s,%s,%s,%s)\n", wine_dbgstr_a(unix_link), wine_dbgstr_a(location),
                wine_dbgstr_a(linkname), wine_dbgstr_a(path), wine_dbgstr_a(args),
-               wine_dbgstr_a(descr), wine_dbgstr_a(workdir), wine_dbgstr_a(icon));
+               wine_dbgstr_a(descr), wine_dbgstr_a(workdir), wine_dbgstr_a(icon),
+               wine_dbgstr_a(wmclass));
 
     file = fopen(location, "w");
     if (file == NULL)
@@ -1464,12 +1468,14 @@ static BOOL write_desktop_entry(const char *unix_link, const char *location, con
             wine_get_config_dir(), path, args);
     fprintf(file, "Type=Application\n");
     fprintf(file, "StartupNotify=true\n");
-    if (descr && lstrlenA(descr))
+    if (descr && *descr)
         fprintf(file, "Comment=%s\n", descr);
-    if (workdir && lstrlenA(workdir))
+    if (workdir && *workdir)
         fprintf(file, "Path=%s\n", workdir);
-    if (icon && lstrlenA(icon))
+    if (icon && *icon)
         fprintf(file, "Icon=%s\n", icon);
+    if (wmclass && *wmclass)
+        fprintf(file, "StartupWMClass=%s\n", wmclass);
 
     fclose(file);
 
@@ -1615,7 +1621,7 @@ end:
 }
 
 static BOOL write_menu_entry(const char *unix_link, const char *link, const char *path, const char *args,
-                             const char *descr, const char *workdir, const char *icon)
+                             const char *descr, const char *workdir, const char *icon, const char *wmclass)
 {
     const char *linkname;
     char *desktopPath = NULL;
@@ -1623,9 +1629,9 @@ static BOOL write_menu_entry(const char *unix_link, const char *link, const char
     char *filename = NULL;
     BOOL ret = TRUE;
 
-    WINE_TRACE("(%s, %s, %s, %s, %s, %s, %s)\n", wine_dbgstr_a(unix_link), wine_dbgstr_a(link),
+    WINE_TRACE("(%s, %s, %s, %s, %s, %s, %s, %s)\n", wine_dbgstr_a(unix_link), wine_dbgstr_a(link),
                wine_dbgstr_a(path), wine_dbgstr_a(args), wine_dbgstr_a(descr),
-               wine_dbgstr_a(workdir), wine_dbgstr_a(icon));
+               wine_dbgstr_a(workdir), wine_dbgstr_a(icon), wine_dbgstr_a(wmclass));
 
     linkname = strrchr(link, '/');
     if (linkname == NULL)
@@ -1649,7 +1655,7 @@ static BOOL write_menu_entry(const char *unix_link, const char *link, const char
         goto end;
     }
     *desktopDir = '/';
-    if (!write_desktop_entry(unix_link, desktopPath, linkname, path, args, descr, workdir, icon))
+    if (!write_desktop_entry(unix_link, desktopPath, linkname, path, args, descr, workdir, icon, wmclass))
     {
         WINE_WARN("couldn't make desktop entry %s\n", wine_dbgstr_a(desktopPath));
         ret = FALSE;
@@ -1804,7 +1810,7 @@ static BOOL GetLinkLocation( LPCWSTR linkfile, DWORD *loc, char **relative )
 
     WINE_TRACE("%s\n", wine_dbgstr_w(filename));
 
-    for( i=0; i<sizeof(locations)/sizeof(locations[0]); i++ )
+    for( i=0; i<ARRAY_SIZE( locations ); i++ )
     {
         if (!SHGetSpecialFolderPathW( 0, buffer, locations[i], FALSE ))
             continue;
@@ -2771,9 +2777,10 @@ static BOOL InvokeShellLinker( IShellLinkW *sl, LPCWSTR link, BOOL bWait )
                                    '\\','s','t','a','r','t','.','e','x','e',0};
     char *link_name = NULL, *icon_name = NULL, *work_dir = NULL;
     char *escaped_path = NULL, *escaped_args = NULL, *description = NULL;
+    char *wmclass = NULL;
     WCHAR szTmp[INFOTIPSIZE];
     WCHAR szDescription[INFOTIPSIZE], szPath[MAX_PATH], szWorkDir[MAX_PATH];
-    WCHAR szArgs[INFOTIPSIZE], szIconPath[MAX_PATH];
+    WCHAR szArgs[INFOTIPSIZE], szIconPath[MAX_PATH], szWMClass[MAX_PATH];
     int iIconId = 0, r = -1;
     DWORD csidl = -1;
     HANDLE hsem = NULL;
@@ -2817,6 +2824,8 @@ static BOOL InvokeShellLinker( IShellLinkW *sl, LPCWSTR link, BOOL bWait )
     IShellLinkW_GetIconLocation( sl, szTmp, MAX_PATH, &iIconId );
     ExpandEnvironmentStringsW(szTmp, szIconPath, MAX_PATH);
     WINE_TRACE("icon file  : %s\n", wine_dbgstr_w(szIconPath) );
+
+    szWMClass[0] = 0;
 
     if( !szPath[0] )
     {
@@ -2880,6 +2889,14 @@ static BOOL InvokeShellLinker( IShellLinkW *sl, LPCWSTR link, BOOL bWait )
             GetWindowsDirectoryW(szPath, MAX_PATH);
             lstrcatW(szPath, startW);
         }
+        else
+        {
+            /* FIXME: Use AppUserModelID if present. */
+            WCHAR *p = PathFindFileNameW(szPath);
+
+            lstrcpyW(szWMClass, p);
+            CharLowerW(szWMClass);
+        }
 
         /* convert app working dir */
         if (szWorkDir[0])
@@ -2897,7 +2914,8 @@ static BOOL InvokeShellLinker( IShellLinkW *sl, LPCWSTR link, BOOL bWait )
     escaped_path = escape(szPath);
     escaped_args = escape(szArgs);
     description = wchars_to_utf8_chars(szDescription);
-    if (escaped_path == NULL || escaped_args == NULL || description == NULL)
+    wmclass = wchars_to_utf8_chars(szWMClass);
+    if (escaped_path == NULL || escaped_args == NULL || description == NULL || wmclass == NULL)
     {
         WINE_ERR("out of memory allocating/escaping parameters\n");
         goto cleanup;
@@ -2936,12 +2954,12 @@ static BOOL InvokeShellLinker( IShellLinkW *sl, LPCWSTR link, BOOL bWait )
                 if (link_arg)
                 {
                     r = !write_desktop_entry(unix_link, location, lastEntry,
-                        start_path, link_arg, description, work_dir, icon_name);
+                        start_path, link_arg, description, work_dir, icon_name, wmclass);
                     HeapFree(GetProcessHeap(), 0, link_arg);
                 }
             }
             else
-                r = !write_desktop_entry(NULL, location, lastEntry, escaped_path, escaped_args, description, work_dir, icon_name);
+                r = !write_desktop_entry(NULL, location, lastEntry, escaped_path, escaped_args, description, work_dir, icon_name, wmclass);
             if (r == 0)
                 chmod(location, 0755);
             HeapFree(GetProcessHeap(), 0, location);
@@ -2952,7 +2970,7 @@ static BOOL InvokeShellLinker( IShellLinkW *sl, LPCWSTR link, BOOL bWait )
         char *link_arg = escape_unix_link_arg(unix_link);
         if (link_arg)
         {
-            r = !write_menu_entry(unix_link, link_name, start_path, link_arg, description, work_dir, icon_name);
+            r = !write_menu_entry(unix_link, link_name, start_path, link_arg, description, work_dir, icon_name, wmclass);
             HeapFree(GetProcessHeap(), 0, link_arg);
         }
     }
@@ -2967,6 +2985,7 @@ cleanup:
     HeapFree( GetProcessHeap(), 0, escaped_args );
     HeapFree( GetProcessHeap(), 0, escaped_path );
     HeapFree( GetProcessHeap(), 0, description );
+    HeapFree( GetProcessHeap(), 0, wmclass );
     HeapFree( GetProcessHeap(), 0, unix_link );
     HeapFree( GetProcessHeap(), 0, start_path );
 
@@ -3102,14 +3121,14 @@ static BOOL InvokeShellLinkerForURL( IUniformResourceLocatorW *url, LPCWSTR link
         location = heap_printf("%s/%s.desktop", xdg_desktop_dir, lastEntry);
         if (location)
         {
-            r = !write_desktop_entry(NULL, location, lastEntry, start_path, escaped_urlPath, NULL, NULL, icon_name);
+            r = !write_desktop_entry(NULL, location, lastEntry, start_path, escaped_urlPath, NULL, NULL, icon_name, NULL);
             if (r == 0)
                 chmod(location, 0755);
             HeapFree(GetProcessHeap(), 0, location);
         }
     }
     else
-        r = !write_menu_entry(unix_link, link_name, start_path, escaped_urlPath, NULL, NULL, icon_name);
+        r = !write_menu_entry(unix_link, link_name, start_path, escaped_urlPath, NULL, NULL, icon_name, NULL);
     ret = (r == 0);
     ReleaseSemaphore(hSem, 1, NULL);
 
@@ -3603,6 +3622,24 @@ static BOOL init_xdg(void)
     return FALSE;
 }
 
+static BOOL associations_enabled(void)
+{
+    BOOL ret = TRUE;
+    HKEY hkey;
+    BYTE buf[32];
+    DWORD len;
+
+    if ((hkey = open_associations_reg_key()))
+    {
+        len = sizeof(buf);
+        if (!RegQueryValueExA(hkey, "Enable", NULL, NULL, buf, &len))
+            ret = IS_OPTION_TRUE(buf[0]);
+        RegCloseKey( hkey );
+    }
+
+    return ret;
+}
+
 /***********************************************************************
  *
  *           wWinMain
@@ -3638,7 +3675,8 @@ int PASCAL wWinMain (HINSTANCE hInstance, HINSTANCE prev, LPWSTR cmdline, int sh
 	    break;
         if( !strcmpW( token, dash_aW ) )
         {
-            RefreshFileTypeAssociations();
+            if (associations_enabled())
+                RefreshFileTypeAssociations();
             continue;
         }
         if( !strcmpW( token, dash_rW ) )

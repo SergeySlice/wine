@@ -1,5 +1,5 @@
 @ cdecl _CreateFrameInfo(ptr ptr) ucrtbase._CreateFrameInfo
-@ stdcall _CxxThrowException(long long) ucrtbase._CxxThrowException
+@ stdcall _CxxThrowException(ptr ptr) ucrtbase._CxxThrowException
 @ cdecl -arch=i386 -norelay _EH_prolog() ucrtbase._EH_prolog
 @ cdecl _FindAndUnlinkFrame(ptr) ucrtbase._FindAndUnlinkFrame
 @ stub _GetImageBase
@@ -10,18 +10,19 @@
 @ stub _NLG_Return2
 @ stub _SetImageBase
 @ stub _SetThrowImageBase
-@ stub _SetWinRTOutOfMemoryExceptionCallback
+@ cdecl _SetWinRTOutOfMemoryExceptionCallback(ptr) ucrtbase._SetWinRTOutOfMemoryExceptionCallback
 @ cdecl __AdjustPointer(ptr ptr) ucrtbase.__AdjustPointer
 @ stub __BuildCatchObject
 @ stub __BuildCatchObjectHelper
 @ stdcall -arch=x86_64 __C_specific_handler(ptr long ptr ptr) ucrtbase.__C_specific_handler
-@ cdecl -arch=i386,x86_64,arm __CxxDetectRethrow(ptr) ucrtbase.__CxxDetectRethrow
-@ cdecl -arch=i386,x86_64,arm __CxxExceptionFilter(ptr ptr long ptr) ucrtbase.__CxxExceptionFilter
-@ cdecl -arch=i386,x86_64,arm -norelay __CxxFrameHandler(ptr ptr ptr ptr) ucrtbase.__CxxFrameHandler
-@ cdecl -arch=i386,x86_64,arm -norelay __CxxFrameHandler2(ptr ptr ptr ptr) ucrtbase.__CxxFrameHandler2
-@ cdecl -arch=i386,x86_64,arm -norelay __CxxFrameHandler3(ptr ptr ptr ptr) ucrtbase.__CxxFrameHandler3
+@ stub __C_specific_handler_noexcept
+@ cdecl -arch=i386,x86_64,arm,arm64 __CxxDetectRethrow(ptr) ucrtbase.__CxxDetectRethrow
+@ cdecl -arch=i386,x86_64,arm,arm64 __CxxExceptionFilter(ptr ptr long ptr) ucrtbase.__CxxExceptionFilter
+@ cdecl -arch=i386,x86_64,arm,arm64 -norelay __CxxFrameHandler(ptr ptr ptr ptr) ucrtbase.__CxxFrameHandler
+@ cdecl -arch=i386,x86_64,arm,arm64 -norelay __CxxFrameHandler2(ptr ptr ptr ptr) ucrtbase.__CxxFrameHandler2
+@ cdecl -arch=i386,x86_64,arm,arm64 -norelay __CxxFrameHandler3(ptr ptr ptr ptr) ucrtbase.__CxxFrameHandler3
 @ stdcall -arch=i386 __CxxLongjmpUnwind(ptr) ucrtbase.__CxxLongjmpUnwind
-@ cdecl -arch=i386,x86_64,arm __CxxQueryExceptionSize() ucrtbase.__CxxQueryExceptionSize
+@ cdecl -arch=i386,x86_64,arm,arm64 __CxxQueryExceptionSize() ucrtbase.__CxxQueryExceptionSize
 @ cdecl __CxxRegisterExceptionObject(ptr ptr) ucrtbase.__CxxRegisterExceptionObject
 @ cdecl __CxxUnregisterExceptionObject(ptr long) ucrtbase.__CxxUnregisterExceptionObject
 @ cdecl __DestructExceptionObject(ptr) ucrtbase.__DestructExceptionObject
@@ -33,17 +34,18 @@
 @ cdecl __RTDynamicCast(ptr long ptr ptr long) ucrtbase.__RTDynamicCast
 @ cdecl __RTtypeid(ptr) ucrtbase.__RTtypeid
 @ stub __TypeMatch
-@ stub __current_exception
-@ stub __current_exception_context
+@ cdecl __current_exception() ucrtbase.__current_exception
+@ cdecl __current_exception_context() ucrtbase.__current_exception_context
 @ stub __dcrt_get_wide_environment_from_os
 @ stub __dcrt_initial_narrow_environment
 @ stub __intrinsic_abnormal_termination
-@ cdecl -arch=i386,x86_64,arm -norelay __intrinsic_setjmp(ptr) ucrtbase.__intrinsic_setjmp
-@ stub __intrinsic_setjmpex
-@ stub __processing_throw
+@ cdecl -arch=i386,x86_64,arm,arm64 -norelay __intrinsic_setjmp(ptr) ucrtbase.__intrinsic_setjmp
+@ cdecl -arch=x86_64,arm64 -norelay __intrinsic_setjmpex(ptr ptr) ucrtbase.__intrinsic_setjmpex
+@ cdecl __processing_throw() ucrtbase.__processing_throw
 @ stub __report_gsfailure
 @ cdecl __std_exception_copy(ptr ptr) ucrtbase.__std_exception_copy
 @ cdecl __std_exception_destroy(ptr) ucrtbase.__std_exception_destroy
+@ cdecl __std_terminate() ucrtbase.terminate
 @ cdecl __std_type_info_compare(ptr ptr) ucrtbase.__std_type_info_compare
 @ cdecl __std_type_info_destroy_list(ptr) ucrtbase.__std_type_info_destroy_list
 @ cdecl __std_type_info_hash(ptr) ucrtbase.__std_type_info_hash
@@ -51,11 +53,12 @@
 @ cdecl __unDName(ptr str long ptr ptr long) ucrtbase.__unDName
 @ cdecl __unDNameEx(ptr str long ptr ptr ptr long) ucrtbase.__unDNameEx
 @ cdecl __uncaught_exception() ucrtbase.__uncaught_exception
+@ stub __uncaught_exceptions
 @ cdecl -arch=i386 -norelay _chkesp() ucrtbase._chkesp
 @ cdecl -arch=i386 _except_handler2(ptr ptr ptr ptr) ucrtbase._except_handler2
 @ cdecl -arch=i386 _except_handler3(ptr ptr ptr ptr) ucrtbase._except_handler3
 @ cdecl -arch=i386 _except_handler4_common(ptr ptr ptr ptr ptr ptr) ucrtbase._except_handler4_common
-@ stub _get_purecall_handler
+@ cdecl _get_purecall_handler() ucrtbase._get_purecall_handler
 @ cdecl _get_unexpected() ucrtbase._get_unexpected
 @ cdecl -arch=i386 _global_unwind2(ptr) ucrtbase._global_unwind2
 @ stub _is_exception_typeof
@@ -87,6 +90,10 @@
 @ stub _o__W_Getmonths
 @ stub _o__W_Gettnames
 @ stub _o__Wcsftime
+@ stub _o____lc_codepage_func
+@ stub _o____lc_collate_cp_func
+@ stub _o____lc_locale_name_func
+@ stub _o____mb_cur_max_func
 @ stub _o___acrt_iob_func
 @ stub _o___conio_common_vcprintf
 @ stub _o___conio_common_vcprintf_p
@@ -120,11 +127,11 @@
 @ stub _o___libm_sse2_sinf
 @ stub _o___libm_sse2_tan
 @ stub _o___libm_sse2_tanf
-@ stub _o___p___argc
+@ cdecl _o___p___argc() ucrtbase._o___p___argc
 @ stub _o___p___argv
-@ stub _o___p___wargv
+@ cdecl _o___p___wargv() ucrtbase._o___p___wargv
 @ stub _o___p__acmdln
-@ stub _o___p__commode
+@ cdecl _o___p__commode() ucrtbase._o___p__commode
 @ stub _o___p__environ
 @ stub _o___p__fmode
 @ stub _o___p__mbcasemap
@@ -135,6 +142,10 @@
 @ stub _o___p__wpgmptr
 @ stub _o___pctype_func
 @ stub _o___pwctype_func
+@ stub _o___std_exception_copy
+@ stub _o___std_exception_destroy
+@ cdecl _o___std_type_info_destroy_list(ptr) ucrtbase._o___std_type_info_destroy_list
+@ stub _o___std_type_info_name
 @ stub _o___stdio_common_vfprintf
 @ stub _o___stdio_common_vfprintf_p
 @ stub _o___stdio_common_vfprintf_s
@@ -184,6 +195,7 @@
 @ stub _o__cabs
 @ stub _o__callnewh
 @ stub _o__calloc_base
+@ stub _o__cexit
 @ stub _o__cgets
 @ stub _o__cgets_s
 @ stub _o__cgetws
@@ -195,11 +207,15 @@
 @ stub _o__chsize_s
 @ stub _o__close
 @ stub _o__commit
-@ stub _o__configure_wide_argv
+@ cdecl _o__configthreadlocale(long) ucrtbase._o__configthreadlocale
+@ stub _o__configure_narrow_argv
+@ cdecl _o__configure_wide_argv(long) ucrtbase._o__configure_wide_argv
+@ cdecl _o__controlfp_s(ptr long long) ucrtbase._o__controlfp_s
 @ stub _o__cputs
 @ stub _o__cputws
 @ stub _o__creat
 @ stub _o__create_locale
+@ cdecl _o__crt_atexit(ptr) ucrtbase._o__crt_atexit
 @ stub _o__ctime32_s
 @ stub _o__ctime64_s
 @ stub _o__cwait
@@ -226,11 +242,12 @@
 @ stub _o__eof
 @ stub _o__errno
 @ stub _o__except1
-@ stub _o__execute_onexit_table
+@ cdecl _o__execute_onexit_table(ptr) ucrtbase._o__execute_onexit_table
 @ stub _o__execv
 @ stub _o__execve
 @ stub _o__execvp
 @ stub _o__execvpe
+@ stub _o__exit
 @ stub _o__expand
 @ stub _o__fclose_nolock
 @ stub _o__fcloseall
@@ -301,6 +318,8 @@
 @ stub _o__get_errno
 @ stub _o__get_fmode
 @ stub _o__get_heap_handle
+@ stub _o__get_initial_narrow_environment
+@ cdecl _o__get_initial_wide_environment() ucrtbase._o__get_initial_wide_environment
 @ stub _o__get_invalid_parameter_handler
 @ stub _o__get_narrow_winmain_command_line
 @ stub _o__get_osfhandle
@@ -345,7 +364,9 @@
 @ stub _o__i64toa_s
 @ stub _o__i64tow
 @ stub _o__i64tow_s
-@ stub _o__initialize_onexit_table
+@ stub _o__initialize_narrow_environment
+@ cdecl _o__initialize_onexit_table(ptr) ucrtbase._o__initialize_onexit_table
+@ cdecl _o__initialize_wide_environment() ucrtbase._o__initialize_wide_environment
 @ stub _o__invalid_parameter_noinfo
 @ stub _o__invalid_parameter_noinfo_noreturn
 @ stub _o__isatty
@@ -617,6 +638,7 @@
 @ stub _o__pclose
 @ stub _o__pipe
 @ stub _o__popen
+@ stub _o__purecall
 @ stub _o__putc_nolock
 @ stub _o__putch
 @ stub _o__putch_nolock
@@ -630,7 +652,7 @@
 @ stub _o__read
 @ stub _o__realloc_base
 @ stub _o__recalloc
-@ stub _o__register_onexit_function
+@ cdecl _o__register_onexit_function(ptr ptr) ucrtbase._o__register_onexit_function
 @ stub _o__resetstkoflw
 @ stub _o__rmdir
 @ stub _o__rmtmp
@@ -638,12 +660,16 @@
 @ stub _o__scalbf
 @ stub _o__searchenv
 @ stub _o__searchenv_s
+@ cdecl _o__seh_filter_dll(long ptr) ucrtbase._o__seh_filter_dll
+@ cdecl _o__seh_filter_exe(long ptr) ucrtbase._o__seh_filter_exe
 @ stub _o__set_abort_behavior
+@ cdecl _o__set_app_type(long) ucrtbase._o__set_app_type
 @ stub _o__set_doserrno
 @ stub _o__set_errno
+@ cdecl _o__set_fmode(long) ucrtbase._o__set_fmode
 @ stub _o__set_invalid_parameter_handler
 @ stub _o__set_new_handler
-@ stub _o__set_new_mode
+@ cdecl _o__set_new_mode(long) ucrtbase._o__set_new_mode
 @ stub _o__set_thread_local_invalid_parameter_handler
 @ stub _o__seterrormode
 @ stub _o__setmbcp
@@ -893,7 +919,7 @@
 @ stub _o_bsearch
 @ stub _o_bsearch_s
 @ stub _o_btowc
-@ stub _o_calloc
+@ cdecl _o_calloc(long long) ucrtbase._o_calloc
 @ stub _o_cbrt
 @ stub _o_cbrtf
 @ stub _o_ceil
@@ -910,6 +936,7 @@
 @ stub _o_erfcl
 @ stub _o_erff
 @ stub _o_erfl
+@ cdecl _o_exit(long) ucrtbase._o_exit
 @ stub _o_exp
 @ stub _o_exp2
 @ stub _o_exp2f
@@ -940,7 +967,7 @@
 @ stub _o_fputws
 @ stub _o_fread
 @ stub _o_fread_s
-@ stub _o_free
+@ cdecl _o_free(ptr) ucrtbase._o_free
 @ stub _o_freopen
 @ stub _o_freopen_s
 @ stub _o_frexp
@@ -1015,7 +1042,7 @@
 @ stub _o_lround
 @ stub _o_lroundf
 @ stub _o_lroundl
-@ stub _o_malloc
+@ cdecl _o_malloc(long) ucrtbase._o_malloc
 @ stub _o_mblen
 @ stub _o_mbrlen
 @ stub _o_mbrtoc16
@@ -1026,7 +1053,7 @@
 @ stub _o_mbstowcs
 @ stub _o_mbstowcs_s
 @ stub _o_mbtowc
-@ stub _o_memset
+@ stub _o_memcpy_s
 @ stub _o_modf
 @ stub _o_modff
 @ stub _o_nan
@@ -1061,6 +1088,7 @@
 @ stub _o_remquo
 @ stub _o_remquof
 @ stub _o_remquol
+@ stub _o_rename
 @ stub _o_rewind
 @ stub _o_rint
 @ stub _o_rintf
@@ -1076,6 +1104,7 @@
 @ stub _o_scalbnl
 @ stub _o_set_terminate
 @ stub _o_setbuf
+@ stub _o_setlocale
 @ stub _o_setvbuf
 @ stub _o_sin
 @ stub _o_sinf
@@ -1113,7 +1142,7 @@
 @ stub _o_tmpfile_s
 @ stub _o_tmpnam_s
 @ stub _o_tolower
-@ stub _o_toupper
+@ cdecl _o_toupper(long) ucrtbase._o_toupper
 @ stub _o_towlower
 @ stub _o_towupper
 @ stub _o_ungetc
@@ -1151,7 +1180,7 @@
 @ cdecl _set_purecall_handler(ptr) ucrtbase._set_purecall_handler
 @ cdecl _set_se_translator(ptr) ucrtbase._set_se_translator
 @ cdecl -arch=i386 -norelay _setjmp3(ptr long) ucrtbase._setjmp3
-@ cdecl -arch=i386,x86_64,arm longjmp(ptr long) ucrtbase.longjmp
+@ cdecl -arch=i386,x86_64,arm,arm64 longjmp(ptr long) ucrtbase.longjmp
 @ cdecl memchr(ptr long long) ucrtbase.memchr
 @ cdecl memcmp(ptr ptr long) ucrtbase.memcmp
 @ cdecl memcpy(ptr ptr long) ucrtbase.memcpy

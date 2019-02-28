@@ -272,6 +272,7 @@ static obj_handle_t alloc_handle_entry( struct process *process, void *ptr,
 obj_handle_t alloc_handle_no_access_check( struct process *process, void *ptr, unsigned int access, unsigned int attr )
 {
     struct object *obj = ptr;
+    if (access & MAXIMUM_ALLOWED) access = GENERIC_ALL;
     access = obj->ops->map_access( obj, access ) & ~RESERVED_ALL;
     return alloc_handle_entry( process, ptr, access, attr );
 }
@@ -686,7 +687,8 @@ DECL_HANDLER(set_security_object)
     }
 
     if (req->security_info & OWNER_SECURITY_INFORMATION ||
-        req->security_info & GROUP_SECURITY_INFORMATION)
+        req->security_info & GROUP_SECURITY_INFORMATION ||
+        req->security_info & LABEL_SECURITY_INFORMATION)
         access |= WRITE_OWNER;
     if (req->security_info & SACL_SECURITY_INFORMATION)
         access |= ACCESS_SYSTEM_SECURITY;
@@ -708,6 +710,7 @@ DECL_HANDLER(get_security_object)
     int present;
     const SID *owner, *group;
     const ACL *sacl, *dacl;
+    ACL *label_acl = NULL;
 
     if (req->security_info & SACL_SECURITY_INFORMATION)
         access |= ACCESS_SYSTEM_SECURITY;
@@ -731,14 +734,18 @@ DECL_HANDLER(get_security_object)
         else
             req_sd.group_len = 0;
 
-        req_sd.control |= SE_SACL_PRESENT;
         sacl = sd_get_sacl( sd, &present );
         if (req->security_info & SACL_SECURITY_INFORMATION && present)
             req_sd.sacl_len = sd->sacl_len;
+        else if (req->security_info & LABEL_SECURITY_INFORMATION && present && sacl)
+        {
+            if (!(label_acl = extract_security_labels( sacl ))) goto done;
+            req_sd.sacl_len = label_acl->AclSize;
+            sacl = label_acl;
+        }
         else
             req_sd.sacl_len = 0;
 
-        req_sd.control |= SE_DACL_PRESENT;
         dacl = sd_get_dacl( sd, &present );
         if (req->security_info & DACL_SECURITY_INFORMATION && present)
             req_sd.dacl_len = sd->dacl_len;
@@ -765,7 +772,9 @@ DECL_HANDLER(get_security_object)
             set_error(STATUS_BUFFER_TOO_SMALL);
     }
 
+done:
     release_object( obj );
+    free( label_acl );
 }
 
 struct enum_handle_info

@@ -340,8 +340,7 @@ static void on_add_click(HWND dialog)
     if (new == 'C')
     {
         WCHAR label[64];
-        LoadStringW (GetModuleHandleW(NULL), IDS_SYSTEM_DRIVE_LABEL, label,
-                     sizeof(label)/sizeof(label[0]));
+        LoadStringW(GetModuleHandleW(NULL), IDS_SYSTEM_DRIVE_LABEL, label, ARRAY_SIZE(label));
         add_drive(new, "../drive_c", NULL, label, 0, DRIVE_FIXED);
     }
     else add_drive(new, "/", NULL, NULL, 0, DRIVE_UNKNOWN);
@@ -441,11 +440,10 @@ static void update_controls(HWND dialog)
     type = current_drive->type;
     SendDlgItemMessageW(dialog, IDC_COMBO_TYPE, CB_RESETCONTENT, 0, 0);
 
-    for (i = 0; i < sizeof(type_pairs) / sizeof(struct drive_typemap); i++)
+    for (i = 0; i < ARRAY_SIZE(type_pairs); i++)
     {
         WCHAR driveDesc[64];
-        LoadStringW (GetModuleHandleW(NULL), type_pairs[i].idDesc, driveDesc,
-            sizeof(driveDesc)/sizeof(driveDesc[0]));
+        LoadStringW(GetModuleHandleW(NULL), type_pairs[i].idDesc, driveDesc, ARRAY_SIZE(driveDesc));
         SendDlgItemMessageW (dialog, IDC_COMBO_TYPE, CB_ADDSTRING, 0, (LPARAM)driveDesc);
 
         if (type_pairs[i].sCode ==  type)
@@ -633,8 +631,7 @@ static void init_listview_columns(HWND dialog)
     GetClientRect(GetDlgItem(dialog, IDC_LIST_DRIVES), &viewRect);
     width = (viewRect.right - viewRect.left) / 6 - 5;
 
-    LoadStringW (GetModuleHandleW(NULL), IDS_COL_DRIVELETTER, column,
-        sizeof(column)/sizeof(column[0]));
+    LoadStringW(GetModuleHandleW(NULL), IDS_COL_DRIVELETTER, column, ARRAY_SIZE(column));
     listColumn.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM;
     listColumn.pszText = column;
     listColumn.cchTextMax = lstrlenW (listColumn.pszText);
@@ -642,8 +639,7 @@ static void init_listview_columns(HWND dialog)
 
     SendDlgItemMessageW (dialog, IDC_LIST_DRIVES, LVM_INSERTCOLUMNW, 0, (LPARAM) &listColumn);
 
-    LoadStringW (GetModuleHandleW(NULL), IDS_COL_DRIVEMAPPING, column,
-        sizeof(column)/sizeof(column[0]));
+    LoadStringW(GetModuleHandleW(NULL), IDS_COL_DRIVEMAPPING, column, ARRAY_SIZE(column));
     listColumn.cx = viewRect.right - viewRect.left - width;
     listColumn.pszText = column;
     listColumn.cchTextMax = lstrlenW (listColumn.pszText);

@@ -1,4 +1,4 @@
-@ stub AddDllDirectory
+@ stdcall AddDllDirectory(wstr) kernel32.AddDllDirectory
 @ stdcall DisableThreadLibraryCalls(long) kernel32.DisableThreadLibraryCalls
 @ stdcall EnumResourceLanguagesExA(long str str ptr long long long) kernel32.EnumResourceLanguagesExA
 @ stdcall EnumResourceLanguagesExW(long wstr wstr ptr long long long) kernel32.EnumResourceLanguagesExW
@@ -7,7 +7,7 @@
 @ stub EnumResourceTypesExA
 @ stub EnumResourceTypesExW
 @ stdcall FindResourceExW(long wstr wstr long) kernel32.FindResourceExW
-@ stub FindStringOrdinal
+@ stdcall FindStringOrdinal(long wstr long wstr long long) kernel32.FindStringOrdinal
 @ stdcall FreeLibrary(long) kernel32.FreeLibrary
 @ stdcall FreeLibraryAndExitThread(long long) kernel32.FreeLibraryAndExitThread
 @ stdcall FreeResource(long) kernel32.FreeResource
@@ -25,6 +25,6 @@
 @ stdcall LoadStringW(long long ptr long) user32.LoadStringW
 @ stdcall LockResource(long) kernel32.LockResource
 @ stub QueryOptionalDelayLoadedAPI
-@ stub RemoveDllDirectory
+@ stdcall RemoveDllDirectory(ptr) kernel32.RemoveDllDirectory
 @ stdcall SetDefaultDllDirectories(long) kernel32.SetDefaultDllDirectories
 @ stdcall SizeofResource(long long) kernel32.SizeofResource

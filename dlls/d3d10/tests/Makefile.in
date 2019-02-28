@@ -3,4 +3,5 @@ IMPORTS   = d3d10
 
 C_SRCS = \
 	device.c \
-	effect.c
+	effect.c \
+	reflection.c

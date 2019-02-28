@@ -106,20 +106,20 @@ static void set_registry_variables(WCHAR **env, HKEY hkey, DWORD type, BOOL set_
 
     for (index = 0; ; index++)
     {
-        size = sizeof(name)/sizeof(WCHAR);
+        size = ARRAY_SIZE(name);
         ret = RegEnumValueW(hkey, index, name, &size, NULL, NULL, NULL, NULL);
         if (ret != ERROR_SUCCESS)
             break;
 
-        if (!memicmpW(name, SystemRootW, sizeof(SystemRootW)/sizeof(WCHAR)))
+        if (!memicmpW(name, SystemRootW, ARRAY_SIZE(SystemRootW)))
             continue;
-        if (!memicmpW(name, SystemDriveW, sizeof(SystemDriveW)/sizeof(WCHAR)))
+        if (!memicmpW(name, SystemDriveW, ARRAY_SIZE(SystemDriveW)))
             continue;
 
         RtlInitUnicodeString(&us_name, name);
         us_value.Buffer = value;
         us_value.MaximumLength = sizeof(value);
-        if (!memicmpW(name, PATHW, sizeof(PATHW)/sizeof(WCHAR)) &&
+        if (!memicmpW(name, PATHW, ARRAY_SIZE(PATHW)) &&
                 !RtlQueryEnvironmentVariable_U(*env, &us_name, &us_value))
         {
             if (!set_path)
@@ -244,7 +244,7 @@ BOOL WINAPI CreateEnvironmentBlock( LPVOID* lpEnvironment,
 
     static const WCHAR SystemRootW[] = {'S','y','s','t','e','m','R','o','o','t',0};
     static const WCHAR SystemDriveW[] = {'S','y','s','t','e','m','D','r','i','v','e',0};
-    static const WCHAR AllUsersProfileW[] = {'A','l','l','U','s','e','r','s','P','r','o','f','i','l','e',0};
+    static const WCHAR PublicW[] = {'P','u','b','l','i','c',0};
     static const WCHAR ALLUSERSPROFILEW[] = {'A','L','L','U','S','E','R','S','P','R','O','F','I','L','E',0};
     static const WCHAR USERNAMEW[] = {'U','S','E','R','N','A','M','E',0};
     static const WCHAR USERPROFILEW[] = {'U','S','E','R','P','R','O','F','I','L','E',0};
@@ -323,8 +323,7 @@ BOOL WINAPI CreateEnvironmentBlock( LPVOID* lpEnvironment,
                 profiles_dir[len] = '\0';
             }
 
-            memcpy(buf, profiles_dir, len*sizeof(WCHAR));
-            if (get_reg_value(env, hkey, AllUsersProfileW, buf+len, UNICODE_STRING_MAX_CHARS-len))
+            if (get_reg_value(env, hkey, PublicW, buf, UNICODE_STRING_MAX_CHARS))
             {
                 RtlInitUnicodeString(&us_name, ALLUSERSPROFILEW);
                 RtlInitUnicodeString(&us_val, buf);
@@ -339,7 +338,7 @@ BOOL WINAPI CreateEnvironmentBlock( LPVOID* lpEnvironment,
         RegCloseKey(hkey);
     }
 
-    len = sizeof(buf)/sizeof(WCHAR);
+    len = ARRAY_SIZE(buf);
     if (GetComputerNameW(buf, &len))
     {
         RtlInitUnicodeString(&us_name, COMPUTERNAMEW);

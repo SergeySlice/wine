@@ -39,6 +39,8 @@ static USER_DRIVER null_driver, lazy_load_driver;
 const USER_DRIVER *USER_Driver = &lazy_load_driver;
 static char driver_load_error[80];
 
+static BOOL CDECL nodrv_CreateWindow( HWND hwnd );
+
 static HMODULE load_desktop_driver( HWND hwnd )
 {
     static const WCHAR display_device_guid_propW[] = {
@@ -55,7 +57,7 @@ static HMODULE load_desktop_driver( HWND hwnd )
     HKEY hkey;
     DWORD size;
     WCHAR path[MAX_PATH];
-    WCHAR key[(sizeof(key_pathW) + sizeof(displayW)) / sizeof(WCHAR) + 40];
+    WCHAR key[ARRAY_SIZE(key_pathW) + ARRAY_SIZE(displayW) + 40];
     UINT guid_atom = HandleToULong( GetPropW( hwnd, display_device_guid_propW ));
 
     USER_CheckNotLock();
@@ -152,6 +154,16 @@ static const USER_DRIVER *load_driver(void)
         GET_USER_FUNC(ThreadDetach);
 #undef GET_USER_FUNC
     }
+    else
+    {
+        USEROBJECTFLAGS flags;
+        HWINSTA winstation;
+
+        winstation = GetProcessWindowStation();
+        if (!GetUserObjectInformationA(winstation, UOI_FLAGS, &flags, sizeof(flags), NULL)
+            || (flags.dwFlags & WSF_VISIBLE))
+            driver->pCreateWindow = nodrv_CreateWindow;
+    }
 
     prev = InterlockedCompareExchangePointer( (void **)&USER_Driver, driver, &lazy_load_driver );
     if (prev != &lazy_load_driver)
@@ -184,6 +196,8 @@ void USER_unload_driver(void)
  *
  * These are fallbacks for entry points that are not implemented in the real driver.
  */
+
+#define NULLDRV_DEFAULT_HMONITOR ((HMONITOR)(UINT_PTR)(0x10000 + 1))
 
 static HKL CDECL nulldrv_ActivateKeyboardLayout( HKL layout, UINT flags )
 {
@@ -342,7 +356,12 @@ static LONG CDECL nulldrv_ChangeDisplaySettingsEx( LPCWSTR name, LPDEVMODEW mode
 
 static BOOL CDECL nulldrv_EnumDisplayMonitors( HDC hdc, LPRECT rect, MONITORENUMPROC proc, LPARAM lp )
 {
-    return FALSE;
+    RECT r = {0, 0, 640, 480};
+
+    TRACE("(%p, %p, %p, 0x%lx)\n", hdc, rect, proc, lp);
+
+    proc(NULLDRV_DEFAULT_HMONITOR, hdc, &r, lp);
+    return TRUE;
 }
 
 static BOOL CDECL nulldrv_EnumDisplaySettingsEx( LPCWSTR name, DWORD num, LPDEVMODEW mode, DWORD flags )
@@ -352,7 +371,23 @@ static BOOL CDECL nulldrv_EnumDisplaySettingsEx( LPCWSTR name, DWORD num, LPDEVM
 
 static BOOL CDECL nulldrv_GetMonitorInfo( HMONITOR handle, LPMONITORINFO info )
 {
-    return FALSE;
+    RECT r = {0, 0, 640, 480};
+    static const WCHAR device[] = {'W','i','n','D','i','s','c',0};
+
+    TRACE("(%p, %p)\n", handle, info);
+
+    if (handle != NULLDRV_DEFAULT_HMONITOR)
+    {
+        SetLastError(ERROR_INVALID_MONITOR_HANDLE);
+        return FALSE;
+    }
+
+    info->rcMonitor = r;
+    info->rcWork = r;
+    info->dwFlags = MONITORINFOF_PRIMARY;
+    if (info->cbSize >= sizeof(MONITORINFOEXW))
+        lstrcpyW( ((MONITORINFOEXW *)info)->szDevice, device );
+    return TRUE;
 }
 
 static BOOL CDECL nulldrv_CreateDesktopWindow( HWND hwnd )
@@ -360,7 +395,7 @@ static BOOL CDECL nulldrv_CreateDesktopWindow( HWND hwnd )
     return TRUE;
 }
 
-static BOOL CDECL nulldrv_CreateWindow( HWND hwnd )
+static BOOL CDECL nodrv_CreateWindow( HWND hwnd )
 {
     static int warned;
     HWND parent = GetAncestor( hwnd, GA_PARENT );
@@ -372,6 +407,11 @@ static BOOL CDECL nulldrv_CreateWindow( HWND hwnd )
     ERR_(winediag)( "Application tried to create a window, but no driver could be loaded.\n" );
     if (driver_load_error[0]) ERR_(winediag)( "%s\n", driver_load_error );
     return FALSE;
+}
+
+static BOOL CDECL nulldrv_CreateWindow( HWND hwnd )
+{
+    return TRUE;
 }
 
 static void CDECL nulldrv_DestroyWindow( HWND hwnd )

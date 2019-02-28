@@ -66,6 +66,66 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(ntdll);
 
+#include "pshpack1.h"
+
+struct smbios_prologue {
+    BYTE calling_method;
+    BYTE major_version;
+    BYTE minor_version;
+    BYTE revision;
+    DWORD length;
+};
+
+struct smbios_bios {
+    BYTE type;
+    BYTE length;
+    WORD handle;
+    BYTE vendor;
+    BYTE version;
+    WORD start;
+    BYTE date;
+    BYTE size;
+    UINT64 characteristics;
+};
+
+struct smbios_system {
+    BYTE type;
+    BYTE length;
+    WORD handle;
+    BYTE vendor;
+    BYTE product;
+    BYTE version;
+    BYTE serial;
+};
+
+struct smbios_board {
+    BYTE type;
+    BYTE length;
+    WORD handle;
+    BYTE vendor;
+    BYTE product;
+    BYTE version;
+    BYTE serial;
+};
+
+struct smbios_chassis {
+    BYTE type;
+    BYTE length;
+    WORD handle;
+    BYTE vendor;
+    BYTE shape;
+    BYTE version;
+    BYTE serial;
+    BYTE asset_tag;
+};
+
+#include "poppack.h"
+
+/* Firmware table providers */
+#define ACPI 0x41435049
+#define FIRM 0x4649524D
+#define RSMB 0x52534D42
+
 /*
  *	Token
  */
@@ -83,10 +143,14 @@ NTSTATUS WINAPI NtDuplicateToken(
         OUT PHANDLE NewToken)
 {
     NTSTATUS status;
+    data_size_t len;
+    struct object_attributes *objattr;
 
     TRACE("(%p,0x%08x,%s,0x%08x,0x%08x,%p)\n",
           ExistingToken, DesiredAccess, debugstr_ObjectAttributes(ObjectAttributes),
           ImpersonationLevel, TokenType, NewToken);
+
+    if ((status = alloc_object_attributes( ObjectAttributes, &objattr, &len ))) return status;
 
     if (ObjectAttributes && ObjectAttributes->SecurityQualityOfService)
     {
@@ -102,14 +166,15 @@ NTSTATUS WINAPI NtDuplicateToken(
     {
         req->handle              = wine_server_obj_handle( ExistingToken );
         req->access              = DesiredAccess;
-        req->attributes          = ObjectAttributes ? ObjectAttributes->Attributes : 0;
         req->primary             = (TokenType == TokenPrimary);
         req->impersonation_level = ImpersonationLevel;
+        wine_server_add_data( req, objattr, len );
         status = wine_server_call( req );
         if (!status) *NewToken = wine_server_ptr_handle( reply->new_handle );
     }
     SERVER_END_REQ;
 
+    RtlFreeHeap( GetProcessHeap(), 0, objattr );
     return status;
 }
 
@@ -275,7 +340,7 @@ NTSTATUS WINAPI NtQueryInformationToken(
         0,    /* TokenHasRestrictions */
         0,    /* TokenAccessInformation */
         0,    /* TokenVirtualizationAllowed */
-        0,    /* TokenVirtualizationEnabled */
+        sizeof(DWORD), /* TokenVirtualizationEnabled */
         sizeof(TOKEN_MANDATORY_LABEL) + sizeof(SID), /* TokenIntegrityLevel [sizeof(SID) includes one SubAuthority] */
         0,    /* TokenUIAccess */
         0,    /* TokenMandatoryPolicy */
@@ -520,6 +585,12 @@ NTSTATUS WINAPI NtQueryInformationToken(
             FIXME("QueryInformationToken( ..., TokenSessionId, ...) semi-stub\n");
         }
         break;
+    case TokenVirtualizationEnabled:
+        {
+            *(DWORD *)tokeninfo = 0;
+            TRACE("QueryInformationToken( ..., TokenVirtualizationEnabled, ...) semi-stub\n");
+        }
+        break;
     case TokenIntegrityLevel:
         {
             /* report always "S-1-16-12288" (high mandatory level) for now */
@@ -547,6 +618,27 @@ NTSTATUS WINAPI NtQueryInformationToken(
             *(DWORD*)tokeninfo = 0;
             break;
         }
+    case TokenLogonSid:
+        SERVER_START_REQ( get_token_sid )
+        {
+            TOKEN_GROUPS * groups = tokeninfo;
+            PSID sid = groups + 1;
+            DWORD sid_len = tokeninfolength < sizeof(TOKEN_GROUPS) ? 0 : tokeninfolength - sizeof(TOKEN_GROUPS);
+
+            req->handle = wine_server_obj_handle( token );
+            req->which_sid = tokeninfoclass;
+            wine_server_set_reply( req, sid, sid_len );
+            status = wine_server_call( req );
+            if (retlen) *retlen = reply->sid_len + sizeof(TOKEN_GROUPS);
+            if (status == STATUS_SUCCESS)
+            {
+                groups->GroupCount = 1;
+                groups->Groups[0].Sid = sid;
+                groups->Groups[0].Attributes = 0;
+            }
+        }
+        SERVER_END_REQ;
+        break;
     default:
         {
             ERR("Unhandled Token Information class %d!\n", tokeninfoclass);
@@ -597,6 +689,24 @@ NTSTATUS WINAPI NtSetInformationToken(
             ret = wine_server_call( req );
         }
         SERVER_END_REQ;
+        break;
+    case TokenSessionId:
+        if (TokenInformationLength < sizeof(DWORD))
+        {
+            ret = STATUS_INFO_LENGTH_MISMATCH;
+            break;
+        }
+        if (!TokenInformation)
+        {
+            ret = STATUS_ACCESS_VIOLATION;
+            break;
+        }
+        FIXME("TokenSessionId stub!\n");
+        ret = STATUS_SUCCESS;
+        break;
+    case TokenIntegrityLevel:
+        FIXME("TokenIntegrityLevel stub!\n");
+        ret = STATUS_SUCCESS;
         break;
     default:
         FIXME("unimplemented class %u\n", TokenInformationClass);
@@ -816,7 +926,7 @@ NTSTATUS WINAPI NtSetIntervalProfile(
     return STATUS_SUCCESS;
 }
 
-static  SYSTEM_CPU_INFORMATION cached_sci;
+SYSTEM_CPU_INFORMATION cpu_info = { 0 };
 
 /*******************************************************************************
  * Architecture specific feature detection for CPUs
@@ -834,52 +944,55 @@ static  SYSTEM_CPU_INFORMATION cached_sci;
 #define INEI	0x49656e69	/* "ineI" */
 #define NTEL	0x6c65746e	/* "ntel" */
 
-/* Calls cpuid with an eax of 'ax' and returns the 16 bytes in *p
- * We are compiled with -fPIC, so we can't clobber ebx.
- */
-static inline void do_cpuid(unsigned int ax, unsigned int *p)
-{
-#ifdef __i386__
-	__asm__("pushl %%ebx\n\t"
-                "cpuid\n\t"
-                "movl %%ebx, %%esi\n\t"
-                "popl %%ebx"
-                : "=a" (p[0]), "=S" (p[1]), "=c" (p[2]), "=d" (p[3])
-                :  "0" (ax));
-#elif defined(__x86_64__)
-	__asm__("push %%rbx\n\t"
-                "cpuid\n\t"
-                "movq %%rbx, %%rsi\n\t"
-                "pop %%rbx"
-                : "=a" (p[0]), "=S" (p[1]), "=c" (p[2]), "=d" (p[3])
-                :  "0" (ax));
-#endif
-}
+extern void do_cpuid(unsigned int ax, unsigned int *p);
 
-/* From xf86info havecpuid.c 1.11 */
-static inline BOOL have_cpuid(void)
-{
 #ifdef __i386__
-	unsigned int f1, f2;
-	__asm__("pushfl\n\t"
-                "pushfl\n\t"
-                "popl %0\n\t"
-                "movl %0,%1\n\t"
-                "xorl %2,%0\n\t"
-                "pushl %0\n\t"
-                "popfl\n\t"
-                "pushfl\n\t"
-                "popl %0\n\t"
-                "popfl"
-                : "=&r" (f1), "=&r" (f2)
-                : "ir" (0x00200000));
-	return ((f1^f2) & 0x00200000) != 0;
-#elif defined(__x86_64__)
-        return TRUE;
+__ASM_GLOBAL_FUNC( do_cpuid,
+                   "pushl %esi\n\t"
+                   "pushl %ebx\n\t"
+                   "movl 12(%esp),%eax\n\t"
+                   "movl 16(%esp),%esi\n\t"
+                   "cpuid\n\t"
+                   "movl %eax,(%esi)\n\t"
+                   "movl %ebx,4(%esi)\n\t"
+                   "movl %ecx,8(%esi)\n\t"
+                   "movl %edx,12(%esi)\n\t"
+                   "popl %ebx\n\t"
+                   "popl %esi\n\t"
+                   "ret" )
 #else
-        return FALSE;
+__ASM_GLOBAL_FUNC( do_cpuid,
+                   "pushq %rbx\n\t"
+                   "movl %edi,%eax\n\t"
+                   "cpuid\n\t"
+                   "movl %eax,(%rsi)\n\t"
+                   "movl %ebx,4(%rsi)\n\t"
+                   "movl %ecx,8(%rsi)\n\t"
+                   "movl %edx,12(%rsi)\n\t"
+                   "popq %rbx\n\t"
+                   "ret" )
 #endif
+
+#ifdef __i386__
+extern int have_cpuid(void);
+__ASM_GLOBAL_FUNC( have_cpuid,
+                   "pushfl\n\t"
+                   "pushfl\n\t"
+                   "movl (%esp),%ecx\n\t"
+                   "xorl $0x00200000,(%esp)\n\t"
+                   "popfl\n\t"
+                   "pushfl\n\t"
+                   "popl %eax\n\t"
+                   "popfl\n\t"
+                   "xorl %ecx,%eax\n\t"
+                   "andl $0x00200000,%eax\n\t"
+                   "ret" )
+#else
+static int have_cpuid(void)
+{
+    return 1;
 }
+#endif
 
 /* Detect if a SSE2 processor is capable of Denormals Are Zero (DAZ) mode.
  *
@@ -1192,7 +1305,7 @@ static inline void get_cpuinfo(SYSTEM_CPU_INFORMATION* info)
  *		fill_cpu_info
  *
  * inits a couple of places with CPU related information:
- * - cached_sci in this file
+ * - cpu_info in this file
  * - Peb->NumberOfProcessors
  * - SharedUserData->ProcessFeatures[] array
  */
@@ -1223,11 +1336,10 @@ void fill_cpu_info(void)
 #endif
     NtCurrentTeb()->Peb->NumberOfProcessors = num;
 
-    memset(&cached_sci, 0, sizeof(cached_sci));
-    get_cpuinfo(&cached_sci);
+    get_cpuinfo(&cpu_info);
 
     TRACE("<- CPU arch %d, level %d, rev %d, features 0x%x\n",
-          cached_sci.Architecture, cached_sci.Level, cached_sci.Revision, cached_sci.FeatureSet);
+          cpu_info.Architecture, cpu_info.Level, cpu_info.Revision, cpu_info.FeatureSet);
 }
 
 static BOOL grow_logical_proc_buf(SYSTEM_LOGICAL_PROCESSOR_INFORMATION **pdata,
@@ -1265,6 +1377,23 @@ static DWORD log_proc_ex_size_plus(DWORD size)
     return sizeof(LOGICAL_PROCESSOR_RELATIONSHIP) + sizeof(DWORD) + size;
 }
 
+static DWORD count_bits(ULONG_PTR mask)
+{
+    DWORD count = 0;
+    while (mask > 0)
+    {
+        mask >>= 1;
+        count++;
+    }
+    return count;
+}
+
+/* Store package and core information for a logical processor. Parsing of processor
+ * data may happen in multiple passes; the 'id' parameter is then used to locate
+ * previously stored data. The type of data stored in 'id' depends on 'rel':
+ * - RelationProcessorPackage: package id ('CPU socket').
+ * - RelationProcessorCore: physical core number.
+ */
 static inline BOOL logical_proc_info_add_by_id(SYSTEM_LOGICAL_PROCESSOR_INFORMATION **pdata,
         SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX **pdataex, DWORD *len, DWORD *pmax_len,
         LOGICAL_PROCESSOR_RELATIONSHIP rel, DWORD id, ULONG_PTR mask)
@@ -1272,17 +1401,16 @@ static inline BOOL logical_proc_info_add_by_id(SYSTEM_LOGICAL_PROCESSOR_INFORMAT
     if (pdata) {
         DWORD i;
 
-        if(rel == RelationProcessorPackage){
-            for(i=0; i<*len; i++)
+        for (i=0; i<*len; i++)
+        {
+            if (rel == RelationProcessorPackage && (*pdata)[i].Relationship == rel && (*pdata)[i].u.Reserved[1] == id)
             {
-                if ((*pdata)[i].Relationship!=rel || (*pdata)[i].u.Reserved[1]!=id)
-                    continue;
-
                 (*pdata)[i].ProcessorMask |= mask;
                 return TRUE;
             }
-        }else
-            i = *len;
+            else if (rel == RelationProcessorCore && (*pdata)[i].Relationship == rel && (*pdata)[i].u.Reserved[1] == id)
+                return TRUE;
+        }
 
         while(*len == *pmax_len)
         {
@@ -1292,7 +1420,8 @@ static inline BOOL logical_proc_info_add_by_id(SYSTEM_LOGICAL_PROCESSOR_INFORMAT
 
         (*pdata)[i].Relationship = rel;
         (*pdata)[i].ProcessorMask = mask;
-        /* TODO: set processor core flags */
+        if (rel == RelationProcessorCore)
+            (*pdata)[i].u.ProcessorCore.Flags = count_bits(mask) > 1 ? LTP_PC_SMT : 0;
         (*pdata)[i].u.Reserved[0] = 0;
         (*pdata)[i].u.Reserved[1] = id;
         *len = i+1;
@@ -1306,6 +1435,10 @@ static inline BOOL logical_proc_info_add_by_id(SYSTEM_LOGICAL_PROCESSOR_INFORMAT
             if (rel == RelationProcessorPackage && dataex->Relationship == rel && dataex->u.Processor.Reserved[1] == id)
             {
                 dataex->u.Processor.GroupMask[0].Mask |= mask;
+                return TRUE;
+            }
+            else if (rel == RelationProcessorCore && dataex->Relationship == rel && dataex->u.Processor.Reserved[1] == id)
+            {
                 return TRUE;
             }
             ofs += dataex->Size;
@@ -1324,7 +1457,10 @@ static inline BOOL logical_proc_info_add_by_id(SYSTEM_LOGICAL_PROCESSOR_INFORMAT
 
         dataex->Relationship = rel;
         dataex->Size = log_proc_ex_size_plus(sizeof(PROCESSOR_RELATIONSHIP));
-        dataex->u.Processor.Flags = 0; /* TODO */
+        if (rel == RelationProcessorCore)
+            dataex->u.Processor.Flags = count_bits(mask) > 1 ? LTP_PC_SMT : 0;
+        else
+            dataex->u.Processor.Flags = 0;
         dataex->u.Processor.EfficiencyClass = 0;
         dataex->u.Processor.GroupCount = 1;
         dataex->u.Processor.GroupMask[0].Mask = mask;
@@ -1467,18 +1603,100 @@ static inline BOOL logical_proc_info_add_group(SYSTEM_LOGICAL_PROCESSOR_INFORMAT
 }
 
 #ifdef linux
+/* Helper function for counting bitmap values as commonly used by the Linux kernel
+ * for storing CPU masks in sysfs. The format is comma separated lists of hex values
+ * each max 32-bit e.g. "00ff" or even "00,00000000,0000ffff".
+ *
+ * Example files include:
+ * - /sys/devices/system/cpu/cpu0/cache/index0/shared_cpu_map
+ * - /sys/devices/system/cpu/cpu0/topology/thread_siblings
+ */
+static BOOL sysfs_parse_bitmap(const char *filename, ULONG_PTR * const mask)
+{
+    FILE *f;
+    DWORD r;
+
+    f = fopen(filename, "r");
+    if (!f)
+        return FALSE;
+
+    while (!feof(f))
+    {
+        char op;
+        if (!fscanf(f, "%x%c ", &r, &op))
+            break;
+
+        *mask = (sizeof(ULONG_PTR)>sizeof(int) ? *mask<<(8*sizeof(DWORD)) : 0) + r;
+    }
+
+    fclose(f);
+    return TRUE;
+}
+
+/* Helper function for counting number of elements in interval lists as used by
+ * the Linux kernel. The format is comma separated list of intervals of which
+ * each interval has the format of "begin-end" where begin and end are decimal
+ * numbers. E.g. "0-7", "0-7,16-23"
+ *
+ * Example files include:
+ * - /sys/devices/system/cpu/online
+ * - /sys/devices/system/cpu/cpu0/cache/index0/shared_cpu_list
+ * - /sys/devices/system/cpu/cpu0/topology/thread_siblings_list.
+ */
+static BOOL sysfs_count_list_elements(const char *filename, DWORD *result)
+{
+    FILE *f;
+
+    f = fopen(filename, "r");
+    if (!f)
+        return FALSE;
+
+    while (!feof(f))
+    {
+        char op;
+        DWORD beg, end;
+
+        if (!fscanf(f, "%u%c ", &beg, &op))
+            break;
+
+        if(op == '-')
+            fscanf(f, "%u%c ", &end, &op);
+        else
+            end = beg;
+
+        *result += end - beg + 1;
+    }
+
+    fclose(f);
+    return TRUE;
+}
+
 /* for 'data', max_len is the array count. for 'dataex', max_len is in bytes */
 static NTSTATUS create_logical_proc_info(SYSTEM_LOGICAL_PROCESSOR_INFORMATION **data,
         SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX **dataex, DWORD *max_len)
 {
-    static const char core_info[] = "/sys/devices/system/cpu/cpu%u/%s";
+    static const char core_info[] = "/sys/devices/system/cpu/cpu%u/topology/%s";
     static const char cache_info[] = "/sys/devices/system/cpu/cpu%u/cache/index%u/%s";
     static const char numa_info[] = "/sys/devices/system/node/node%u/cpumap";
 
     FILE *fcpu_list, *fnuma_list, *f;
-    DWORD len = 0, beg, end, i, j, r, num_cpus = 0;
+    DWORD len = 0, beg, end, i, j, r, num_cpus = 0, max_cpus = 0;
     char op, name[MAX_PATH];
     ULONG_PTR all_cpus_mask = 0;
+
+    /* On systems with a large number of CPU cores (32 or 64 depending on 32-bit or 64-bit),
+     * we have issues parsing processor information:
+     * - ULONG_PTR masks as used in data structures can't hold all cores. Requires splitting
+     *   data appropriately into "processor groups". We are hard coding 1.
+     * - Thread affinity code in wineserver and our CPU parsing code here work independently.
+     *   So far the Windows mask applied directly to Linux, but process groups break that.
+     *   (NUMA systems you may have multiple non-full groups.)
+     */
+    if(sysfs_count_list_elements("/sys/devices/system/cpu/present", &max_cpus) && max_cpus > MAXIMUM_PROCESSORS)
+    {
+        FIXME("Improve CPU info reporting: system supports %u logical cores, but only %u supported!\n",
+                max_cpus, MAXIMUM_PROCESSORS);
+    }
 
     fcpu_list = fopen("/sys/devices/system/cpu/online", "r");
     if(!fcpu_list)
@@ -1493,6 +1711,9 @@ static NTSTATUS create_logical_proc_info(SYSTEM_LOGICAL_PROCESSOR_INFORMATION **
 
         for(i=beg; i<=end; i++)
         {
+            DWORD phys_core = 0;
+            ULONG_PTR thread_mask = 0;
+
             if(i > 8*sizeof(ULONG_PTR))
             {
                 FIXME("skipping logical processor %d\n", i);
@@ -1513,15 +1734,30 @@ static NTSTATUS create_logical_proc_info(SYSTEM_LOGICAL_PROCESSOR_INFORMATION **
                 return STATUS_NO_MEMORY;
             }
 
-            sprintf(name, core_info, i, "core_id");
+            /* Sysfs enumerates logical cores (and not physical cores), but Windows enumerates
+             * by physical core. Upon enumerating a logical core in sysfs, we register a physical
+             * core and all its logical cores. In order to not report physical cores multiple
+             * times, we pass a unique physical core ID to logical_proc_info_add_by_id and let
+             * that call figure out any duplication.
+             * Obtain a unique physical core ID from the first element of thread_siblings_list.
+             * This list provides logical cores sharing the same physical core. The IDs are based
+             * on kernel cpu core numbering as opposed to a hardware core ID like provided through
+             * 'core_id', so are suitable as a unique ID.
+             */
+            sprintf(name, core_info, i, "thread_siblings_list");
             f = fopen(name, "r");
             if(f)
             {
-                fscanf(f, "%u", &r);
+                fscanf(f, "%d%c", &phys_core, &op);
                 fclose(f);
             }
-            else r = i;
-            if(!logical_proc_info_add_by_id(data, dataex, &len, max_len, RelationProcessorCore, r, (ULONG_PTR)1 << i))
+            else phys_core = i;
+
+            /* Mask of logical threads sharing same physical core in kernel core numbering. */
+            sprintf(name, core_info, i, "thread_siblings");
+            if(!sysfs_parse_bitmap(name, &thread_mask))
+                thread_mask = 1<<i;
+            if(!logical_proc_info_add_by_id(data, dataex, &len, max_len, RelationProcessorCore, phys_core, thread_mask))
             {
                 fclose(fcpu_list);
                 return STATUS_NO_MEMORY;
@@ -1533,15 +1769,7 @@ static NTSTATUS create_logical_proc_info(SYSTEM_LOGICAL_PROCESSOR_INFORMATION **
                 ULONG_PTR mask = 0;
 
                 sprintf(name, cache_info, i, j, "shared_cpu_map");
-                f = fopen(name, "r");
-                if(!f) continue;
-                while(!feof(f))
-                {
-                    if(!fscanf(f, "%x%c ", &r, &op))
-                        break;
-                    mask = (sizeof(ULONG_PTR)>sizeof(int) ? mask<<(8*sizeof(DWORD)) : 0) + r;
-                }
-                fclose(f);
+                if(!sysfs_parse_bitmap(name, &mask)) continue;
 
                 sprintf(name, cache_info, i, j, "level");
                 f = fopen(name, "r");
@@ -1599,7 +1827,6 @@ static NTSTATUS create_logical_proc_info(SYSTEM_LOGICAL_PROCESSOR_INFORMATION **
         for(i=0; i<len; i++){
             if((*data)[i].Relationship == RelationProcessorCore){
                 all_cpus_mask |= (*data)[i].ProcessorMask;
-                ++num_cpus;
             }
         }
     }else{
@@ -1607,11 +1834,11 @@ static NTSTATUS create_logical_proc_info(SYSTEM_LOGICAL_PROCESSOR_INFORMATION **
             SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *infoex = (SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *)(((char *)*dataex) + i);
             if(infoex->Relationship == RelationProcessorCore){
                 all_cpus_mask |= infoex->u.Processor.GroupMask[0].Mask;
-                ++num_cpus;
             }
             i += infoex->Size;
         }
     }
+    num_cpus = count_bits(all_cpus_mask);
 
     fnuma_list = fopen("/sys/devices/system/node/online", "r");
     if(!fnuma_list)
@@ -1751,6 +1978,7 @@ static NTSTATUS create_logical_proc_info(SYSTEM_LOGICAL_PROCESSOR_INFORMATION **
     for(p = 0; p < pkgs_no; ++p){
         for(j = 0; j < cores_per_package && p * cores_per_package + j < cores_no; ++j){
             ULONG_PTR mask = 0;
+            DWORD phys_core;
 
             for(k = 0; k < lcpu_per_core; ++k)
                 mask |= (ULONG_PTR)1 << (j * lcpu_per_core + k);
@@ -1762,7 +1990,8 @@ static NTSTATUS create_logical_proc_info(SYSTEM_LOGICAL_PROCESSOR_INFORMATION **
                 return STATUS_NO_MEMORY;
 
             /* add new core */
-            if(!logical_proc_info_add_by_id(data, dataex, &len, max_len, RelationProcessorCore, p, mask))
+            phys_core = p * cores_per_package + j;
+            if(!logical_proc_info_add_by_id(data, dataex, &len, max_len, RelationProcessorCore, phys_core, mask))
                 return STATUS_NO_MEMORY;
 
             for(i = 1; i < 5; ++i){
@@ -1805,6 +2034,208 @@ static NTSTATUS create_logical_proc_info(SYSTEM_LOGICAL_PROCESSOR_INFORMATION **
     return STATUS_NOT_IMPLEMENTED;
 }
 #endif
+
+#ifdef linux
+
+static inline void copy_smbios_string(char **buffer, char *s, size_t len)
+{
+    if (!len) return;
+    memcpy(*buffer, s, len + 1);
+    *buffer += len + 1;
+}
+
+static size_t get_smbios_string(const char *path, char *str, size_t size)
+{
+    FILE *file;
+    size_t len;
+
+    if (!(file = fopen(path, "r")))
+        return 0;
+
+    len = fread(str, 1, size - 1, file);
+    fclose(file);
+
+    if (len >= 1 && str[len - 1] == '\n')
+        len--;
+
+    str[len] = 0;
+
+    return len;
+}
+
+static NTSTATUS get_firmware_info(SYSTEM_FIRMWARE_TABLE_INFORMATION *sfti, ULONG available_len, ULONG *required_len)
+{
+    switch (sfti->ProviderSignature)
+    {
+    case RSMB:
+        {
+            char bios_vendor[128], bios_version[128], bios_date[128];
+            size_t bios_vendor_len, bios_version_len, bios_date_len;
+            char system_vendor[128], system_product[128], system_version[128], system_serial[128];
+            size_t system_vendor_len, system_product_len, system_version_len, system_serial_len;
+            char board_vendor[128], board_product[128], board_version[128], board_serial[128];
+            size_t board_vendor_len, board_product_len, board_version_len, board_serial_len;
+            char chassis_vendor[128], chassis_version[128], chassis_serial[128], chassis_asset_tag[128];
+            size_t chassis_vendor_len, chassis_version_len, chassis_serial_len, chassis_asset_tag_len;
+            char *buffer = (char*)sfti->TableBuffer;
+            BYTE string_count;
+            struct smbios_prologue *prologue;
+            struct smbios_bios *bios;
+            struct smbios_system *system;
+            struct smbios_board *board;
+            struct smbios_chassis *chassis;
+
+#define S(s) s, sizeof(s)
+            bios_vendor_len = get_smbios_string("/sys/class/dmi/id/bios_vendor", S(bios_vendor));
+            bios_version_len = get_smbios_string("/sys/class/dmi/id/bios_version", S(bios_version));
+            bios_date_len = get_smbios_string("/sys/class/dmi/id/bios_date", S(bios_date));
+            system_vendor_len = get_smbios_string("/sys/class/dmi/id/sys_vendor", S(system_vendor));
+            system_product_len = get_smbios_string("/sys/class/dmi/id/product", S(system_product));
+            system_version_len = get_smbios_string("/sys/class/dmi/id/product_version", S(system_version));
+            system_serial_len = get_smbios_string("/sys/class/dmi/id/product_serial", S(system_serial));
+            board_vendor_len = get_smbios_string("/sys/class/dmi/id/board_vendor", S(board_vendor));
+            board_product_len = get_smbios_string("/sys/class/dmi/id/board_name", S(board_product));
+            board_version_len = get_smbios_string("/sys/class/dmi/id/board_version", S(board_version));
+            board_serial_len = get_smbios_string("/sys/class/dmi/id/board_serial", S(board_serial));
+            chassis_vendor_len = get_smbios_string("/sys/class/dmi/id/chassis_vendor", S(chassis_vendor));
+            chassis_version_len = get_smbios_string("/sys/class/dmi/id/chassis_version", S(chassis_version));
+            chassis_serial_len = get_smbios_string("/sys/class/dmi/id/chassis_serial", S(chassis_serial));
+            chassis_asset_tag_len = get_smbios_string("/sys/class/dmi/id/chassis_tag", S(chassis_asset_tag));
+#undef S
+
+            *required_len = sizeof(struct smbios_prologue);
+
+            *required_len += sizeof(struct smbios_bios);
+            *required_len += max(bios_vendor_len + bios_version_len + bios_date_len + 4, 2);
+
+            *required_len += sizeof(struct smbios_system);
+            *required_len += max(system_vendor_len + system_product_len + system_version_len +
+                                 system_serial_len + 5, 2);
+
+            *required_len += sizeof(struct smbios_board);
+            *required_len += max(board_vendor_len + board_product_len + board_version_len + board_serial_len + 5, 2);
+
+            *required_len += sizeof(struct smbios_chassis);
+            *required_len += max(chassis_vendor_len + chassis_version_len + chassis_serial_len +
+                                 chassis_asset_tag_len + 5, 2);
+
+            sfti->TableBufferLength = *required_len;
+
+            *required_len += FIELD_OFFSET(SYSTEM_FIRMWARE_TABLE_INFORMATION, TableBuffer);
+
+            if (available_len < *required_len)
+                return STATUS_BUFFER_TOO_SMALL;
+
+            prologue = (struct smbios_prologue*)buffer;
+            prologue->calling_method = 0;
+            prologue->major_version = 2;
+            prologue->minor_version = 0;
+            prologue->revision = 0;
+            prologue->length = sfti->TableBufferLength - sizeof(struct smbios_prologue);
+            buffer += sizeof(struct smbios_prologue);
+
+            string_count = 0;
+            bios = (struct smbios_bios*)buffer;
+            bios->type = 0;
+            bios->length = sizeof(struct smbios_bios);
+            bios->handle = 0;
+            bios->vendor = bios_vendor_len ? ++string_count : 0;
+            bios->version = bios_version_len ? ++string_count : 0;
+            bios->start = 0;
+            bios->date = bios_date_len ? ++string_count : 0;
+            bios->size = 0;
+            bios->characteristics = 0x4; /* not supported */
+            buffer += sizeof(struct smbios_bios);
+
+            copy_smbios_string(&buffer, bios_vendor, bios_vendor_len);
+            copy_smbios_string(&buffer, bios_version, bios_version_len);
+            copy_smbios_string(&buffer, bios_date, bios_date_len);
+            if (!string_count) *buffer++ = 0;
+            *buffer++ = 0;
+
+            string_count = 0;
+            system = (struct smbios_system*)buffer;
+            system->type = 1;
+            system->length = sizeof(struct smbios_system);
+            system->handle = 0;
+            system->vendor = system_vendor_len ? ++string_count : 0;
+            system->product = system_product_len ? ++string_count : 0;
+            system->version = system_version_len ? ++string_count : 0;
+            system->serial = system_serial_len ? ++string_count : 0;
+            buffer += sizeof(struct smbios_system);
+
+            copy_smbios_string(&buffer, system_vendor, system_vendor_len);
+            copy_smbios_string(&buffer, system_product, system_product_len);
+            copy_smbios_string(&buffer, system_version, system_version_len);
+            copy_smbios_string(&buffer, system_serial, system_serial_len);
+            if (!string_count) *buffer++ = 0;
+            *buffer++ = 0;
+
+            string_count = 0;
+            board = (struct smbios_board*)buffer;
+            board->type = 2;
+            board->length = sizeof(struct smbios_board);
+            board->handle = 0;
+            board->vendor = board_vendor_len ? ++string_count : 0;
+            board->product = board_product_len ? ++string_count : 0;
+            board->version = board_version_len ? ++string_count : 0;
+            board->serial = board_serial_len ? ++string_count : 0;
+            buffer += sizeof(struct smbios_board);
+
+            copy_smbios_string(&buffer, board_vendor, board_vendor_len);
+            copy_smbios_string(&buffer, board_product, board_product_len);
+            copy_smbios_string(&buffer, board_version, board_version_len);
+            copy_smbios_string(&buffer, board_serial, board_serial_len);
+            if (!string_count) *buffer++ = 0;
+            *buffer++ = 0;
+
+            string_count = 0;
+            chassis = (struct smbios_chassis*)buffer;
+            chassis->type = 3;
+            chassis->length = sizeof(struct smbios_chassis);
+            chassis->handle = 0;
+            chassis->vendor = chassis_vendor_len ? ++string_count : 0;
+            chassis->shape = 0x2; /* unknown */
+            chassis->version = chassis_version_len ? ++string_count : 0;
+            chassis->serial = chassis_serial_len ? ++string_count : 0;
+            chassis->asset_tag = chassis_asset_tag_len ? ++string_count : 0;
+            buffer += sizeof(struct smbios_chassis);
+
+            copy_smbios_string(&buffer, chassis_vendor, chassis_vendor_len);
+            copy_smbios_string(&buffer, chassis_version, chassis_version_len);
+            copy_smbios_string(&buffer, chassis_serial, chassis_serial_len);
+            copy_smbios_string(&buffer, chassis_asset_tag, chassis_asset_tag_len);
+            if (!string_count) *buffer++ = 0;
+            *buffer++ = 0;
+
+            return STATUS_SUCCESS;
+        }
+    default:
+        {
+            FIXME("info_class SYSTEM_FIRMWARE_TABLE_INFORMATION provider %08x\n", sfti->ProviderSignature);
+            return STATUS_NOT_IMPLEMENTED;
+        }
+    }
+}
+
+#else
+
+static NTSTATUS get_firmware_info(SYSTEM_FIRMWARE_TABLE_INFORMATION *sfti, ULONG available_len, ULONG *required_len)
+{
+    FIXME("info_class SYSTEM_FIRMWARE_TABLE_INFORMATION\n");
+    sfti->TableBufferLength = 0;
+    return STATUS_NOT_IMPLEMENTED;
+}
+
+#endif
+
+/***********************************************************************
+ * RtlIsProcessorFeaturePresent [NTDLL.@]
+ */
+BOOLEAN WINAPI RtlIsProcessorFeaturePresent( UINT feature )
+{
+    return feature < PROCESSOR_FEATURE_MAX && user_shared_data->ProcessorFeatures[feature];
+}
 
 /******************************************************************************
  * NtQuerySystemInformation [NTDLL.@]
@@ -1855,10 +2286,10 @@ NTSTATUS WINAPI NtQuerySystemInformation(
         }
         break;
     case SystemCpuInformation:
-        if (Length >= (len = sizeof(cached_sci)))
+        if (Length >= (len = sizeof(cpu_info)))
         {
             if (!SystemInformation) ret = STATUS_ACCESS_VIOLATION;
-            else memcpy(SystemInformation, &cached_sci, len);
+            else memcpy(SystemInformation, &cpu_info, len);
         }
         else ret = STATUS_INFO_LENGTH_MISMATCH;
         break;
@@ -2313,6 +2744,28 @@ NTSTATUS WINAPI NtQuerySystemInformation(
                 else *((DWORD *)SystemInformation) = 64;
             }
             else ret = STATUS_INFO_LENGTH_MISMATCH;
+        }
+        break;
+    case SystemFirmwareTableInformation:
+        {
+            SYSTEM_FIRMWARE_TABLE_INFORMATION *sfti = (SYSTEM_FIRMWARE_TABLE_INFORMATION*)SystemInformation;
+            len = FIELD_OFFSET(SYSTEM_FIRMWARE_TABLE_INFORMATION, TableBuffer);
+            if (Length < len)
+            {
+                ret = STATUS_INFO_LENGTH_MISMATCH;
+                break;
+            }
+
+            switch (sfti->Action)
+            {
+            case SystemFirmwareTable_Get:
+                ret = get_firmware_info(sfti, Length, &len);
+                break;
+            default:
+                len = 0;
+                ret = STATUS_NOT_IMPLEMENTED;
+                FIXME("info_class SYSTEM_FIRMWARE_TABLE_INFORMATION action %d\n", sfti->Action);
+            }
         }
         break;
     default:

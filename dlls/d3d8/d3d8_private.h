@@ -33,74 +33,21 @@
 #include "winbase.h"
 #include "wingdi.h"
 #include "wine/debug.h"
+#include "wine/heap.h"
 #include "d3d8.h"
 #include "wine/wined3d.h"
 
 #define D3DPRESENTFLAGS_MASK 0x00000fffu
 
+#define D3D8_MAX_VERTEX_SHADER_CONSTANTF 256
+#define D3D8_MAX_STREAMS 16
+
 /* CreateVertexShader can return > 0xFFFF */
 #define VS_HIGHESTFIXEDFXF 0xF0000000
 
-/* ===========================================================================
-    Macros
-   =========================================================================== */
-/* Not nice, but it lets wined3d support different versions of directx */
-#define WINECAPSTOD3D8CAPS(_pD3D8Caps, _pWineCaps) \
-    _pD3D8Caps->DeviceType                        = (D3DDEVTYPE) _pWineCaps->DeviceType; \
-    _pD3D8Caps->AdapterOrdinal                    = _pWineCaps->AdapterOrdinal; \
-    _pD3D8Caps->Caps                              = _pWineCaps->Caps; \
-    _pD3D8Caps->Caps2                             = _pWineCaps->Caps2; \
-    _pD3D8Caps->Caps3                             = _pWineCaps->Caps3; \
-    _pD3D8Caps->PresentationIntervals             = _pWineCaps->PresentationIntervals; \
-    _pD3D8Caps->CursorCaps                        = _pWineCaps->CursorCaps; \
-    _pD3D8Caps->DevCaps                           = _pWineCaps->DevCaps; \
-    _pD3D8Caps->PrimitiveMiscCaps                 = _pWineCaps->PrimitiveMiscCaps; \
-    _pD3D8Caps->RasterCaps                        = _pWineCaps->RasterCaps; \
-    _pD3D8Caps->ZCmpCaps                          = _pWineCaps->ZCmpCaps; \
-    _pD3D8Caps->SrcBlendCaps                      = _pWineCaps->SrcBlendCaps; \
-    _pD3D8Caps->DestBlendCaps                     = _pWineCaps->DestBlendCaps; \
-    _pD3D8Caps->AlphaCmpCaps                      = _pWineCaps->AlphaCmpCaps; \
-    _pD3D8Caps->ShadeCaps                         = _pWineCaps->ShadeCaps; \
-    _pD3D8Caps->TextureCaps                       = _pWineCaps->TextureCaps; \
-    _pD3D8Caps->TextureFilterCaps                 = _pWineCaps->TextureFilterCaps; \
-    _pD3D8Caps->CubeTextureFilterCaps             = _pWineCaps->CubeTextureFilterCaps; \
-    _pD3D8Caps->VolumeTextureFilterCaps           = _pWineCaps->VolumeTextureFilterCaps; \
-    _pD3D8Caps->TextureAddressCaps                = _pWineCaps->TextureAddressCaps; \
-    _pD3D8Caps->VolumeTextureAddressCaps          = _pWineCaps->VolumeTextureAddressCaps; \
-    _pD3D8Caps->LineCaps                          = _pWineCaps->LineCaps; \
-    _pD3D8Caps->MaxTextureWidth                   = _pWineCaps->MaxTextureWidth; \
-    _pD3D8Caps->MaxTextureHeight                  = _pWineCaps->MaxTextureHeight; \
-    _pD3D8Caps->MaxVolumeExtent                   = _pWineCaps->MaxVolumeExtent; \
-    _pD3D8Caps->MaxTextureRepeat                  = _pWineCaps->MaxTextureRepeat; \
-    _pD3D8Caps->MaxTextureAspectRatio             = _pWineCaps->MaxTextureAspectRatio; \
-    _pD3D8Caps->MaxAnisotropy                     = _pWineCaps->MaxAnisotropy; \
-    _pD3D8Caps->MaxVertexW                        = _pWineCaps->MaxVertexW; \
-    _pD3D8Caps->GuardBandLeft                     = _pWineCaps->GuardBandLeft; \
-    _pD3D8Caps->GuardBandTop                      = _pWineCaps->GuardBandTop; \
-    _pD3D8Caps->GuardBandRight                    = _pWineCaps->GuardBandRight; \
-    _pD3D8Caps->GuardBandBottom                   = _pWineCaps->GuardBandBottom; \
-    _pD3D8Caps->ExtentsAdjust                     = _pWineCaps->ExtentsAdjust; \
-    _pD3D8Caps->StencilCaps                       = _pWineCaps->StencilCaps; \
-    _pD3D8Caps->FVFCaps                           = _pWineCaps->FVFCaps; \
-    _pD3D8Caps->TextureOpCaps                     = _pWineCaps->TextureOpCaps; \
-    _pD3D8Caps->MaxTextureBlendStages             = _pWineCaps->MaxTextureBlendStages; \
-    _pD3D8Caps->MaxSimultaneousTextures           = _pWineCaps->MaxSimultaneousTextures; \
-    _pD3D8Caps->VertexProcessingCaps              = _pWineCaps->VertexProcessingCaps; \
-    _pD3D8Caps->MaxActiveLights                   = _pWineCaps->MaxActiveLights; \
-    _pD3D8Caps->MaxUserClipPlanes                 = _pWineCaps->MaxUserClipPlanes; \
-    _pD3D8Caps->MaxVertexBlendMatrices            = _pWineCaps->MaxVertexBlendMatrices; \
-    _pD3D8Caps->MaxVertexBlendMatrixIndex         = _pWineCaps->MaxVertexBlendMatrixIndex; \
-    _pD3D8Caps->MaxPointSize                      = _pWineCaps->MaxPointSize; \
-    _pD3D8Caps->MaxPrimitiveCount                 = _pWineCaps->MaxPrimitiveCount; \
-    _pD3D8Caps->MaxVertexIndex                    = _pWineCaps->MaxVertexIndex; \
-    _pD3D8Caps->MaxStreams                        = _pWineCaps->MaxStreams; \
-    _pD3D8Caps->MaxStreamStride                   = _pWineCaps->MaxStreamStride; \
-    _pD3D8Caps->VertexShaderVersion               = _pWineCaps->VertexShaderVersion; \
-    _pD3D8Caps->MaxVertexShaderConst              = _pWineCaps->MaxVertexShaderConst; \
-    _pD3D8Caps->PixelShaderVersion                = _pWineCaps->PixelShaderVersion; \
-    _pD3D8Caps->MaxPixelShaderValue               = _pWineCaps->PixelShader1xMaxValue;
+extern const struct wined3d_parent_ops d3d8_null_wined3d_parent_ops DECLSPEC_HIDDEN;
 
-void fixup_caps(WINED3DCAPS *pWineCaps) DECLSPEC_HIDDEN;
+void d3dcaps_from_wined3dcaps(D3DCAPS8 *caps, const struct wined3d_caps *wined3d_caps) DECLSPEC_HIDDEN;
 
 struct d3d8
 {
@@ -176,8 +123,11 @@ struct d3d8_device
     UINT                   index_buffer_pos;
 
     LONG device_state;
-    /* Avoids recursion with nested ReleaseRef to 0 */
-    BOOL                    inDestruction;
+    DWORD sysmem_vb : 16; /* D3D8_MAX_STREAMS */
+    DWORD sysmem_ib : 1;
+    DWORD in_destruction : 1;
+    DWORD recording : 1;
+    DWORD padding : 13;
 
     /* The d3d8 API supports only one implicit swapchain (no D3DCREATE_ADAPTERGROUP_DEVICE,
      * no GetSwapchain, GetBackBuffer doesn't accept a swapchain number). */
@@ -224,10 +174,11 @@ struct d3d8_swapchain
     LONG refcount;
     struct wined3d_swapchain *wined3d_swapchain;
     IDirect3DDevice8 *parent_device;
+    unsigned int swap_interval;
 };
 
 HRESULT d3d8_swapchain_create(struct d3d8_device *device, struct wined3d_swapchain_desc *desc,
-        struct d3d8_swapchain **swapchain) DECLSPEC_HIDDEN;
+        unsigned int swap_interval, struct d3d8_swapchain **swapchain) DECLSPEC_HIDDEN;
 
 struct d3d8_surface
 {
@@ -256,7 +207,8 @@ struct d3d8_vertexbuffer
     struct d3d8_resource resource;
     struct wined3d_buffer *wined3d_buffer;
     IDirect3DDevice8 *parent_device;
-    DWORD fvf;
+    struct wined3d_buffer *draw_buffer;
+    DWORD fvf, usage;
 };
 
 HRESULT vertexbuffer_init(struct d3d8_vertexbuffer *buffer, struct d3d8_device *device,
@@ -269,7 +221,9 @@ struct d3d8_indexbuffer
     struct d3d8_resource resource;
     struct wined3d_buffer *wined3d_buffer;
     IDirect3DDevice8 *parent_device;
+    struct wined3d_buffer *draw_buffer;
     enum wined3d_format_id format;
+    DWORD usage;
 };
 
 HRESULT indexbuffer_init(struct d3d8_indexbuffer *buffer, struct d3d8_device *device,
@@ -317,8 +271,6 @@ void d3d8_vertex_shader_destroy(struct d3d8_vertex_shader *shader) DECLSPEC_HIDD
 HRESULT d3d8_vertex_shader_init(struct d3d8_vertex_shader *shader, struct d3d8_device *device,
         const DWORD *declaration, const DWORD *byte_code, DWORD shader_handle, DWORD usage) DECLSPEC_HIDDEN;
 
-#define D3D8_MAX_VERTEX_SHADER_CONSTANTF 256
-
 struct d3d8_pixel_shader
 {
     DWORD handle;
@@ -331,7 +283,77 @@ HRESULT d3d8_pixel_shader_init(struct d3d8_pixel_shader *shader, struct d3d8_dev
 
 D3DFORMAT d3dformat_from_wined3dformat(enum wined3d_format_id format) DECLSPEC_HIDDEN;
 enum wined3d_format_id wined3dformat_from_d3dformat(D3DFORMAT format) DECLSPEC_HIDDEN;
+unsigned int wined3dmapflags_from_d3dmapflags(unsigned int flags, unsigned int usage) DECLSPEC_HIDDEN;
 void load_local_constants(const DWORD *d3d8_elements, struct wined3d_shader *wined3d_vertex_shader) DECLSPEC_HIDDEN;
 size_t parse_token(const DWORD *pToken) DECLSPEC_HIDDEN;
+
+static inline DWORD d3dusage_from_wined3dusage(unsigned int wined3d_usage, unsigned int bind_flags)
+{
+    DWORD usage = wined3d_usage & WINED3DUSAGE_MASK;
+    if (bind_flags & WINED3D_BIND_RENDER_TARGET)
+        usage |= D3DUSAGE_RENDERTARGET;
+    if (bind_flags & WINED3D_BIND_DEPTH_STENCIL)
+        usage |= D3DUSAGE_DEPTHSTENCIL;
+    return usage;
+}
+
+static inline D3DPOOL d3dpool_from_wined3daccess(unsigned int access, unsigned int usage)
+{
+    switch (access & (WINED3D_RESOURCE_ACCESS_GPU | WINED3D_RESOURCE_ACCESS_CPU))
+    {
+        default:
+        case WINED3D_RESOURCE_ACCESS_GPU:
+            return D3DPOOL_DEFAULT;
+        case WINED3D_RESOURCE_ACCESS_CPU:
+            if (usage & WINED3DUSAGE_SCRATCH)
+                return D3DPOOL_SCRATCH;
+            return D3DPOOL_SYSTEMMEM;
+        case WINED3D_RESOURCE_ACCESS_GPU | WINED3D_RESOURCE_ACCESS_CPU:
+            return D3DPOOL_MANAGED;
+    }
+}
+
+static inline unsigned int map_access_from_usage(unsigned int usage)
+{
+    if (usage & D3DUSAGE_WRITEONLY)
+        return WINED3D_RESOURCE_ACCESS_MAP_W;
+    return WINED3D_RESOURCE_ACCESS_MAP_R | WINED3D_RESOURCE_ACCESS_MAP_W;
+}
+
+static inline unsigned int wined3daccess_from_d3dpool(D3DPOOL pool, unsigned int usage)
+{
+    unsigned int access;
+
+    switch (pool)
+    {
+        case D3DPOOL_DEFAULT:
+            access = WINED3D_RESOURCE_ACCESS_GPU;
+            break;
+        case D3DPOOL_MANAGED:
+            access = WINED3D_RESOURCE_ACCESS_GPU | WINED3D_RESOURCE_ACCESS_CPU;
+            break;
+        case D3DPOOL_SYSTEMMEM:
+        case D3DPOOL_SCRATCH:
+            access = WINED3D_RESOURCE_ACCESS_CPU;
+            break;
+        default:
+            access = 0;
+    }
+    if (pool != D3DPOOL_DEFAULT || usage & D3DUSAGE_DYNAMIC)
+        access |= map_access_from_usage(usage);
+    return access;
+}
+
+static inline unsigned int wined3d_bind_flags_from_d3d8_usage(DWORD usage)
+{
+    unsigned int bind_flags = 0;
+
+    if (usage & D3DUSAGE_RENDERTARGET)
+        bind_flags |= WINED3D_BIND_RENDER_TARGET;
+    if (usage & D3DUSAGE_DEPTHSTENCIL)
+        bind_flags |= WINED3D_BIND_DEPTH_STENCIL;
+
+    return bind_flags;
+}
 
 #endif /* __WINE_D3DX8_PRIVATE_H */

@@ -2365,11 +2365,8 @@ int mp_init_multi(mp_int *mp, ...)
                succeeded in init-ing, then return error.
             */
             va_list clean_args;
-            
-            /* end the current list */
-            va_end(args);
-            
-            /* now start cleaning up */            
+
+            /* now start cleaning up */
             cur_arg = mp;
             va_start(clean_args, mp);
             while (n--) {
@@ -3381,9 +3378,9 @@ static const struct {
 /* returns # of RM trials required for a given bit size */
 int mp_prime_rabin_miller_trials(int size)
 {
-   int x;
+   unsigned int x;
 
-   for (x = 0; x < (int)(sizeof(sizes)/(sizeof(sizes[0]))); x++) {
+   for (x = 0; x < ARRAY_SIZE(sizes); x++) {
        if (sizes[x].k == size) {
           return sizes[x].t;
        } else if (sizes[x].k > size) {

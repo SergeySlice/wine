@@ -32,6 +32,15 @@ static NSString* const WineAppWaitQueryResponseMode = @"WineAppWaitQueryResponse
 int macdrv_err_on;
 
 
+#if !defined(MAC_OS_X_VERSION_10_12) || MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_12
+@interface NSWindow (WineAutoTabbingExtensions)
+
+    + (void) setAllowsAutomaticWindowTabbing:(BOOL)allows;
+
+@end
+#endif
+
+
 /***********************************************************************
  *              WineLocalizedString
  *
@@ -124,6 +133,9 @@ static NSString* WineLocalizedString(unsigned int stringID)
                                       [NSNumber numberWithBool:NO], @"ApplePressAndHoldEnabled",
                                       nil];
             [[NSUserDefaults standardUserDefaults] registerDefaults:defaults];
+
+            if ([NSWindow respondsToSelector:@selector(setAllowsAutomaticWindowTabbing:)])
+                [NSWindow setAllowsAutomaticWindowTabbing:NO];
         }
     }
 
@@ -223,6 +235,13 @@ static NSString* WineLocalizedString(unsigned int stringID)
 
             [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
             [NSApp activateIgnoringOtherApps:YES];
+#if defined(MAC_OS_X_VERSION_10_9) && MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_9
+            if (!enable_app_nap && [NSProcessInfo instancesRespondToSelector:@selector(beginActivityWithOptions:reason:)])
+            {
+                [[[NSProcessInfo processInfo] beginActivityWithOptions:NSActivityUserInitiatedAllowingIdleSystemSleep
+                                                                reason:@"Running Windows program"] retain]; // intentional leak
+            }
+#endif
 
             mainMenu = [[[NSMenu alloc] init] autorelease];
 
@@ -252,7 +271,7 @@ static NSString* WineLocalizedString(unsigned int stringID)
             else
                 title = WineLocalizedString(STRING_MENU_ITEM_QUIT);
             item = [submenu addItemWithTitle:title action:@selector(terminate:) keyEquivalent:@"q"];
-            [item setKeyEquivalentModifierMask:NSCommandKeyMask | NSAlternateKeyMask];
+            [item setKeyEquivalentModifierMask:NSCommandKeyMask];
             item = [[[NSMenuItem alloc] init] autorelease];
             [item setTitle:WineLocalizedString(STRING_MENU_WINE)];
             [item setSubmenu:submenu];
@@ -401,13 +420,45 @@ static NSString* WineLocalizedString(unsigned int stringID)
         }
     }
 
-    - (void) keyboardSelectionDidChange
+    static BOOL EqualInputSource(TISInputSourceRef source1, TISInputSourceRef source2)
     {
-        TISInputSourceRef inputSourceLayout;
+        if (!source1 && !source2)
+            return TRUE;
+        if (!source1 || !source2)
+            return FALSE;
+        return CFEqual(source1, source2);
+    }
+
+    - (void) keyboardSelectionDidChange:(BOOL)force
+    {
+        TISInputSourceRef inputSource, inputSourceLayout;
+
+        if (!force)
+        {
+            NSTextInputContext* context = [NSTextInputContext currentInputContext];
+            if (!context || ![context client])
+                return;
+        }
+
+        inputSource = TISCopyCurrentKeyboardInputSource();
+        inputSourceLayout = TISCopyCurrentKeyboardLayoutInputSource();
+        if (!force && EqualInputSource(inputSource, lastKeyboardInputSource) &&
+            EqualInputSource(inputSourceLayout, lastKeyboardLayoutInputSource))
+        {
+            if (inputSource) CFRelease(inputSource);
+            if (inputSourceLayout) CFRelease(inputSourceLayout);
+            return;
+        }
+
+        if (lastKeyboardInputSource)
+            CFRelease(lastKeyboardInputSource);
+        lastKeyboardInputSource = inputSource;
+        if (lastKeyboardLayoutInputSource)
+            CFRelease(lastKeyboardLayoutInputSource);
+        lastKeyboardLayoutInputSource = inputSourceLayout;
 
         inputSourceIsInputMethodValid = FALSE;
 
-        inputSourceLayout = TISCopyCurrentKeyboardLayoutInputSource();
         if (inputSourceLayout)
         {
             CFDataRef uchr;
@@ -422,7 +473,7 @@ static NSString* WineLocalizedString(unsigned int stringID)
                 event->keyboard_changed.keyboard_type = self.keyboardType;
                 event->keyboard_changed.iso_keyboard = (KBGetLayoutType(self.keyboardType) == kKeyboardISO);
                 event->keyboard_changed.uchr = CFDataCreateCopy(NULL, uchr);
-                event->keyboard_changed.input_source = TISCopyCurrentKeyboardInputSource();
+                event->keyboard_changed.input_source = (TISInputSourceRef)CFRetain(inputSource);
 
                 if (event->keyboard_changed.uchr)
                 {
@@ -436,8 +487,20 @@ static NSString* WineLocalizedString(unsigned int stringID)
 
                 macdrv_release_event(event);
             }
+        }
+    }
 
-            CFRelease(inputSourceLayout);
+    - (void) keyboardSelectionDidChange
+    {
+        [self keyboardSelectionDidChange:NO];
+    }
+
+    - (void) setKeyboardType:(CGEventSourceKeyboardType)newType
+    {
+        if (newType != keyboardType)
+        {
+            keyboardType = newType;
+            [self keyboardSelectionDidChange:YES];
         }
     }
 
@@ -738,12 +801,11 @@ static NSString* WineLocalizedString(unsigned int stringID)
         NSDictionary* options = nil;
 
 #if defined(MAC_OS_X_VERSION_10_8) && MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_8
-#ifdef  kCGDisplayShowDuplicateLowResolutionModes        
         if (&kCGDisplayShowDuplicateLowResolutionModes != NULL)
             options = [NSDictionary dictionaryWithObject:[NSNumber numberWithBool:TRUE]
                                                   forKey:(NSString*)kCGDisplayShowDuplicateLowResolutionModes];
 #endif
-#endif
+
         NSArray *modes = [(NSArray*)CGDisplayCopyAllDisplayModes(displayID, (CFDictionaryRef)options) autorelease];
         for (id candidateModeObject in modes)
         {
@@ -788,7 +850,6 @@ static NSString* WineLocalizedString(unsigned int stringID)
         }
         else
         {
-            BOOL active = [NSApp isActive];
             CGDisplayModeRef currentMode;
             NSArray* modes;
 
@@ -810,6 +871,10 @@ static NSString* WineLocalizedString(unsigned int stringID)
             modes = [self modesMatchingMode:mode forDisplay:displayID];
             if (!modes.count)
                 return FALSE;
+
+            [self transformProcessToForeground];
+
+            BOOL active = [NSApp isActive];
 
             if ([originalDisplayModes count] || displaysCapturedForFullscreen ||
                 !active || CGCaptureAllDisplays() == CGDisplayNoErr)
@@ -937,12 +1002,14 @@ static NSString* WineLocalizedString(unsigned int stringID)
     {
         NSDictionary* frame = [cursorFrames objectAtIndex:cursorFrame];
         CGImageRef cgimage = (CGImageRef)[frame objectForKey:@"image"];
-        NSImage* image = [[NSImage alloc] initWithCGImage:cgimage size:NSZeroSize];
+        CGSize size = CGSizeMake(CGImageGetWidth(cgimage), CGImageGetHeight(cgimage));
+        NSImage* image = [[NSImage alloc] initWithCGImage:cgimage size:NSSizeFromCGSize(cgsize_mac_from_win(size))];
         CFDictionaryRef hotSpotDict = (CFDictionaryRef)[frame objectForKey:@"hotSpot"];
         CGPoint hotSpot;
 
         if (!CGPointMakeWithDictionaryRepresentation(hotSpotDict, &hotSpot))
             hotSpot = CGPointZero;
+        hotSpot = cgpoint_mac_from_win(hotSpot);
         self.cursor = [[[NSCursor alloc] initWithImage:image hotSpot:NSPointFromCGPoint(hotSpot)] autorelease];
         [image release];
         [self unhideCursor];
@@ -1498,6 +1565,18 @@ static NSString* WineLocalizedString(unsigned int stringID)
         [self updateCursorClippingState];
     }
 
+    - (void) windowWillOrderOut:(WineWindow*)window
+    {
+        if ([windowsBeingDragged containsObject:window])
+        {
+            [self window:window isBeingDragged:NO];
+
+            macdrv_event* event = macdrv_create_event(WINDOW_DRAG_END, window);
+            [window.queue postEvent:event];
+            macdrv_release_event(event);
+        }
+    }
+
     - (void) handleMouseMove:(NSEvent*)anEvent
     {
         WineWindow* targetWindow;
@@ -1654,7 +1733,7 @@ static NSString* WineLocalizedString(unsigned int stringID)
 
         if ([window isKindOfClass:[WineWindow class]] &&
             type == NSLeftMouseDown &&
-            (([theEvent modifierFlags] & (NSShiftKeyMask | NSControlKeyMask| NSAlternateKeyMask | NSCommandKeyMask)) != NSCommandKeyMask))
+            ![theEvent wine_commandKeyDown])
         {
             NSWindowButton windowButton;
 
@@ -1974,6 +2053,17 @@ static NSString* WineLocalizedString(unsigned int stringID)
             [self handleScrollWheel:anEvent];
             ret = mouseCaptureWindow != nil;
         }
+        else if (type == NSKeyDown)
+        {
+            // -[NSApplication sendEvent:] seems to consume presses of the Help
+            // key (Insert key on PC keyboards), so we have to bypass it and
+            // send the event directly to the window.
+            if (anEvent.keyCode == kVK_Help)
+            {
+                [anEvent.window sendEvent:anEvent];
+                ret = TRUE;
+            }
+        }
         else if (type == NSKeyUp)
         {
             uint16_t keyCode = [anEvent keyCode];
@@ -2013,6 +2103,8 @@ static NSString* WineLocalizedString(unsigned int stringID)
                     [self updateCursorClippingState];
 
                     event = macdrv_create_event(eventType, window);
+                    if (eventType == WINDOW_DRAG_BEGIN)
+                        event->window_drag_begin.no_activate = [NSEvent wine_commandKeyDown];
                     [window.queue postEvent:event];
                     macdrv_release_event(event);
                 }

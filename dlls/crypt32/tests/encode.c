@@ -23,6 +23,7 @@
 #include <winbase.h>
 #include <winerror.h>
 #include <wincrypt.h>
+#include <snmp.h>
 
 #include "wine/test.h"
 
@@ -112,7 +113,7 @@ static void test_encodeInt(DWORD dwEncoding)
         ok(!ret && GetLastError() == STATUS_ACCESS_VIOLATION,
          "Expected STATUS_ACCESS_VIOLATION, got %08x\n", GetLastError());
     }
-    for (i = 0; i < sizeof(ints) / sizeof(ints[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(ints); i++)
     {
         /* encode as normal integer */
         ret = pCryptEncodeObjectEx(dwEncoding, X509_INTEGER, &ints[i].val, 0,
@@ -154,7 +155,7 @@ static void test_encodeInt(DWORD dwEncoding)
     /* encode a couple bigger ints, just to show it's little-endian and leading
      * sign bytes are dropped
      */
-    for (i = 0; i < sizeof(bigInts) / sizeof(bigInts[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(bigInts); i++)
     {
         blob.cbData = strlen((const char*)bigInts[i].val);
         blob.pbData = (BYTE *)bigInts[i].val;
@@ -177,7 +178,7 @@ static void test_encodeInt(DWORD dwEncoding)
         }
     }
     /* and, encode some uints */
-    for (i = 0; i < sizeof(bigUInts) / sizeof(bigUInts[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(bigUInts); i++)
     {
         blob.cbData = strlen((const char*)bigUInts[i].val);
         blob.pbData = (BYTE*)bigUInts[i].val;
@@ -241,7 +242,7 @@ static void test_decodeInt(DWORD dwEncoding)
      GetLastError() == OSS_PDU_MISMATCH /* Win9x */ ),
      "Expected CRYPT_E_ASN1_BADTAG or OSS_PDU_MISMATCH, got %08x\n",
      GetLastError());
-    for (i = 0; i < sizeof(ints) / sizeof(ints[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(ints); i++)
     {
         /* When the output buffer is NULL, this always succeeds */
         SetLastError(0xdeadbeef);
@@ -263,7 +264,7 @@ static void test_decodeInt(DWORD dwEncoding)
             LocalFree(buf);
         }
     }
-    for (i = 0; i < sizeof(bigInts) / sizeof(bigInts[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(bigInts); i++)
     {
         ret = pCryptDecodeObjectEx(dwEncoding, X509_MULTI_BYTE_INTEGER,
          bigInts[i].encoded, bigInts[i].encoded[1] + 2, 0, NULL, NULL,
@@ -288,7 +289,7 @@ static void test_decodeInt(DWORD dwEncoding)
             LocalFree(buf);
         }
     }
-    for (i = 0; i < sizeof(bigUInts) / sizeof(bigUInts[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(bigUInts); i++)
     {
         ret = pCryptDecodeObjectEx(dwEncoding, X509_MULTI_BYTE_UINT,
          bigUInts[i].encoded, bigUInts[i].encoded[1] + 2, 0, NULL, NULL,
@@ -376,9 +377,9 @@ static void test_encodeEnumerated(DWORD dwEncoding)
 {
     DWORD i, j;
 
-    for (i = 0; i < sizeof(enumeratedTypes) / sizeof(enumeratedTypes[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(enumeratedTypes); i++)
     {
-        for (j = 0; j < sizeof(enums) / sizeof(enums[0]); j++)
+        for (j = 0; j < ARRAY_SIZE(enums); j++)
         {
             BOOL ret;
             BYTE *buf = NULL;
@@ -409,9 +410,9 @@ static void test_decodeEnumerated(DWORD dwEncoding)
 {
     DWORD i, j;
 
-    for (i = 0; i < sizeof(enumeratedTypes) / sizeof(enumeratedTypes[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(enumeratedTypes); i++)
     {
-        for (j = 0; j < sizeof(enums) / sizeof(enums[0]); j++)
+        for (j = 0; j < ARRAY_SIZE(enums); j++)
         {
             BOOL ret;
             DWORD bufSize = sizeof(int);
@@ -476,7 +477,7 @@ static void testTimeEncoding(DWORD dwEncoding, LPCSTR structType,
 
 static const char *printSystemTime(const SYSTEMTIME *st)
 {
-    static char buf[25];
+    static char buf[64];
 
     sprintf(buf, "%02d-%02d-%04d %02d:%02d:%02d.%03d", st->wMonth, st->wDay,
      st->wYear, st->wHour, st->wMinute, st->wSecond, st->wMilliseconds);
@@ -485,7 +486,7 @@ static const char *printSystemTime(const SYSTEMTIME *st)
 
 static const char *printFileTime(const FILETIME *ft)
 {
-    static char buf[25];
+    static char buf[64];
     SYSTEMTIME st;
 
     FileTimeToSystemTime(ft, &st);
@@ -562,7 +563,7 @@ static void test_encodeFiletime(DWORD dwEncoding)
 {
     DWORD i;
 
-    for (i = 0; i < sizeof(times) / sizeof(times[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(times); i++)
     {
         testTimeEncoding(dwEncoding, X509_CHOICE_OF_TIME, &times[i]);
         testTimeEncoding(dwEncoding, PKCS_UTC_TIME, &times[i]);
@@ -644,19 +645,19 @@ static void test_decodeFiletime(DWORD dwEncoding)
     ok(!ret && GetLastError() == ERROR_MORE_DATA,
      "Expected ERROR_MORE_DATA, got %d\n", GetLastError());
     /* Normal tests */
-    for (i = 0; i < sizeof(times) / sizeof(times[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(times); i++)
     {
         testTimeDecoding(dwEncoding, X509_CHOICE_OF_TIME, &times[i]);
         testTimeDecoding(dwEncoding, PKCS_UTC_TIME, &times[i]);
         testTimeDecoding(dwEncoding, szOID_RSA_signingTime, &times[i]);
     }
-    for (i = 0; i < sizeof(otherTimes) / sizeof(otherTimes[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(otherTimes); i++)
     {
         testTimeDecoding(dwEncoding, X509_CHOICE_OF_TIME, &otherTimes[i]);
         testTimeDecoding(dwEncoding, PKCS_UTC_TIME, &otherTimes[i]);
         testTimeDecoding(dwEncoding, szOID_RSA_signingTime, &otherTimes[i]);
     }
-    for (i = 0; i < sizeof(bogusTimes) / sizeof(bogusTimes[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(bogusTimes); i++)
     {
         size = sizeof(ft1);
         ret = pCryptDecodeObjectEx(dwEncoding, X509_CHOICE_OF_TIME,
@@ -860,7 +861,7 @@ static void test_encodeName(DWORD dwEncoding)
     ok(!ret && GetLastError() == E_INVALIDARG,
      "Expected E_INVALIDARG, got %08x\n", GetLastError());
     /* Test a more complex name */
-    rdn.cRDNAttr = sizeof(rdnAttrs) / sizeof(rdnAttrs[0]);
+    rdn.cRDNAttr = ARRAY_SIZE(rdnAttrs);
     rdn.rgRDNAttr = rdnAttrs;
     info.cRDN = 1;
     info.rgRDN = &rdn;
@@ -1016,7 +1017,7 @@ static void compareNameValues(const CERT_NAME_VALUE *expected,
 static void compareRDNAttrs(const CERT_RDN_ATTR *expected,
  const CERT_RDN_ATTR *got)
 {
-    if (expected->pszObjId && strlen(expected->pszObjId))
+    if (expected->pszObjId && *expected->pszObjId)
     {
         ok(got->pszObjId != NULL, "Expected OID %s, got NULL\n",
          expected->pszObjId);
@@ -1138,7 +1139,7 @@ static void test_decodeName(DWORD dwEncoding)
           (BYTE *)commonName } },
         };
 
-        rdn.cRDNAttr = sizeof(attrs) / sizeof(attrs[0]);
+        rdn.cRDNAttr = ARRAY_SIZE(attrs);
         rdn.rgRDNAttr = attrs;
         compareNames(&info, (CERT_NAME_INFO *)buf);
         LocalFree(buf);
@@ -1156,7 +1157,7 @@ static void test_decodeName(DWORD dwEncoding)
     ok(ret, "CryptDecodeObjectEx failed: %08x\n", GetLastError());
     if (ret)
     {
-        rdn.cRDNAttr = sizeof(decodedRdnAttrs) / sizeof(decodedRdnAttrs[0]);
+        rdn.cRDNAttr = ARRAY_SIZE(decodedRdnAttrs);
         rdn.rgRDNAttr = decodedRdnAttrs;
         compareNames(&info, (CERT_NAME_INFO *)buf);
         LocalFree(buf);
@@ -1222,7 +1223,7 @@ static void test_decodeUnicodeName(DWORD dwEncoding)
          { lstrlenW(commonNameW) * sizeof(WCHAR), (BYTE *)commonNameW } },
         };
 
-        rdn.cRDNAttr = sizeof(attrs) / sizeof(attrs[0]);
+        rdn.cRDNAttr = ARRAY_SIZE(attrs);
         rdn.rgRDNAttr = attrs;
         compareNames(&info, (CERT_NAME_INFO *)buf);
         LocalFree(buf);
@@ -1331,7 +1332,7 @@ static void test_encodeNameValue(DWORD dwEncoding)
          "Unexpected encoding\n");
         LocalFree(buf);
     }
-    for (i = 0; i < sizeof(nameValues) / sizeof(nameValues[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(nameValues); i++)
     {
         ret = pCryptEncodeObjectEx(dwEncoding, X509_NAME_VALUE,
          &nameValues[i].value, CRYPT_ENCODE_ALLOC_FLAG, NULL, &buf, &size);
@@ -1369,7 +1370,7 @@ static void test_decodeNameValue(DWORD dwEncoding)
     DWORD bufSize = 0;
     BOOL ret;
 
-    for (i = 0; i < sizeof(nameValues) / sizeof(nameValues[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(nameValues); i++)
     {
         ret = pCryptDecodeObjectEx(dwEncoding, X509_NAME_VALUE,
          nameValues[i].encoded, nameValues[i].encoded[1] + 2,
@@ -1865,7 +1866,7 @@ static void test_encodeUnicodeNameValue(DWORD dwEncoding)
      "Expected CRYPT_E_NOT_CHAR_STRING, got %08x\n", GetLastError());
     /* More failure checking */
     value.Value.cbData = 0;
-    for (i = 0; i < sizeof(unicodeErrors) / sizeof(unicodeErrors[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(unicodeErrors); i++)
     {
         value.Value.pbData = (LPBYTE)unicodeErrors[i].str;
         value.dwValueType = unicodeErrors[i].valueType;
@@ -1880,7 +1881,7 @@ static void test_encodeUnicodeNameValue(DWORD dwEncoding)
     }
     /* cbData can be zero if the string is NULL-terminated */
     value.Value.cbData = 0;
-    for (i = 0; i < sizeof(unicodeResults) / sizeof(unicodeResults[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(unicodeResults); i++)
     {
         value.Value.pbData = (LPBYTE)unicodeResults[i].str;
         value.dwValueType = unicodeResults[i].valueType;
@@ -1902,7 +1903,7 @@ static void test_encodeUnicodeNameValue(DWORD dwEncoding)
      * rather than properly encoding it.  Kept separate from the proper results,
      * because the encoded forms won't decode to their original strings.
      */
-    for (i = 0; i < sizeof(unicodeWeirdness) / sizeof(unicodeWeirdness[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(unicodeWeirdness); i++)
     {
         value.Value.pbData = (LPBYTE)unicodeWeirdness[i].str;
         value.dwValueType = unicodeWeirdness[i].valueType;
@@ -1932,7 +1933,7 @@ static void test_decodeUnicodeNameValue(DWORD dwEncoding)
 {
     DWORD i;
 
-    for (i = 0; i < sizeof(unicodeResults) / sizeof(unicodeResults[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(unicodeResults); i++)
     {
         BYTE *buf = NULL;
         BOOL ret;
@@ -1959,80 +1960,138 @@ static void test_decodeUnicodeNameValue(DWORD dwEncoding)
     }
 }
 
-struct encodedOctets
-{
-    const BYTE *val;
-    const BYTE *encoded;
-};
-
-static const unsigned char bin46[] = { 'h','i',0 };
-static const unsigned char bin47[] = { 0x04,0x02,'h','i',0 };
-static const unsigned char bin48[] = {
-     's','o','m','e','l','o','n','g',0xff,'s','t','r','i','n','g',0 };
-static const unsigned char bin49[] = {
-     0x04,0x0f,'s','o','m','e','l','o','n','g',0xff,'s','t','r','i','n','g',0 };
-static const unsigned char bin50[] = { 0 };
-static const unsigned char bin51[] = { 0x04,0x00,0 };
-
-static const struct encodedOctets octets[] = {
-    { bin46, bin47 },
-    { bin48, bin49 },
-    { bin50, bin51 },
-};
+static const unsigned char decoded_hi_octet[] = { 'h','i' };
+static const unsigned char encoded_hi_octet[] = { ASN_OCTETSTRING,2,'h','i' };
+static const unsigned char decoded_something_long_octet[] = {
+     's','o','m','e','l','o','n','g',0xff,'s','t','r','i','n','g' };
+static const unsigned char encoded_something_long_octet[] = {
+     ASN_OCTETSTRING,15,'s','o','m','e','l','o','n','g',0xff,'s','t','r','i','n','g' };
+static const unsigned char encoded_empty_octet[] = { ASN_OCTETSTRING,0 };
 
 static void test_encodeOctets(DWORD dwEncoding)
 {
     CRYPT_DATA_BLOB blob;
     DWORD i;
 
-    for (i = 0; i < sizeof(octets) / sizeof(octets[0]); i++)
+    static const struct {
+        const BYTE *decoded;
+        UINT decoded_size;
+        const BYTE *encoded;
+        UINT encoded_size;
+    } tests[] = {
+        {
+            decoded_hi_octet, sizeof(decoded_hi_octet),
+            encoded_hi_octet, sizeof(encoded_hi_octet)
+        },{
+            decoded_something_long_octet, sizeof(decoded_something_long_octet),
+            encoded_something_long_octet, sizeof(encoded_something_long_octet)
+        },{
+            encoded_empty_octet, 0,
+            encoded_empty_octet, sizeof(encoded_empty_octet)
+        }
+    };
+
+    for (i = 0; i < ARRAY_SIZE(tests); i++)
     {
         BYTE *buf = NULL;
         BOOL ret;
         DWORD bufSize = 0;
 
-        blob.cbData = strlen((const char*)octets[i].val);
-        blob.pbData = (BYTE*)octets[i].val;
+        blob.cbData = tests[i].decoded_size;
+        blob.pbData = (BYTE*)tests[i].decoded;
         ret = pCryptEncodeObjectEx(dwEncoding, X509_OCTET_STRING, &blob,
          CRYPT_ENCODE_ALLOC_FLAG, NULL, &buf, &bufSize);
         ok(ret, "CryptEncodeObjectEx failed: %d\n", GetLastError());
         if (ret)
         {
-            ok(buf[0] == 4,
-             "Got unexpected type %d for octet string (expected 4)\n", buf[0]);
-            ok(buf[1] == octets[i].encoded[1], "Got length %d, expected %d\n",
-             buf[1], octets[i].encoded[1]);
-            ok(!memcmp(buf + 1, octets[i].encoded + 1,
-             octets[i].encoded[1] + 1), "Got unexpected value\n");
+            ok(bufSize == tests[i].encoded_size, "[%u] buf size %u expected %u\n",
+               i, bufSize, tests[i].encoded_size);
+            ok(buf[0] == 4, "Got unexpected type %d for octet string (expected 4)\n", buf[0]);
+            ok(buf[1] == tests[i].decoded_size, "[%u] Got length %d, expected %d\n",
+               i, buf[1], tests[i].decoded_size);
+            ok(!memcmp(buf, tests[i].encoded, tests[i].encoded_size), "[%u] Got unexpected value\n", i);
             LocalFree(buf);
         }
     }
 }
 
+static const unsigned char encoded_constructed_hi_octet[] =
+    { ASN_CONSTRUCTOR|ASN_OCTETSTRING,0x80, ASN_OCTETSTRING,2,'h','i', 0,0 };
+static const unsigned char encoded_constructed_hi_octet2[] =
+    { ASN_CONSTRUCTOR|ASN_OCTETSTRING,4, ASN_OCTETSTRING,2,'h','i', 1,2,3 };
+static const unsigned char encoded_constructed_hi_octet3[] =
+    { ASN_CONSTRUCTOR|ASN_OCTETSTRING,8, ASN_CONSTRUCTOR|ASN_OCTETSTRING,0x80, ASN_OCTETSTRING,2,'h','i', 0,0, 0,0 };
+static const unsigned char encoded_constructed_hi_octet_invalid_end[] =
+    { ASN_CONSTRUCTOR|ASN_OCTETSTRING,0x80, ASN_OCTETSTRING,2,'h','i', 0,1 };
+
 static void test_decodeOctets(DWORD dwEncoding)
 {
     DWORD i;
 
-    for (i = 0; i < sizeof(octets) / sizeof(octets[0]); i++)
+    static const struct {
+        const BYTE *encoded;
+        UINT encoded_size;
+        const BYTE *decoded;
+        UINT decoded_size;
+        DWORD error;
+    } tests[] = {
+        {
+            encoded_hi_octet, sizeof(encoded_hi_octet),
+            decoded_hi_octet, sizeof(decoded_hi_octet)
+        },{
+            encoded_something_long_octet, sizeof(encoded_something_long_octet),
+            decoded_something_long_octet, sizeof(decoded_something_long_octet)
+        },{
+            encoded_constructed_hi_octet, sizeof(encoded_constructed_hi_octet),
+            decoded_hi_octet, sizeof(decoded_hi_octet)
+        },{
+            encoded_constructed_hi_octet2, sizeof(encoded_constructed_hi_octet2),
+            decoded_hi_octet, sizeof(decoded_hi_octet)
+        },{
+            encoded_constructed_hi_octet3, sizeof(encoded_constructed_hi_octet3),
+            decoded_hi_octet, sizeof(decoded_hi_octet)
+        },{
+            encoded_empty_octet, sizeof(encoded_empty_octet),
+            encoded_empty_octet, 0
+        },{
+            encoded_hi_octet, sizeof(encoded_hi_octet) - 1,
+            NULL, 0, CRYPT_E_ASN1_EOD
+        },{
+            encoded_constructed_hi_octet, sizeof(encoded_constructed_hi_octet) - 1,
+            NULL, 0, CRYPT_E_ASN1_EOD
+        },{
+            encoded_constructed_hi_octet_invalid_end, sizeof(encoded_constructed_hi_octet_invalid_end),
+            NULL, 0, CRYPT_E_ASN1_CORRUPT
+        }
+    };
+
+    for (i = 0; i < ARRAY_SIZE(tests); i++)
     {
         BYTE *buf = NULL;
         BOOL ret;
         DWORD bufSize = 0;
 
         ret = pCryptDecodeObjectEx(dwEncoding, X509_OCTET_STRING,
-         octets[i].encoded, octets[i].encoded[1] + 2,
+         tests[i].encoded, tests[i].encoded_size,
          CRYPT_DECODE_ALLOC_FLAG, NULL, &buf, &bufSize);
-        ok(ret, "CryptDecodeObjectEx failed: %08x\n", GetLastError());
-        ok(bufSize >= sizeof(CRYPT_DATA_BLOB) + octets[i].encoded[1],
-         "Expected size >= %d, got %d\n",
-           (int)sizeof(CRYPT_DATA_BLOB) + octets[i].encoded[1], bufSize);
+        if (tests[i].error)
+        {
+            ok(!ret && GetLastError() == tests[i].error,
+               "[%u] CryptDecodeObjectEx returned %x(%x)\n", i, ret, GetLastError());
+            continue;
+        }
+        ok(ret, "[%u] CryptDecodeObjectEx failed: %08x\n", i, GetLastError());
+        ok(bufSize >= sizeof(CRYPT_DATA_BLOB) + tests[i].decoded_size,
+           "[%u] Expected size >= %d, got %d\n", i,
+           (int)sizeof(CRYPT_DATA_BLOB) + tests[i].decoded_size, bufSize);
         ok(buf != NULL, "Expected allocated buffer\n");
         if (ret)
         {
             CRYPT_DATA_BLOB *blob = (CRYPT_DATA_BLOB *)buf;
 
+            ok (blob->cbData == tests[i].decoded_size, "[%u] cbData = %u\n", i, blob->cbData);
             if (blob->cbData)
-                ok(!memcmp(blob->pbData, octets[i].val, blob->cbData),
+                ok(!memcmp(blob->pbData, tests[i].decoded, blob->cbData),
                  "Unexpected value\n");
             LocalFree(buf);
         }
@@ -2068,7 +2127,7 @@ static void test_encodeBits(DWORD dwEncoding)
 {
     DWORD i;
 
-    for (i = 0; i < sizeof(bits) / sizeof(bits[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(bits); i++)
     {
         CRYPT_BIT_BLOB blob;
         BOOL ret;
@@ -2103,7 +2162,7 @@ static void test_decodeBits(DWORD dwEncoding)
     DWORD bufSize = 0;
 
     /* normal cases */
-    for (i = 0; i < sizeof(bits) / sizeof(bits[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(bits); i++)
     {
         ret = pCryptDecodeObjectEx(dwEncoding, X509_BITS, bits[i].encoded,
          bits[i].encoded[1] + 2, CRYPT_DECODE_ALLOC_FLAG, NULL, &buf,
@@ -2190,7 +2249,7 @@ static void test_encodeBasicConstraints(DWORD dwEncoding)
     BYTE *buf = NULL;
 
     /* First test with the simpler info2 */
-    for (i = 0; i < sizeof(constraints2) / sizeof(constraints2[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(constraints2); i++)
     {
         ret = pCryptEncodeObjectEx(dwEncoding, X509_BASIC_CONSTRAINTS2,
          &constraints2[i].info, CRYPT_ENCODE_ALLOC_FLAG, NULL, &buf,
@@ -2253,7 +2312,7 @@ static void test_decodeBasicConstraints(DWORD dwEncoding)
     DWORD bufSize = 0;
 
     /* First test with simpler info2 */
-    for (i = 0; i < sizeof(constraints2) / sizeof(constraints2[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(constraints2); i++)
     {
         ret = pCryptDecodeObjectEx(dwEncoding, X509_BASIC_CONSTRAINTS2,
          constraints2[i].encoded, constraints2[i].encoded[1] + 2,
@@ -2435,7 +2494,7 @@ static void test_encodeRsaPublicKey(DWORD dwEncoding)
      "Expected ERROR_FILE_NOT_FOUND, got %08x\n", GetLastError());
     /* Finally, all valid */
     hdr->aiKeyAlg = CALG_RSA_KEYX;
-    for (i = 0; i < sizeof(rsaPubKeys) / sizeof(rsaPubKeys[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(rsaPubKeys); i++)
     {
         memcpy(toEncode + sizeof(BLOBHEADER) + sizeof(RSAPUBKEY),
          rsaPubKeys[i].modulus, rsaPubKeys[i].modulusLen);
@@ -2481,7 +2540,7 @@ static void test_decodeRsaPublicKey(DWORD dwEncoding)
     ok(!ret && GetLastError() == ERROR_FILE_NOT_FOUND,
      "Expected ERROR_FILE_NOT_FOUND, got %08x\n", GetLastError());
     /* Now try success cases */
-    for (i = 0; i < sizeof(rsaPubKeys) / sizeof(rsaPubKeys[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(rsaPubKeys); i++)
     {
         bufSize = 0;
         ret = pCryptDecodeObjectEx(dwEncoding, RSA_CSP_PUBLICKEYBLOB,
@@ -2531,7 +2590,7 @@ static const BYTE mixedSequence[] = { 0x30, 0x27, 0x17, 0x0d, 0x30, 0x35, 0x30,
 
 static void test_encodeSequenceOfAny(DWORD dwEncoding)
 {
-    CRYPT_DER_BLOB blobs[sizeof(ints) / sizeof(ints[0])];
+    CRYPT_DER_BLOB blobs[ARRAY_SIZE(ints)];
     CRYPT_SEQUENCE_OF_ANY seq;
     DWORD i;
     BOOL ret;
@@ -2539,12 +2598,12 @@ static void test_encodeSequenceOfAny(DWORD dwEncoding)
     DWORD bufSize = 0;
 
     /* Encode a homogeneous sequence */
-    for (i = 0; i < sizeof(ints) / sizeof(ints[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(ints); i++)
     {
         blobs[i].cbData = ints[i].encoded[1] + 2;
         blobs[i].pbData = (BYTE *)ints[i].encoded;
     }
-    seq.cValue = sizeof(ints) / sizeof(ints[0]);
+    seq.cValue = ARRAY_SIZE(ints);
     seq.rgValue = blobs;
 
     ret = pCryptEncodeObjectEx(dwEncoding, X509_SEQUENCE_OF_ANY, &seq,
@@ -2587,9 +2646,8 @@ static void test_decodeSequenceOfAny(DWORD dwEncoding)
         CRYPT_SEQUENCE_OF_ANY *seq = (CRYPT_SEQUENCE_OF_ANY *)buf;
         DWORD i;
 
-        ok(seq->cValue == sizeof(ints) / sizeof(ints[0]),
-         "Wrong elements %d\n", seq->cValue);
-        for (i = 0; i < min(seq->cValue, sizeof(ints) / sizeof(ints[0])); i++)
+        ok(seq->cValue == ARRAY_SIZE(ints), "Wrong elements %d\n", seq->cValue);
+        for (i = 0; i < min(seq->cValue, ARRAY_SIZE(ints)); i++)
         {
             ok(seq->rgValue[i].cbData == ints[i].encoded[1] + 2,
              "Expected %d bytes, got %d\n", ints[i].encoded[1] + 2,
@@ -2607,8 +2665,7 @@ static void test_decodeSequenceOfAny(DWORD dwEncoding)
     {
         CRYPT_SEQUENCE_OF_ANY *seq = (CRYPT_SEQUENCE_OF_ANY *)buf;
 
-        ok(seq->cValue == sizeof(ints) / sizeof(ints[0]),
-         "Wrong elements %d\n", seq->cValue);
+        ok(seq->cValue == ARRAY_SIZE(ints), "Wrong elements %d\n", seq->cValue);
         /* Just check the first element since it's all that changed */
         ok(seq->rgValue[0].cbData == times[0].encodedTime[1] + 2,
          "Expected %d bytes, got %d\n", times[0].encodedTime[1] + 2,
@@ -2654,7 +2711,7 @@ static void test_encodeExtensions(DWORD dwEncoding)
 {
     DWORD i;
 
-    for (i = 0; i < sizeof(exts) / sizeof(exts[i]); i++)
+    for (i = 0; i < ARRAY_SIZE(exts); i++)
     {
         BOOL ret;
         BYTE *buf = NULL;
@@ -2678,7 +2735,7 @@ static void test_decodeExtensions(DWORD dwEncoding)
 {
     DWORD i;
 
-    for (i = 0; i < sizeof(exts) / sizeof(exts[i]); i++)
+    for (i = 0; i < ARRAY_SIZE(exts); i++)
     {
         BOOL ret;
         BYTE *buf = NULL;
@@ -2792,7 +2849,7 @@ static void test_encodePublicKeyInfo(DWORD dwEncoding)
 {
     DWORD i;
 
-    for (i = 0; i < sizeof(pubKeys) / sizeof(pubKeys[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(pubKeys); i++)
     {
         BOOL ret;
         BYTE *buf = NULL;
@@ -2848,7 +2905,7 @@ static void test_decodePublicKeyInfo(DWORD dwEncoding)
     BYTE *buf = NULL;
     DWORD bufSize = 0;
 
-    for (i = 0; i < sizeof(pubKeys) / sizeof(pubKeys[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(pubKeys); i++)
     {
         /* The NULL form decodes to the decoded member */
         ret = pCryptDecodeObjectEx(dwEncoding, X509_PUBLIC_KEY_INFO,
@@ -3201,7 +3258,7 @@ static void test_decodeCertToBeSigned(DWORD dwEncoding)
      * CRYPT_E_ASN1_BADTAG, because at a minimum a cert must have a non-zero
      * serial number, an issuer, a subject, and a public key.
      */
-    for (i = 0; i < sizeof(corruptCerts) / sizeof(corruptCerts[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(corruptCerts); i++)
     {
         ret = pCryptDecodeObjectEx(dwEncoding, X509_CERT_TO_BE_SIGNED,
          corruptCerts[i], corruptCerts[i][1] + 2, CRYPT_DECODE_ALLOC_FLAG, NULL,
@@ -3309,18 +3366,76 @@ static const BYTE hash[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0xa, 0xb, 0xc, 0xd,
  0xe, 0xf };
 
 static const BYTE signedBigCert[] = {
- 0x30, 0x81, 0x93, 0x30, 0x7a, 0x02, 0x01, 0x01, 0x30, 0x02, 0x06, 0x00, 0x30,
- 0x15, 0x31, 0x13, 0x30, 0x11, 0x06, 0x03, 0x55, 0x04, 0x03, 0x13, 0x0a, 0x4a,
- 0x75, 0x61, 0x6e, 0x20, 0x4c, 0x61, 0x6e, 0x67, 0x00, 0x30, 0x22, 0x18, 0x0f,
- 0x31, 0x36, 0x30, 0x31, 0x30, 0x31, 0x30, 0x31, 0x30, 0x30, 0x30, 0x30, 0x30,
- 0x30, 0x5a, 0x18, 0x0f, 0x31, 0x36, 0x30, 0x31, 0x30, 0x31, 0x30, 0x31, 0x30,
- 0x30, 0x30, 0x30, 0x30, 0x30, 0x5a, 0x30, 0x15, 0x31, 0x13, 0x30, 0x11, 0x06,
- 0x03, 0x55, 0x04, 0x03, 0x13, 0x0a, 0x4a, 0x75, 0x61, 0x6e, 0x20, 0x4c, 0x61,
- 0x6e, 0x67, 0x00, 0x30, 0x07, 0x30, 0x02, 0x06, 0x00, 0x03, 0x01, 0x00, 0xa3,
- 0x16, 0x30, 0x14, 0x30, 0x12, 0x06, 0x03, 0x55, 0x1d, 0x13, 0x01, 0x01, 0xff,
- 0x04, 0x08, 0x30, 0x06, 0x01, 0x01, 0xff, 0x02, 0x01, 0x01, 0x30, 0x02, 0x06,
- 0x00, 0x03, 0x11, 0x00, 0x0f, 0x0e, 0x0d, 0x0c, 0x0b, 0x0a, 0x09, 0x08, 0x07,
- 0x06, 0x05, 0x04, 0x03, 0x02, 0x01, 0x00 };
+ ASN_SEQUENCE,0x81,147,
+   ASN_SEQUENCE,122,
+     ASN_INTEGER,1, 0x01,
+     ASN_SEQUENCE,2,
+       ASN_OBJECTIDENTIFIER,0,
+     ASN_SEQUENCE,21,
+       0x31,19,
+         ASN_SEQUENCE,17,
+           ASN_OBJECTIDENTIFIER,3, 0x55,0x04,0x03,
+           0x13,10, 0x4a,0x75,0x61,0x6e,0x20,0x4c,0x61,0x6e,0x67,0x00,
+     ASN_SEQUENCE,34,
+       0x18,15, 0x31,0x36,0x30,0x31,0x30,0x31,0x30,0x31,0x30,0x30,0x30,0x30,0x30,0x30,0x5a,
+       0x18,15, 0x31,0x36,0x30,0x31,0x30,0x31,0x30,0x31,0x30,0x30,0x30,0x30,0x30,0x30,0x5a,
+     ASN_SEQUENCE,21,
+       0x31,19,
+         ASN_SEQUENCE,17,
+           ASN_OBJECTIDENTIFIER,3, 0x55,0x04,0x03,
+           0x13,10, 0x4a,0x75,0x61,0x6e,0x20,0x4c,0x61,0x6e,0x67,0x00,
+     ASN_SEQUENCE,7,
+       ASN_SEQUENCE,2,
+         ASN_OBJECTIDENTIFIER,0,
+       ASN_BITS,1, 0x00,
+   0xa3,22,
+     ASN_SEQUENCE,20,
+       ASN_SEQUENCE,18,
+         ASN_OBJECTIDENTIFIER,3, 0x55,0x1d,0x13,
+         0x01,1, 0xff,
+         ASN_OCTETSTRING,8, 0x30,0x06,0x01,0x01,0xff,0x02,0x01,0x01,
+     ASN_SEQUENCE,2,
+       ASN_OBJECTIDENTIFIER,0,
+ ASN_BITS,17, 0x00,0x0f,0x0e,0x0d,0x0c,0x0b,0x0a,0x09,0x08,
+              0x07,0x06,0x05,0x04,0x03,0x02,0x01,0x00
+};
+
+static const BYTE signedBigCertWithIndefiniteSeq[] = {
+ ASN_SEQUENCE,0x81,151,
+   ASN_SEQUENCE,126,
+     ASN_INTEGER,1, 0x01,
+     ASN_SEQUENCE,2,
+       ASN_OBJECTIDENTIFIER,0,
+     ASN_SEQUENCE,21,
+       0x31,19,
+         ASN_SEQUENCE,17,
+           ASN_OBJECTIDENTIFIER,3, 0x55,0x04,0x03,
+           0x13,10, 0x4a,0x75,0x61,0x6e,0x20,0x4c,0x61,0x6e,0x67,0x00,
+     ASN_SEQUENCE,0x80,
+       0x18,15, 0x31,0x36,0x30,0x31,0x30,0x31,0x30,0x31,0x30,0x30,0x30,0x30,0x30,0x30,0x5a,
+       0x18,15, 0x31,0x36,0x30,0x31,0x30,0x31,0x30,0x31,0x30,0x30,0x30,0x30,0x30,0x30,0x5a,
+     0,0,
+     ASN_SEQUENCE,21,
+       0x31,19,
+         ASN_SEQUENCE,17,
+           ASN_OBJECTIDENTIFIER,3, 0x55,0x04,0x03,
+           0x13,10, 0x4a,0x75,0x61,0x6e,0x20,0x4c,0x61,0x6e,0x67,0x00,
+     ASN_SEQUENCE,0x80,
+       ASN_SEQUENCE,2,
+         ASN_OBJECTIDENTIFIER,0,
+       ASN_BITS,1, 0x00,
+     0,0,
+   0xa3,22,
+     ASN_SEQUENCE,20,
+       ASN_SEQUENCE,18,
+         ASN_OBJECTIDENTIFIER,3, 0x55,0x1d,0x13,
+         0x01,1, 0xff,
+         ASN_OCTETSTRING,8, 0x30,0x06,0x01,0x01,0xff,0x02,0x01,0x01,
+     ASN_SEQUENCE,2,
+       ASN_OBJECTIDENTIFIER,0,
+ ASN_BITS,17, 0x00,0x0f,0x0e,0x0d,0x0c,0x0b,0x0a,0x09,0x08,
+              0x07,0x06,0x05,0x04,0x03,0x02,0x01,0x00
+};
 
 static void test_encodeCert(DWORD dwEncoding)
 {
@@ -3371,6 +3486,29 @@ static void test_decodeCert(DWORD dwEncoding)
     /* A signed cert decodes as a CERT_INFO too */
     ret = pCryptDecodeObjectEx(dwEncoding, X509_CERT_TO_BE_SIGNED, signedBigCert,
      sizeof(signedBigCert), CRYPT_DECODE_ALLOC_FLAG, NULL, &buf, &size);
+    ok(ret, "CryptDecodeObjectEx failed: %08x\n", GetLastError());
+    if (ret)
+    {
+        CERT_INFO *info = (CERT_INFO *)buf;
+
+        ok(size >= sizeof(CERT_INFO), "Wrong size %d\n", size);
+        ok(info->SerialNumber.cbData == 1,
+         "Expected serial number size 1, got %d\n", info->SerialNumber.cbData);
+        ok(*info->SerialNumber.pbData == *serialNum,
+         "Expected serial number %d, got %d\n", *serialNum,
+         *info->SerialNumber.pbData);
+        ok(info->Issuer.cbData == sizeof(encodedCommonName),
+         "Wrong size %d\n", info->Issuer.cbData);
+        ok(!memcmp(info->Issuer.pbData, encodedCommonName, info->Issuer.cbData),
+         "Unexpected issuer\n");
+        ok(info->Subject.cbData == sizeof(encodedCommonName),
+         "Wrong size %d\n", info->Subject.cbData);
+        ok(!memcmp(info->Subject.pbData, encodedCommonName,
+         info->Subject.cbData), "Unexpected subject\n");
+        LocalFree(buf);
+    }
+    ret = pCryptDecodeObjectEx(dwEncoding, X509_CERT_TO_BE_SIGNED, signedBigCertWithIndefiniteSeq,
+     sizeof(signedBigCertWithIndefiniteSeq), CRYPT_DECODE_ALLOC_FLAG, NULL, &buf, &size);
     ok(ret, "CryptDecodeObjectEx failed: %08x\n", GetLastError());
     if (ret)
     {
@@ -4548,7 +4686,7 @@ static void test_decodeCRLToBeSigned(DWORD dwEncoding)
     BYTE *buf = NULL;
     DWORD size = 0, i;
 
-    for (i = 0; i < sizeof(corruptCRLs) / sizeof(corruptCRLs[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(corruptCRLs); i++)
     {
         ret = pCryptDecodeObjectEx(dwEncoding, X509_CERT_CRL_TO_BE_SIGNED,
          corruptCRLs[i], corruptCRLs[i][1] + 2, CRYPT_DECODE_ALLOC_FLAG, NULL,
@@ -4714,7 +4852,7 @@ static void test_encodeEnhancedKeyUsage(DWORD dwEncoding)
         LocalFree(buf);
     }
     /* Test with a few usages */
-    usage.cUsageIdentifier = sizeof(keyUsages) / sizeof(keyUsages[0]);
+    usage.cUsageIdentifier = ARRAY_SIZE(keyUsages);
     usage.rgpszUsageIdentifier = (LPSTR *)keyUsages;
     ret = pCryptEncodeObjectEx(dwEncoding, X509_ENHANCED_KEY_USAGE, &usage,
      CRYPT_ENCODE_ALLOC_FLAG, NULL, &buf, &size);
@@ -4758,8 +4896,8 @@ static void test_decodeEnhancedKeyUsage(DWORD dwEncoding)
 
         ok(size >= sizeof(CERT_ENHKEY_USAGE),
          "Wrong size %d\n", size);
-        ok(usage->cUsageIdentifier == sizeof(keyUsages) / sizeof(keyUsages[0]),
-         "Wrong CRL entries count %d\n", usage->cUsageIdentifier);
+        ok(usage->cUsageIdentifier == ARRAY_SIZE(keyUsages),
+           "Wrong CRL entries count %d\n", usage->cUsageIdentifier);
         for (i = 0; i < usage->cUsageIdentifier; i++)
             ok(!strcmp(usage->rgpszUsageIdentifier[i], keyUsages[i]),
              "Expected OID %s, got %s\n", keyUsages[i],
@@ -5916,32 +6054,79 @@ static const BYTE indefiniteSignedPKCSContent[] = {
 0xe3,0x55,0x71,0x91,0xf9,0x2a,0xd1,0xb8,0xaa,0x52,0xb8,0x22,0x3a,0xeb,0x61,
 0x00,0x00,0x00,0x00,0x00,0x00 };
 
+static const BYTE content_abcd[] = {
+    ASN_SEQUENCE, 0x80,
+        ASN_OBJECTIDENTIFIER, 2, 42,3,
+        ASN_CONTEXT|ASN_CONSTRUCTOR, 0x80,
+            ASN_OCTETSTRING, 4, 'a','b','c','d',
+        0,0,
+    0,0,
+};
+
+static const BYTE encoded_abcd[] = {
+    ASN_OCTETSTRING, 4, 'a','b','c','d',
+};
+
+static const BYTE content_constructed_abcd[] = {
+    ASN_SEQUENCE, 0x80,
+        ASN_OBJECTIDENTIFIER, 2, 42,3,
+        ASN_CONTEXT|ASN_CONSTRUCTOR, 0x80,
+            ASN_CONSTRUCTOR|ASN_OCTETSTRING,0x80,
+                ASN_OCTETSTRING, 4, 'a','b','0','0',
+            0,0,
+        0,0,
+    0,0,
+    1,2,3,4,5,6,7 /* extra garbage */
+};
+
 static void test_decodePKCSContentInfo(DWORD dwEncoding)
 {
     BOOL ret;
     LPBYTE buf = NULL;
-    DWORD size = 0;
+    DWORD size = 0, i;
     CRYPT_CONTENT_INFO *info;
 
-    ret = pCryptDecodeObjectEx(dwEncoding, PKCS_CONTENT_INFO,
-     emptyPKCSContentInfo, sizeof(emptyPKCSContentInfo),
-     CRYPT_DECODE_ALLOC_FLAG, NULL, &buf, &size);
-    ok(ret, "CryptDecodeObjectEx failed: %x\n", GetLastError());
-    if (ret)
+    const struct {
+        const BYTE *encoded;
+        UINT encoded_size;
+        const char *obj_id;
+        const BYTE *content;
+        UINT content_size;
+    } tests[] = {
+        { emptyPKCSContentInfo, sizeof(emptyPKCSContentInfo),
+          "1.2.3", NULL, 0 },
+        { emptyPKCSContentInfoExtraBytes, sizeof(emptyPKCSContentInfoExtraBytes),
+          "1.2.3", NULL, 0 },
+        { intPKCSContentInfo, sizeof(intPKCSContentInfo),
+          "1.2.3", ints[0].encoded, ints[0].encoded[1] + 2 },
+        { indefiniteSignedPKCSContent, sizeof(indefiniteSignedPKCSContent),
+          "1.2.840.113549.1.7.2", NULL, 392 },
+        { content_abcd, sizeof(content_abcd),
+          "1.2.3", encoded_abcd, 6 },
+        { content_constructed_abcd, sizeof(content_constructed_abcd),
+          "1.2.3", content_constructed_abcd + 8, 10 }
+    };
+
+    for (i = 0; i < ARRAY_SIZE(tests); i++)
     {
+        ret = pCryptDecodeObjectEx(dwEncoding, PKCS_CONTENT_INFO, tests[i].encoded,
+            tests[i].encoded_size, CRYPT_DECODE_ALLOC_FLAG, NULL, &buf, &size);
+        ok(ret, "[%u] CryptDecodeObjectEx failed: %x\n", i, GetLastError());
+        if (!ret) continue;
+
         info = (CRYPT_CONTENT_INFO *)buf;
 
-        ok(!strcmp(info->pszObjId, "1.2.3"), "Expected 1.2.3, got %s\n",
-         info->pszObjId);
-        ok(info->Content.cbData == 0, "Expected no data, got %d\n",
-         info->Content.cbData);
+        ok(!strcmp(info->pszObjId, tests[i].obj_id), "[%u] Expected %s, got %s\n",
+           i, tests[i].obj_id, info->pszObjId);
+        ok(info->Content.cbData == tests[i].content_size,
+           "[%u] Unexpected size %d expected %d\n", i, info->Content.cbData,
+           tests[i].content_size);
+        if (tests[i].content)
+            ok(!memcmp(info->Content.pbData, tests[i].content, tests[i].content_size),
+               "[%u] Unexpected value\n", i);
         LocalFree(buf);
     }
-    ret = pCryptDecodeObjectEx(dwEncoding, PKCS_CONTENT_INFO,
-     emptyPKCSContentInfoExtraBytes, sizeof(emptyPKCSContentInfoExtraBytes),
-     0, NULL, NULL, &size);
-    ok(ret, "CryptDecodeObjectEx failed: %x\n", GetLastError());
-    SetLastError(0xdeadbeef);
+
     ret = pCryptDecodeObjectEx(dwEncoding, PKCS_CONTENT_INFO,
      bogusPKCSContentInfo, sizeof(bogusPKCSContentInfo),
      CRYPT_DECODE_ALLOC_FLAG, NULL, &buf, &size);
@@ -5952,36 +6137,6 @@ static void test_decodePKCSContentInfo(DWORD dwEncoding)
      GetLastError() == CRYPT_E_ASN1_CORRUPT)) || broken(ret),
      "Expected CRYPT_E_ASN1_EOD or CRYPT_E_ASN1_CORRUPT, got %x\n",
      GetLastError());
-    ret = pCryptDecodeObjectEx(dwEncoding, PKCS_CONTENT_INFO,
-     intPKCSContentInfo, sizeof(intPKCSContentInfo),
-     CRYPT_DECODE_ALLOC_FLAG, NULL, &buf, &size);
-    ok(ret, "CryptDecodeObjectEx failed: %x\n", GetLastError());
-    if (ret)
-    {
-        info = (CRYPT_CONTENT_INFO *)buf;
-
-        ok(!strcmp(info->pszObjId, "1.2.3"), "Expected 1.2.3, got %s\n",
-         info->pszObjId);
-        ok(info->Content.cbData == ints[0].encoded[1] + 2,
-         "Unexpected size %d\n", info->Content.cbData);
-        ok(!memcmp(info->Content.pbData, ints[0].encoded,
-         info->Content.cbData), "Unexpected value\n");
-        LocalFree(buf);
-    }
-    ret = pCryptDecodeObjectEx(dwEncoding, PKCS_CONTENT_INFO,
-     indefiniteSignedPKCSContent, sizeof(indefiniteSignedPKCSContent),
-     CRYPT_DECODE_ALLOC_FLAG, NULL, &buf, &size);
-    ok(ret, "CryptDecodeObjectEx failed: %x\n", GetLastError());
-    if (ret)
-    {
-        info = (CRYPT_CONTENT_INFO *)buf;
-
-        ok(!strcmp(info->pszObjId, szOID_RSA_signedData),
-         "Expected %s, got %s\n", szOID_RSA_signedData, info->pszObjId);
-        ok(info->Content.cbData == 392, "Expected 392, got %d\n",
-         info->Content.cbData);
-        LocalFree(buf);
-    }
 }
 
 static const BYTE emptyPKCSAttr[] = { 0x30,0x06,0x06,0x02,0x2a,0x03,0x31,
@@ -7240,9 +7395,7 @@ static void test_decodeNameConstraints(DWORD dwEncoding)
     U(IPAddressWithMinSubtree.Base).IPAddress.pbData = (LPBYTE)encodedIPAddr;
     U(IPAddressWithMinMaxSubtree.Base).IPAddress.cbData = sizeof(encodedIPAddr);
     U(IPAddressWithMinMaxSubtree.Base).IPAddress.pbData = (LPBYTE)encodedIPAddr;
-    for (i = 0;
-     i < sizeof(encodedNameConstraints) / sizeof(encodedNameConstraints[0]);
-     i++)
+    for (i = 0; i < ARRAY_SIZE(encodedNameConstraints); i++)
     {
         DWORD size;
 
@@ -7592,7 +7745,7 @@ static void test_encodeCertPolicyMappings(DWORD dwEncoding)
     DWORD size, i;
 
     /* Each of the mapping OIDs is equivalent, so check with all of them */
-    for (i = 0; i < sizeof(mappingOids) / sizeof(mappingOids[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(mappingOids); i++)
     {
         memset(&info, 0, sizeof(info));
         ret = pCryptEncodeObjectEx(dwEncoding, mappingOids[i], &info,
@@ -7657,7 +7810,7 @@ static void test_decodeCertPolicyMappings(DWORD dwEncoding)
     BOOL ret;
 
     /* Each of the mapping OIDs is equivalent, so check with all of them */
-    for (i = 0; i < sizeof(mappingOids) / sizeof(mappingOids[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(mappingOids); i++)
     {
         ret = pCryptDecodeObjectEx(dwEncoding, mappingOids[i],
          emptySequence, sizeof(emptySequence), CRYPT_DECODE_ALLOC_FLAG, NULL,
@@ -8282,7 +8435,7 @@ static void testImportPublicKey(HCRYPTPROV csp, PCERT_PUBLIC_KEY_INFO info)
     ok(ret, "CryptImportPublicKeyInfoEx failed: %08x\n", GetLastError());
 
     dwSize = sizeof(ai);
-    CryptGetKeyParam(key, KP_ALGID, (LPVOID)&ai, &dwSize, 0);
+    ret = CryptGetKeyParam(key, KP_ALGID, (LPVOID)&ai, &dwSize, 0);
     ok(ret, "CryptGetKeyParam failed: %08x\n", GetLastError());
     if(ret)
     {
@@ -8298,7 +8451,7 @@ static void testImportPublicKey(HCRYPTPROV csp, PCERT_PUBLIC_KEY_INFO info)
     ok(ret, "CryptImportPublicKeyInfoEx failed: %08x\n", GetLastError());
 
     dwSize = sizeof(ai);
-    CryptGetKeyParam(key, KP_ALGID, (LPVOID)&ai, &dwSize, 0);
+    ret = CryptGetKeyParam(key, KP_ALGID, (LPVOID)&ai, &dwSize, 0);
     ok(ret, "CryptGetKeyParam failed: %08x\n", GetLastError());
     if(ret)
     {
@@ -8368,7 +8521,7 @@ START_TEST(encode)
         return;
     }
 
-    for (i = 0; i < sizeof(encodings) / sizeof(encodings[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(encodings); i++)
     {
         test_encodeInt(encodings[i]);
         test_decodeInt(encodings[i]);

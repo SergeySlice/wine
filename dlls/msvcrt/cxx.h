@@ -67,7 +67,7 @@
 #ifndef __x86_64__
 
 #define DEFINE_RTTI_DATA(name, off, base_classes_no, cl1, cl2, cl3, cl4, cl5, cl6, cl7, cl8, cl9, mangled_name) \
-    static const type_info name ## _type_info = { \
+    static type_info name ## _type_info = { \
         &MSVCRT_type_info_vtable, \
         NULL, \
         mangled_name \
@@ -113,7 +113,7 @@ const rtti_object_locator name ## _rtti = { \
 #else
 
 #define DEFINE_RTTI_DATA(name, off, base_classes_no, cl1, cl2, cl3, cl4, cl5, cl6, cl7, cl8, cl9, mangled_name) \
-    static const type_info name ## _type_info = { \
+    static type_info name ## _type_info = { \
         &MSVCRT_type_info_vtable, \
         NULL, \
         mangled_name \
@@ -259,3 +259,29 @@ typedef struct
 } rtti_object_locator;
 
 #endif
+
+#ifdef __i386__
+
+#define CALL_VTBL_FUNC(this, off, ret, type, args) ((ret (WINAPI*)type)&vtbl_wrapper_##off)args
+
+extern void *vtbl_wrapper_0;
+extern void *vtbl_wrapper_4;
+extern void *vtbl_wrapper_8;
+extern void *vtbl_wrapper_12;
+extern void *vtbl_wrapper_16;
+extern void *vtbl_wrapper_20;
+extern void *vtbl_wrapper_24;
+extern void *vtbl_wrapper_28;
+extern void *vtbl_wrapper_32;
+extern void *vtbl_wrapper_36;
+extern void *vtbl_wrapper_40;
+extern void *vtbl_wrapper_44;
+extern void *vtbl_wrapper_48;
+
+#else
+
+#define CALL_VTBL_FUNC(this, off, ret, type, args) ((ret (__cdecl***)type)this)[0][off/4]args
+
+#endif
+
+exception* __thiscall MSVCRT_exception_ctor(exception*, const char**);

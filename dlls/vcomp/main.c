@@ -229,6 +229,51 @@ __ASM_GLOBAL_FUNC( _vcomp_fork_call_wrapper,
                    "mov SP, r5\n\t"
                    "pop {r4, r5, PC}" )
 
+#elif defined(__aarch64__)
+
+extern void CDECL _vcomp_fork_call_wrapper(void *wrapper, int nargs, __ms_va_list args);
+__ASM_GLOBAL_FUNC( _vcomp_fork_call_wrapper,
+                   "stp x29, x30, [SP,#-16]!\n\t"
+                   "mov x29, SP\n\t"
+                   "mov x9, x0\n\t"
+                   "cbz w1, 2f\n\t"
+                   "mov w10, w1\n\t"
+                   "mov x11, x2\n\t"
+                   "ldr w12, [x11, #24]\n\t"
+                   "ldr x13, [x11, #8]\n\t"
+                   "ldr x0, [x13, w12, sxtw]\n\t"
+                   "add w12, w12, #8\n\t"
+                   "ldr x1, [x13, w12, sxtw]\n\t"
+                   "add w12, w12, #8\n\t"
+                   "ldr x2, [x13, w12, sxtw]\n\t"
+                   "add w12, w12, #8\n\t"
+                   "ldr x3, [x13, w12, sxtw]\n\t"
+                   "add w12, w12, #8\n\t"
+                   "ldr x4, [x13, w12, sxtw]\n\t"
+                   "add w12, w12, #8\n\t"
+                   "ldr x5, [x13, w12, sxtw]\n\t"
+                   "add w12, w12, #8\n\t"
+                   "ldr x6, [x13, w12, sxtw]\n\t"
+                   "add w12, w12, #8\n\t"
+                   "ldr x7, [x13, w12, sxtw]\n\t"
+                   "add w12, w12, #8\n\t"
+                   "add x13, x13, w12, sxtw\n\t"
+                   "subs w12, w10, #8\n\t"
+                   "b.le 2f\n\t"
+                   "ldr x11, [x11]\n\t"
+                   "lsl w12, w12, #3\n\t"
+                   "sub SP, SP, w12, sxtw\n\t"
+                   "tbz w12, #3, 1f\n\t"
+                   "sub SP, SP, #8\n\t"
+                   "1: sub w12, w12, #8\n\t"
+                   "ldr x14, [x13, w12, sxtw]\n\t"
+                   "str x14, [SP,  w12, sxtw]\n\t"
+                   "cbnz w12, 1b\n\t"
+                   "2: blr x9\n\t"
+                   "mov SP, x29\n\t"
+                   "ldp x29, x30, [SP], #16\n\t"
+                   "ret\n" )
+
 #else
 
 static void CDECL _vcomp_fork_call_wrapper(void *wrapper, int nargs, __ms_va_list args)
@@ -478,7 +523,7 @@ void CDECL _vcomp_reduction_i1(unsigned int flags, char *dest, char val)
         _vcomp_atomic_bool_or_i1,
     };
     unsigned int op = (flags >> 8) & 0xf;
-    op = min(op, sizeof(funcs)/sizeof(funcs[0]) - 1);
+    op = min(op, ARRAY_SIZE(funcs) - 1);
     funcs[op](dest, val);
 }
 
@@ -572,7 +617,7 @@ void CDECL _vcomp_reduction_i2(unsigned int flags, short *dest, short val)
         _vcomp_atomic_bool_or_i2,
     };
     unsigned int op = (flags >> 8) & 0xf;
-    op = min(op, sizeof(funcs)/sizeof(funcs[0]) - 1);
+    op = min(op, ARRAY_SIZE(funcs) - 1);
     funcs[op](dest, val);
 }
 
@@ -666,7 +711,7 @@ void CDECL _vcomp_reduction_i4(unsigned int flags, int *dest, int val)
         _vcomp_atomic_bool_or_i4,
     };
     unsigned int op = (flags >> 8) & 0xf;
-    op = min(op, sizeof(funcs)/sizeof(funcs[0]) - 1);
+    op = min(op, ARRAY_SIZE(funcs) - 1);
     funcs[op](dest, val);
 }
 
@@ -762,7 +807,7 @@ void CDECL _vcomp_reduction_i8(unsigned int flags, LONG64 *dest, LONG64 val)
         _vcomp_atomic_bool_or_i8,
     };
     unsigned int op = (flags >> 8) & 0xf;
-    op = min(op, sizeof(funcs)/sizeof(funcs[0]) - 1);
+    op = min(op, ARRAY_SIZE(funcs) - 1);
     funcs[op](dest, val);
 }
 
@@ -846,7 +891,7 @@ void CDECL _vcomp_reduction_r4(unsigned int flags, float *dest, float val)
         _vcomp_atomic_bool_or_r4,
     };
     unsigned int op = (flags >> 8) & 0xf;
-    op = min(op, sizeof(funcs)/sizeof(funcs[0]) - 1);
+    op = min(op, ARRAY_SIZE(funcs) - 1);
     funcs[op](dest, val);
 }
 
@@ -930,7 +975,7 @@ void CDECL _vcomp_reduction_r8(unsigned int flags, double *dest, double val)
         _vcomp_atomic_bool_or_r8,
     };
     unsigned int op = (flags >> 8) & 0xf;
-    op = min(op, sizeof(funcs)/sizeof(funcs[0]) - 1);
+    op = min(op, ARRAY_SIZE(funcs) - 1);
     funcs[op](dest, val);
 }
 
@@ -1171,9 +1216,16 @@ void CDECL _vcomp_for_static_init(int first, int last, int step, int chunksize, 
     struct vcomp_team_data *team_data = thread_data->team;
     int num_threads = team_data ? team_data->num_threads : 1;
     int thread_num = thread_data->thread_num;
+    int no_begin, no_lastchunk;
 
     TRACE("(%d, %d, %d, %d, %p, %p, %p, %p, %p)\n",
           first, last, step, chunksize, loops, begin, end, next, lastchunk);
+
+    if (!begin)
+    {
+        begin = &no_begin;
+        lastchunk = &no_lastchunk;
+    }
 
     if (num_threads == 1 && chunksize != 1)
     {

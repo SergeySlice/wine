@@ -174,6 +174,7 @@ static BOOL CALLBACK enumeration_callback(const DIDEVICEINSTANCEA *lpddi, IDirec
     struct enum_data *data = pvRef;
     DWORD cnt;
     DIDEVICEOBJECTDATA buffer[5];
+    IDirectInputDevice8A *lpdid2;
 
     if (!data) return DIENUM_CONTINUE;
 
@@ -205,6 +206,10 @@ static BOOL CALLBACK enumeration_callback(const DIDEVICEINSTANCEA *lpddi, IDirec
         ok (dwFlags & DIEDBS_MAPPEDPRI1, "Mouse should be mapped as pri1 dwFlags=%08x\n", dwFlags);
     }
 
+    /* Creating second device object to check if it has the same username */
+    hr = IDirectInput_CreateDevice(data->pDI, &lpddi->guidInstance, &lpdid2, NULL);
+    ok(SUCCEEDED(hr), "IDirectInput_CreateDevice() failed: %08x\n", hr);
+
     /* Building and setting an action map */
     /* It should not use any pre-stored mappings so we use DIDBAM_HWDEFAULTS */
     hr = IDirectInputDevice8_BuildActionMap(lpdid, data->lpdiaf, NULL, DIDBAM_HWDEFAULTS);
@@ -228,6 +233,11 @@ static BOOL CALLBACK enumeration_callback(const DIDEVICEINSTANCEA *lpddi, IDirec
     dps.wsz[0] = '\0';
 
     hr = IDirectInputDevice_GetProperty(lpdid, DIPROP_USERNAME, &dps.diph);
+    ok (SUCCEEDED(hr), "GetProperty failed hr=%08x\n", hr);
+    ok (!lstrcmpW(usernameW, dps.wsz), "Username not set correctly expected=%s, got=%s\n", wine_dbgstr_w(usernameW), wine_dbgstr_w(dps.wsz));
+
+    dps.wsz[0] = '\0';
+    hr = IDirectInputDevice_GetProperty(lpdid2, DIPROP_USERNAME, &dps.diph);
     ok (SUCCEEDED(hr), "GetProperty failed hr=%08x\n", hr);
     ok (!lstrcmpW(usernameW, dps.wsz), "Username not set correctly expected=%s, got=%s\n", wine_dbgstr_w(usernameW), wine_dbgstr_w(dps.wsz));
 
@@ -307,14 +317,15 @@ static void test_action_mapping(void)
     memset (&af, 0, sizeof(af));
     af.dwSize = sizeof(af);
     af.dwActionSize = sizeof(DIACTIONA);
-    af.dwDataSize = 4 * sizeof(actionMapping) / sizeof(actionMapping[0]);
-    af.dwNumActions = sizeof(actionMapping) / sizeof(actionMapping[0]);
+    af.dwDataSize = 4 * ARRAY_SIZE(actionMapping);
+    af.dwNumActions = ARRAY_SIZE(actionMapping);
     af.rgoAction = actionMapping;
     af.guidActionMap = ACTION_MAPPING_GUID;
     af.dwGenre = 0x01000000; /* DIVIRTUAL_DRIVING_RACE */
     af.dwBufferSize = 32;
 
     /* This enumeration builds and sets the action map for all devices */
+    data.pDI = pDI;
     hr = IDirectInput8_EnumDevicesBySemantics(pDI, 0, &af, enumeration_callback, &data, DIEDBSFL_ATTACHEDONLY);
     ok (SUCCEEDED(hr), "EnumDevicesBySemantics failed: hr=%08x\n", hr);
 
@@ -346,8 +357,8 @@ static void test_action_mapping(void)
         hr = IDirectInputDevice8_SetActionMap(data.keyboard, data.lpdiaf, NULL, 0);
         ok (hr == DI_NOEFFECT, "SetActionMap should have no effect with no actions to map hr=%08x\n", hr);
 
-        af.dwDataSize = 4 * sizeof(actionMapping) / sizeof(actionMapping[0]);
-        af.dwNumActions = sizeof(actionMapping) / sizeof(actionMapping[0]);
+        af.dwDataSize = 4 * ARRAY_SIZE(actionMapping);
+        af.dwNumActions = ARRAY_SIZE(actionMapping);
 
         /* test DIDSAM_NOUSER */
         dps.diph.dwSize = sizeof(dps);
@@ -437,8 +448,8 @@ static void test_save_settings(void)
     memset (&af, 0, sizeof(af));
     af.dwSize = sizeof(af);
     af.dwActionSize = sizeof(DIACTIONA);
-    af.dwDataSize = 4 * sizeof(actions) / sizeof(actions[0]);
-    af.dwNumActions = sizeof(actions) / sizeof(actions[0]);
+    af.dwDataSize = 4 * ARRAY_SIZE(actions);
+    af.dwNumActions = ARRAY_SIZE(actions);
     af.rgoAction = actions;
     af.guidActionMap = mapping_guid;
     af.dwGenre = 0x01000000; /* DIVIRTUAL_DRIVING_RACE */

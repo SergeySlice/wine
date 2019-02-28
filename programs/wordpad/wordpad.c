@@ -250,7 +250,7 @@ static void set_caption(LPCWSTR wszNewFileName)
     memcpy(wszCaption, wszNewFileName, lstrlenW(wszNewFileName)*sizeof(WCHAR));
     length += lstrlenW(wszNewFileName);
     memcpy(wszCaption + length, wszSeparator, sizeof(wszSeparator));
-    length += sizeof(wszSeparator) / sizeof(WCHAR);
+    length += ARRAY_SIZE(wszSeparator);
     memcpy(wszCaption + length, wszAppTitle, sizeof(wszAppTitle));
 
     SetWindowTextW(hMainWnd, wszCaption);
@@ -398,7 +398,7 @@ static void populate_size_list(HWND hSizeListWnd)
                                GetDeviceCaps(hdc, LOGPIXELSY)));
     } else
     {
-        for(i = 0; i < sizeof(choices)/sizeof(choices[0]); i++)
+        for(i = 0; i < ARRAY_SIZE(choices); i++)
             add_size(hSizeListWnd, choices[i]);
     }
 
@@ -1124,7 +1124,7 @@ static void dialog_viewproperties(void)
     psp[0].lParam = reg_formatindex(SF_TEXT);
     psp[0].pfnCallback = NULL;
     psp[0].pszTitle = MAKEINTRESOURCEW(STRING_VIEWPROPS_TEXT);
-    for(i = 1; i < sizeof(psp)/sizeof(psp[0]); i++)
+    for(i = 1; i < ARRAY_SIZE(psp); i++)
     {
         psp[i].dwSize = psp[0].dwSize;
         psp[i].dwFlags = psp[0].dwFlags;
@@ -1141,7 +1141,7 @@ static void dialog_viewproperties(void)
     psh.hwndParent = hMainWnd;
     psh.hInstance = hInstance;
     psh.pszCaption = MAKEINTRESOURCEW(STRING_VIEWPROPS_TITLE);
-    psh.nPages = sizeof(psp)/sizeof(psp[0]);
+    psh.nPages = ARRAY_SIZE(psp);
     U3(psh).ppsp = ppsp;
     U(psh).pszIcon = MAKEINTRESOURCEW(IDI_WORDPAD);
 
@@ -1171,7 +1171,7 @@ static void HandleCommandLine(LPWSTR cmdline)
 
     while (*cmdline)
     {
-        while (isspace(*cmdline)) cmdline++;
+        while (*cmdline == ' ' || *cmdline == '\t') cmdline++;
 
         if (*cmdline == '-' || *cmdline == '/')
         {
@@ -1235,7 +1235,7 @@ static LRESULT handle_findmsg(LPFINDREPLACEW pFr)
         if (pFr->lpstrFindWhat != custom_data->findBuffer)
         {
             lstrcpynW(custom_data->findBuffer, pFr->lpstrFindWhat,
-                      sizeof(custom_data->findBuffer) / sizeof(WCHAR));
+                      ARRAY_SIZE(custom_data->findBuffer));
             pFr->lpstrFindWhat = custom_data->findBuffer;
         }
 
@@ -1813,8 +1813,15 @@ static LRESULT OnCreate( HWND hWnd )
     int nStdBitmaps = 0;
     REBARINFO rbi;
     REBARBANDINFOW rbb;
+    RECT rect;
+    HFONT font;
+    HDC hdc;
+    SIZE name_sz, size_sz;
+    int height;
     static const WCHAR wszRichEditDll[] = {'R','I','C','H','E','D','2','0','.','D','L','L','\0'};
     static const WCHAR wszRichEditText[] = {'R','i','c','h','E','d','i','t',' ','t','e','x','t','\0'};
+    static const WCHAR font_text[] = {'T','i','m','e','s',' ','N','e','w',' ','R','o','m','a','n',0}; /* a long font name */
+    static const WCHAR size_text[] = {' ','0','0',0}; /* enough for two digits */
 
     CreateStatusWindowW(CCS_NODIVIDER|WS_CHILD|WS_VISIBLE, wszRichEditText, hWnd, IDC_STATUSBAR);
 
@@ -1856,6 +1863,13 @@ static LRESULT OnCreate( HWND hWnd )
     AddButton(hToolBarWnd, 0, ID_DATETIME);
 
     SendMessageW(hToolBarWnd, TB_AUTOSIZE, 0, 0);
+    height = HIWORD(SendMessageW(hToolBarWnd, TB_GETBUTTONSIZE, 0, 0));
+
+    hFontListWnd = CreateWindowExW(0, WC_COMBOBOXEXW, NULL,
+                      WS_BORDER | WS_VISIBLE | WS_CHILD | CBS_DROPDOWN | CBS_SORT,
+                      0, 0, 200, 150, hReBarWnd, (HMENU)IDC_FONTLIST, hInstance, NULL);
+    GetWindowRect(hFontListWnd, &rect);
+    height = max(height, rect.bottom - rect.top);
 
     rbb.cbSize = REBARBANDINFOW_V6_SIZE;
     rbb.fMask = RBBIM_SIZE | RBBIM_CHILDSIZE | RBBIM_CHILD | RBBIM_STYLE | RBBIM_ID;
@@ -1863,17 +1877,20 @@ static LRESULT OnCreate( HWND hWnd )
     rbb.cx = 0;
     rbb.hwndChild = hToolBarWnd;
     rbb.cxMinChild = 0;
-    rbb.cyChild = rbb.cyMinChild = HIWORD(SendMessageW(hToolBarWnd, TB_GETBUTTONSIZE, 0, 0));
+    rbb.cyChild = rbb.cyMinChild = height;
     rbb.wID = BANDID_TOOLBAR;
 
     SendMessageW(hReBarWnd, RB_INSERTBANDW, -1, (LPARAM)&rbb);
 
-    hFontListWnd = CreateWindowExW(0, WC_COMBOBOXEXW, NULL,
-                      WS_BORDER | WS_VISIBLE | WS_CHILD | CBS_DROPDOWN | CBS_SORT,
-                      0, 0, 200, 150, hReBarWnd, (HMENU)IDC_FONTLIST, hInstance, NULL);
-
+    font = (HFONT)SendMessageW(hFontListWnd, WM_GETFONT, 0, 0);
+    hdc = GetDC(hFontListWnd);
+    font = SelectObject(hdc, font);
+    GetTextExtentPointW(hdc, font_text, ARRAY_SIZE(font_text) - 1, &name_sz);
+    GetTextExtentPointW(hdc, size_text, ARRAY_SIZE(size_text) - 1, &size_sz);
+    font = SelectObject(hdc, font);
+    ReleaseDC(hFontListWnd, hdc);
     rbb.hwndChild = hFontListWnd;
-    rbb.cx = 200;
+    rbb.cx = MulDiv(name_sz.cx, 3, 2) + height; /* height is space for the dropdown arrow */
     rbb.wID = BANDID_FONTLIST;
 
     SendMessageW(hReBarWnd, RB_INSERTBANDW, -1, (LPARAM)&rbb);
@@ -1883,7 +1900,7 @@ static LRESULT OnCreate( HWND hWnd )
                       0, 0, 50, 150, hReBarWnd, (HMENU)IDC_SIZELIST, hInstance, NULL);
 
     rbb.hwndChild = hSizeListWnd;
-    rbb.cx = 50;
+    rbb.cx = MulDiv(size_sz.cx, 3, 2) + height; /* height is space for the dropdown arrow */
     rbb.fStyle ^= RBBS_BREAK;
     rbb.wID = BANDID_SIZELIST;
 
@@ -2731,6 +2748,9 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hOldInstance, LPSTR szCmdPar
     HWND hRulerWnd;
     POINTL EditPoint;
     DWORD bMaximized;
+    MONITORINFO info;
+    HMONITOR monitor;
+    int x, y;
     static const WCHAR wszAccelTable[] = {'M','A','I','N','A','C','C','E','L',
                                           'T','A','B','L','E','\0'};
 
@@ -2767,8 +2787,18 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hOldInstance, LPSTR szCmdPar
     RegisterClassExW(&wc);
 
     registry_read_winrect(&rc);
+    monitor = MonitorFromRect(&rc, MONITOR_DEFAULTTOPRIMARY);
+    info.cbSize = sizeof(info);
+    GetMonitorInfoW(monitor, &info);
+
+    x = rc.left;
+    y = rc.top;
+    IntersectRect(&info.rcWork, &info.rcWork, &rc);
+    if (IsRectEmpty(&info.rcWork))
+        x = y = CW_USEDEFAULT;
+
     hMainWnd = CreateWindowExW(0, wszMainWndClass, wszAppTitle, WS_CLIPCHILDREN|WS_OVERLAPPEDWINDOW,
-      rc.left, rc.top, rc.right-rc.left, rc.bottom-rc.top, NULL, NULL, hInstance, NULL);
+            x, y, rc.right - rc.left, rc.bottom - rc.top, NULL, NULL, hInstance, NULL);
     registry_read_maximized(&bMaximized);
     if ((nCmdShow == SW_SHOWNORMAL || nCmdShow == SW_SHOWDEFAULT)
 	     && bMaximized)

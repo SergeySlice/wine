@@ -22,12 +22,80 @@
 #include "webservices.h"
 #include "wine/test.h"
 
+static inline void set_field_desc( WS_FIELD_DESCRIPTION *desc, WS_FIELD_MAPPING mapping,
+                                   WS_XML_STRING *localname, WS_XML_STRING *ns, WS_TYPE type,
+                                   void *type_desc, ULONG offset, ULONG options, ULONG count_offset,
+                                   WS_XML_STRING *item_localname, WS_XML_STRING *item_ns )
+{
+    memset( desc, 0, sizeof(*desc) );
+    desc->mapping         = mapping;
+    desc->localName       = localname;
+    desc->ns              = ns;
+    desc->type            = type;
+    desc->typeDescription = type_desc;
+    desc->offset          = offset;
+    desc->options         = options;
+    desc->countOffset     = count_offset;
+    desc->itemLocalName   = item_localname;
+    desc->itemNs          = item_ns;
+}
+
+static inline void set_struct_desc( WS_STRUCT_DESCRIPTION *desc, ULONG size, ULONG alignment,
+                                    WS_FIELD_DESCRIPTION **fields, ULONG count, WS_XML_STRING *localname,
+                                    WS_XML_STRING *ns, ULONG options )
+{
+    memset( desc, 0, sizeof(*desc) );
+    desc->size          = size;
+    desc->alignment     = alignment;
+    desc->fields        = fields;
+    desc->fieldCount    = count;
+    desc->typeLocalName = localname;
+    desc->typeNs        = ns;
+    desc->structOptions = options;
+}
+
+static inline void set_elem_desc( WS_ELEMENT_DESCRIPTION *desc, WS_XML_STRING *localname, WS_XML_STRING *ns,
+                                  WS_TYPE type, void *type_desc )
+{
+    desc->elementLocalName = localname;
+    desc->elementNs        = ns;
+    desc->type             = type;
+    desc->typeDescription  = type_desc;
+}
+
+static inline void set_msg_desc( WS_MESSAGE_DESCRIPTION *desc, WS_XML_STRING *action,
+                                 WS_ELEMENT_DESCRIPTION *elem_desc )
+{
+    desc->action                 = action;
+    desc->bodyElementDescription = elem_desc;
+}
+
+static inline void set_param_desc( WS_PARAMETER_DESCRIPTION *desc, WS_PARAMETER_TYPE type,
+                                   USHORT input_index, USHORT output_index )
+{
+    desc->parameterType      = type;
+    desc->inputMessageIndex  = input_index;
+    desc->outputMessageIndex = output_index;
+}
+
+static inline void set_op_desc( WS_OPERATION_DESCRIPTION *desc, WS_MESSAGE_DESCRIPTION *input_msg,
+                                WS_MESSAGE_DESCRIPTION *output_msg, ULONG count,
+                                WS_PARAMETER_DESCRIPTION *param_desc )
+{
+    memset( desc, 0, sizeof(*desc) );
+    desc->versionInfo              = 1;
+    desc->inputMessageDescription  = input_msg;
+    desc->outputMessageDescription = output_msg;
+    desc->parameterCount           = count;
+    desc->parameterDescription     = param_desc;
+}
+
 static void test_WsCreateServiceProxy(void)
 {
     HRESULT hr;
     WS_SERVICE_PROXY *proxy;
     WS_SERVICE_PROXY_STATE state;
-    ULONG size, value;
+    ULONG value;
 
     hr = WsCreateServiceProxy( WS_CHANNEL_TYPE_REQUEST, WS_HTTP_CHANNEL_BINDING, NULL, NULL,
                                0, NULL, 0, NULL, NULL );
@@ -41,13 +109,11 @@ static void test_WsCreateServiceProxy(void)
 
     /* write-only property */
     value = 0xdeadbeef;
-    size = sizeof(value);
-    hr = WsGetServiceProxyProperty( proxy, WS_PROXY_PROPERTY_CALL_TIMEOUT, &value, size, NULL );
+    hr = WsGetServiceProxyProperty( proxy, WS_PROXY_PROPERTY_CALL_TIMEOUT, &value, sizeof(value), NULL );
     ok( hr == E_INVALIDARG, "got %08x\n", hr );
 
     state = 0xdeadbeef;
-    size = sizeof(state);
-    hr = WsGetServiceProxyProperty( proxy, WS_PROXY_PROPERTY_STATE, &state, size, NULL );
+    hr = WsGetServiceProxyProperty( proxy, WS_PROXY_PROPERTY_STATE, &state, sizeof(state), NULL );
     ok( hr == S_OK, "got %08x\n", hr );
     ok( state == WS_SERVICE_PROXY_STATE_CREATED, "got %u\n", state );
 
@@ -83,6 +149,7 @@ static void test_WsOpenServiceProxy(void)
     WCHAR url[] = {'h','t','t','p',':','/','/','l','o','c','a','l','h','o','s','t','/'};
     HRESULT hr;
     WS_SERVICE_PROXY *proxy;
+    WS_SERVICE_PROXY_STATE state;
     WS_HTTP_POLICY_DESCRIPTION policy;
     WS_ENDPOINT_ADDRESS addr;
 
@@ -91,16 +158,72 @@ static void test_WsOpenServiceProxy(void)
                                            NULL, 0, &policy, sizeof(policy), &proxy, NULL );
     ok( hr == S_OK, "got %08x\n", hr );
 
-    addr.url.length = sizeof(url)/sizeof(url[0]);
+    state = 0xdeadbeef;
+    hr = WsGetServiceProxyProperty( proxy, WS_PROXY_PROPERTY_STATE, &state, sizeof(state), NULL );
+    ok( hr == S_OK, "got %08x\n", hr );
+    ok( state == WS_SERVICE_PROXY_STATE_CREATED, "got %u\n", state );
+
+    memset( &addr, 0, sizeof(addr) );
+    addr.url.length = ARRAY_SIZE( url );
     addr.url.chars  = url;
-    addr.headers    = NULL;
-    addr.extensions = NULL;
-    addr.identity   = NULL;
     hr = WsOpenServiceProxy( proxy, &addr, NULL, NULL );
     ok( hr == S_OK, "got %08x\n", hr );
 
+    state = 0xdeadbeef;
+    hr = WsGetServiceProxyProperty( proxy, WS_PROXY_PROPERTY_STATE, &state, sizeof(state), NULL );
+    ok( hr == S_OK, "got %08x\n", hr );
+    ok( state == WS_SERVICE_PROXY_STATE_OPEN, "got %u\n", state );
+
     hr = WsCloseServiceProxy( proxy , NULL, NULL );
     ok( hr == S_OK, "got %08x\n", hr );
+
+    state = 0xdeadbeef;
+    hr = WsGetServiceProxyProperty( proxy, WS_PROXY_PROPERTY_STATE, &state, sizeof(state), NULL );
+    ok( hr == S_OK, "got %08x\n", hr );
+    ok( state == WS_SERVICE_PROXY_STATE_CLOSED, "got %u\n", state );
+
+    WsFreeServiceProxy( proxy );
+}
+
+static void test_WsResetServiceProxy(void)
+{
+    WCHAR url[] = {'h','t','t','p',':','/','/','l','o','c','a','l','h','o','s','t','/'};
+    HRESULT hr;
+    WS_SERVICE_PROXY *proxy;
+    WS_ENDPOINT_ADDRESS addr;
+    WS_SERVICE_PROXY_STATE state;
+
+    hr = WsCreateServiceProxy( WS_CHANNEL_TYPE_REQUEST, WS_HTTP_CHANNEL_BINDING, NULL, NULL,
+                               0, NULL, 0, &proxy, NULL );
+    ok( hr == S_OK, "got %08x\n", hr );
+
+    hr = WsResetServiceProxy( proxy, NULL );
+    ok( hr == S_OK, "got %08x\n", hr );
+
+    state = 0xdeadbeef;
+    hr = WsGetServiceProxyProperty( proxy, WS_PROXY_PROPERTY_STATE, &state, sizeof(state), NULL );
+    ok( hr == S_OK, "got %08x\n", hr );
+    ok( state == WS_SERVICE_PROXY_STATE_CREATED, "got %u\n", state );
+
+    memset( &addr, 0, sizeof(addr) );
+    addr.url.length = ARRAY_SIZE( url );
+    addr.url.chars  = url;
+    hr = WsOpenServiceProxy( proxy, &addr, NULL, NULL );
+    ok( hr == S_OK, "got %08x\n", hr );
+
+    hr = WsResetServiceProxy( proxy, NULL );
+    ok( hr == WS_E_INVALID_OPERATION, "got %08x\n", hr );
+
+    hr = WsCloseServiceProxy( proxy , NULL, NULL );
+    ok( hr == S_OK, "got %08x\n", hr );
+
+    hr = WsResetServiceProxy( proxy, NULL );
+    ok( hr == S_OK, "got %08x\n", hr );
+
+    state = 0xdeadbeef;
+    hr = WsGetServiceProxyProperty( proxy, WS_PROXY_PROPERTY_STATE, &state, sizeof(state), NULL );
+    ok( hr == S_OK, "got %08x\n", hr );
+    ok( state == WS_SERVICE_PROXY_STATE_CREATED, "got %u\n", state );
 
     WsFreeServiceProxy( proxy );
 }
@@ -129,11 +252,9 @@ static HRESULT create_channel( int port, WS_CHANNEL **ret )
     hr = WsCreateChannel( WS_CHANNEL_TYPE_REQUEST, WS_HTTP_CHANNEL_BINDING, prop, 2, NULL, &channel, NULL );
     if (hr != S_OK) return hr;
 
+    memset( &addr, 0, sizeof(addr) );
     addr.url.length = wsprintfW( buf, fmt, port );
     addr.url.chars  = buf;
-    addr.headers    = NULL;
-    addr.extensions = NULL;
-    addr.identity   = NULL;
     hr = WsOpenChannel( channel, &addr, NULL, NULL );
     if (hr == S_OK) *ret = channel;
     else WsFreeChannel( channel );
@@ -166,12 +287,8 @@ static void test_WsSendMessage( int port, WS_XML_STRING *action )
     hr = WsCreateMessageForChannel( channel, NULL, 0, &msg, NULL );
     ok( hr == S_OK, "got %08x\n", hr );
 
-    body.elementLocalName = &req;
-    body.elementNs        = &ns;
-    body.type             = WS_INT32_TYPE;
-    body.typeDescription  = NULL;
-    desc.action                 = action;
-    desc.bodyElementDescription = &body;
+    set_elem_desc( &body, &req, &ns, WS_INT32_TYPE, NULL );
+    set_msg_desc( &desc, action, &body );
     hr = WsSendMessage( NULL, msg, &desc, WS_WRITE_REQUIRED_VALUE, &val, sizeof(val), NULL, NULL );
     ok( hr == E_INVALIDARG, "got %08x\n", hr );
 
@@ -208,12 +325,8 @@ static void test_WsReceiveMessage( int port )
     hr = WsCreateMessageForChannel( channel, NULL, 0, &msg, NULL );
     ok( hr == S_OK, "got %08x\n", hr );
 
-    body.elementLocalName = &req;
-    body.elementNs        = &ns;
-    body.type             = WS_INT32_TYPE;
-    body.typeDescription  = NULL;
-    desc_req.action                 = &req;
-    desc_req.bodyElementDescription = &body;
+    set_elem_desc( &body, &req, &ns, WS_INT32_TYPE, NULL );
+    set_msg_desc( &desc_req, &req, &body );
     hr = WsSendMessage( channel, msg, &desc_req, WS_WRITE_REQUIRED_VALUE, &val, sizeof(val), NULL, NULL );
     ok( hr == S_OK, "got %08x\n", hr );
     WsFreeMessage( msg );
@@ -221,9 +334,8 @@ static void test_WsReceiveMessage( int port )
     hr = WsCreateMessageForChannel( channel, NULL, 0, &msg, NULL );
     ok( hr == S_OK, "got %08x\n", hr );
 
-    body.elementLocalName = &resp;
-    desc_resp.action                 = &resp;
-    desc_resp.bodyElementDescription = &body;
+    set_elem_desc( &body, &resp, &ns, WS_INT32_TYPE, NULL );
+    set_msg_desc( &desc_resp, &resp, &body );
     desc[0] = &desc_resp;
     hr = WsReceiveMessage( NULL, msg, desc, 1, WS_RECEIVE_REQUIRED_MESSAGE, WS_READ_REQUIRED_VALUE,
                            NULL, &val, sizeof(val), NULL, NULL, NULL );
@@ -273,14 +385,12 @@ static HRESULT create_proxy( int port, WS_SERVICE_PROXY **ret )
 
     *ret = NULL;
     hr = WsCreateServiceProxy( WS_CHANNEL_TYPE_REQUEST, WS_HTTP_CHANNEL_BINDING, NULL, NULL,
-                               0, prop, sizeof(prop)/sizeof(prop[0]), &proxy, NULL );
+                               0, prop, ARRAY_SIZE( prop ), &proxy, NULL );
     if (hr != S_OK) return hr;
 
+    memset( &addr, 0, sizeof(addr) );
     addr.url.length = wsprintfW( url, fmt, port );
     addr.url.chars  = url;
-    addr.headers    = NULL;
-    addr.extensions = NULL;
-    addr.identity   = NULL;
     hr = WsOpenServiceProxy( proxy, &addr, NULL, NULL );
     if (hr == S_OK) *ret = proxy;
     else WsFreeServiceProxy( proxy );
@@ -348,102 +458,35 @@ static void test_WsCall( int port )
     hr = WsCall( proxy, NULL, NULL, NULL, NULL, 0, NULL, NULL );
     ok( hr == E_INVALIDARG, "got %08x\n", hr );
 
-    memset( &f, 0, sizeof(f) );
-    f.mapping   = WS_ELEMENT_FIELD_MAPPING;
-    f.localName = &val;
-    f.ns        = &ns;
-    f.type      = WS_INT32_TYPE;
+    set_field_desc( &f, WS_ELEMENT_FIELD_MAPPING, &val, &ns, WS_INT32_TYPE, NULL, 0, 0, 0, NULL, NULL );
+    set_field_desc( &f4, WS_REPEATING_ELEMENT_FIELD_MAPPING, NULL, NULL, WS_WSZ_TYPE, NULL,
+                    FIELD_OFFSET(struct input, str), 0, FIELD_OFFSET(struct input, count), &str, &ns );
     fields[0] = &f;
-
-    memset( &f4, 0, sizeof(f4) );
-    f4.mapping       = WS_REPEATING_ELEMENT_FIELD_MAPPING;
-    f4.type          = WS_WSZ_TYPE;
-    f4.offset        = FIELD_OFFSET(struct input, str);
-    f4.countOffset   = FIELD_OFFSET(struct input, count);
-    f4.itemLocalName = &str;
-    f4.itemNs        = &ns;
     fields[1] = &f4;
 
-    memset( &input_struct, 0, sizeof(input_struct) );
-    input_struct.size          = sizeof(struct input);
-    input_struct.alignment     = TYPE_ALIGNMENT(struct input);
-    input_struct.fields        = fields;
-    input_struct.fieldCount    = 2;
-    input_struct.typeLocalName = &req;
-    input_struct.typeNs        = &ns;
+    set_struct_desc( &input_struct, sizeof(struct input), TYPE_ALIGNMENT(struct input), fields, 2, &req, &ns, 0 );
+    set_elem_desc( &input_elem, &req_elem, &ns, WS_STRUCT_TYPE, &input_struct );
+    set_msg_desc( &input_msg, &req_action, &input_elem );
 
-    input_elem.elementLocalName = &req_elem;
-    input_elem.elementNs        = &ns;
-    input_elem.type             = WS_STRUCT_TYPE;
-    input_elem.typeDescription  = &input_struct;
-    input_msg.action                 = &req_action;
-    input_msg.bodyElementDescription = &input_elem;
-
-    memset( &f2, 0, sizeof(f2) );
-    f2.mapping       = WS_ELEMENT_FIELD_MAPPING;
-    f2.localName     = &str;
-    f2.ns            = &ns;
-    f2.type          = WS_WSZ_TYPE;
-    f2.offset        = FIELD_OFFSET(struct output, str);
+    set_field_desc( &f2, WS_ELEMENT_FIELD_MAPPING, &str, &ns, WS_WSZ_TYPE, NULL, FIELD_OFFSET(struct output, str),
+                    0, 0, NULL, NULL );
+    set_field_desc( &f3, WS_REPEATING_ELEMENT_FIELD_MAPPING, NULL, NULL, WS_INT32_TYPE, NULL,
+                    FIELD_OFFSET(struct output, val), 0, FIELD_OFFSET(struct output, count), &val, &ns );
     fields2[0] = &f2;
-
-    memset( &f3, 0, sizeof(f3) );
-    f3.mapping       = WS_REPEATING_ELEMENT_FIELD_MAPPING;
-    f3.type          = WS_INT32_TYPE;
-    f3.offset        = FIELD_OFFSET(struct output, val);
-    f3.countOffset   = FIELD_OFFSET(struct output, count);
-    f3.itemLocalName = &val;
-    f3.itemNs        = &ns;
     fields2[1] = &f3;
 
-    memset( &output_struct, 0, sizeof(output_struct) );
-    output_struct.size          = sizeof(struct output);
-    output_struct.alignment     = TYPE_ALIGNMENT(struct output);
-    output_struct.fields        = fields2;
-    output_struct.fieldCount    = 2;
-    output_struct.typeLocalName = &resp;
-    output_struct.typeNs        = &ns;
+    set_struct_desc( &output_struct, sizeof(struct output), TYPE_ALIGNMENT(struct output), fields2, 2, &resp, &ns, 0 );
+    set_elem_desc( &output_elem, &resp_elem, &ns, WS_STRUCT_TYPE, &output_struct );
+    set_msg_desc( &output_msg, &resp_action, &output_elem );
 
-    output_elem.elementLocalName = &resp_elem;
-    output_elem.elementNs        = &ns;
-    output_elem.type             = WS_STRUCT_TYPE;
-    output_elem.typeDescription  = &output_struct;
-    output_msg.action                 = &resp_action;
-    output_msg.bodyElementDescription = &output_elem;
+    set_param_desc( &param[0], WS_PARAMETER_TYPE_NORMAL, 0, 0xffff );
+    set_param_desc( &param[1], WS_PARAMETER_TYPE_ARRAY, 1, 0xffff );
+    set_param_desc( &param[2], WS_PARAMETER_TYPE_ARRAY_COUNT, 1, 0xffff );
+    set_param_desc( &param[3], WS_PARAMETER_TYPE_NORMAL, 0xffff, 0 );
+    set_param_desc( &param[4], WS_PARAMETER_TYPE_ARRAY, 0xffff, 1 );
+    set_param_desc( &param[5], WS_PARAMETER_TYPE_ARRAY_COUNT, 0xffff, 1 );
 
-    param[0].parameterType      = WS_PARAMETER_TYPE_NORMAL;
-    param[0].inputMessageIndex  = 0;
-    param[0].outputMessageIndex = 0xffff;
-
-    param[1].parameterType      = WS_PARAMETER_TYPE_ARRAY;
-    param[1].inputMessageIndex  = 1;
-    param[1].outputMessageIndex = 0xffff;
-
-    param[2].parameterType      = WS_PARAMETER_TYPE_ARRAY_COUNT;
-    param[2].inputMessageIndex  = 1;
-    param[2].outputMessageIndex = 0xffff;
-
-    param[3].parameterType      = WS_PARAMETER_TYPE_NORMAL;
-    param[3].inputMessageIndex  = 0xffff;
-    param[3].outputMessageIndex = 0;
-
-    param[4].parameterType      = WS_PARAMETER_TYPE_ARRAY;
-    param[4].inputMessageIndex  = 0xffff;
-    param[4].outputMessageIndex = 1;
-
-    param[5].parameterType      = WS_PARAMETER_TYPE_ARRAY_COUNT;
-    param[5].inputMessageIndex  = 0xffff;
-    param[5].outputMessageIndex = 1;
-
-    op.versionInfo              = 1;
-    op.inputMessageDescription  = &input_msg;
-    op.outputMessageDescription = &output_msg;
-    op.inputMessageOptions      = 0;
-    op.outputMessageOptions     = 0;
-    op.parameterCount           = 6;
-    op.parameterDescription     = param;
-    op.stubCallback             = NULL;
-    op.style                    = 0;
+    set_op_desc( &op, &input_msg, &output_msg, 6, param );
     hr = WsCall( proxy, &op, NULL, NULL, NULL, 0, NULL, NULL );
     ok( hr == E_INVALIDARG, "got %08x\n", hr );
 
@@ -482,31 +525,105 @@ static void test_WsCall( int port )
     WsFreeHeap( heap );
 }
 
+static const char req_test3[] =
+    "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body>"
+    "<req_test3 xmlns=\"ns\"><val>1</val></req_test3>"
+    "</s:Body></s:Envelope>";
+
+static const char resp_test3[] =
+    "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body/></s:Envelope>";
+
+static void test_empty_response( int port )
+{
+    WS_XML_STRING req = {3, (BYTE *)"req"};
+    WS_XML_STRING resp = {4, (BYTE *)"resp"};
+    WS_XML_STRING req_action = {9, (BYTE *)"req_test3"};
+    WS_XML_STRING resp_action = {10, (BYTE *)"resp_test3"};
+    WS_XML_STRING req_elem = {9, (BYTE *)"req_test3"};
+    WS_XML_STRING resp_elem = {10, (BYTE *)"resp_test3"};
+    WS_XML_STRING ns = {2, (BYTE *)"ns"};
+    WS_XML_STRING ns2 = {0, (BYTE *)""};
+    WS_XML_STRING val = {3, (BYTE *)"val"};
+    HRESULT hr;
+    WS_SERVICE_PROXY *proxy;
+    WS_FIELD_DESCRIPTION f, *fields[1];
+    WS_STRUCT_DESCRIPTION input_struct, output_struct;
+    WS_ELEMENT_DESCRIPTION input_elem, output_elem;
+    WS_MESSAGE_DESCRIPTION input_msg, output_msg;
+    WS_PARAMETER_DESCRIPTION param[1];
+    WS_OPERATION_DESCRIPTION op;
+    const void *args[1];
+    WS_HEAP *heap;
+    struct input
+    {
+        INT32 val;
+    } in;
+
+    hr = WsCreateHeap( 1 << 16, 0, NULL, 0, &heap, NULL );
+    ok( hr == S_OK, "got %08x\n", hr );
+
+    hr = create_proxy( port, &proxy );
+    ok( hr == S_OK, "got %08x\n", hr );
+
+    set_field_desc( &f, WS_ELEMENT_FIELD_MAPPING, &val, &ns, WS_INT32_TYPE, NULL, 0, 0, 0, NULL, NULL );
+    fields[0] = &f;
+
+    set_struct_desc( &input_struct, sizeof(struct input), TYPE_ALIGNMENT(struct input), fields, 1, &req, &ns, 0 );
+    set_elem_desc( &input_elem, &req_elem, &ns, WS_STRUCT_TYPE, &input_struct );
+    set_msg_desc( &input_msg, &req_action, &input_elem );
+
+    set_struct_desc( &output_struct, 0, 1, NULL, 0, &resp, &ns2, 0x6 );
+    set_elem_desc( &output_elem, &resp_elem, &ns, WS_STRUCT_TYPE, NULL );
+    set_msg_desc( &output_msg, &resp_action, &output_elem );
+
+    set_param_desc( param, WS_PARAMETER_TYPE_NORMAL, 0, 0xffff );
+    set_op_desc( &op, &input_msg, &output_msg, 1, param );
+
+    in.val = 1;
+    args[0] = &in.val;
+    hr = WsCall( proxy, &op, args, heap, NULL, 0, NULL, NULL );
+    ok( hr == E_INVALIDARG, "got %08x\n", hr );
+
+    set_elem_desc( &output_elem, &resp_elem, &ns, WS_STRUCT_TYPE, &output_struct );
+    hr = WsCall( proxy, &op, args, heap, NULL, 0, NULL, NULL );
+    ok( hr == WS_E_INVALID_FORMAT, "got %08x\n", hr );
+
+    hr = WsCloseServiceProxy( proxy, NULL, NULL );
+    ok( hr == S_OK, "got %08x\n", hr );
+
+    WsFreeServiceProxy( proxy );
+    WsFreeHeap( heap );
+}
+
+static const char status_200[] = "HTTP/1.1 200 OK\r\n";
+
 static const struct
 {
     const char   *req_action;
     const char   *req_data;
     unsigned int  req_len;
-    const char   *resp_action;
+    const char   *resp_status;
     const char   *resp_data;
     unsigned int  resp_len;
 }
 tests[] =
 {
-    { "req_test1", req_test1, sizeof(req_test1)-1, "resp_test1", resp_test1, sizeof(resp_test1)-1 },
-    { "req_test2", req_test2, sizeof(req_test2)-1, "resp_test2", resp_test2, sizeof(resp_test2)-1 },
+    { "req_test1", req_test1, sizeof(req_test1)-1, status_200, resp_test1, sizeof(resp_test1)-1 },
+    { "req_test2", req_test2, sizeof(req_test2)-1, status_200, resp_test2, sizeof(resp_test2)-1 },
+    { "req_test3", req_test3, sizeof(req_test3)-1, status_200, resp_test3, sizeof(resp_test3)-1 },
 };
 
-static void send_response( int c, const char *action, const char *data, unsigned int len )
+static void send_response( int c, const char *status, const char *data, unsigned int len )
 {
     static const char headers[] =
-        "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=utf-8\r\nConnection: close\r\n";
+        "Content-Type: text/xml; charset=utf-8\r\nConnection: close\r\n";
     static const char fmt[] =
-        "SOAPAction: \"%s\"\r\nContent-Length: %u\r\n\r\n";
+        "Content-Length: %u\r\n\r\n";
     char buf[128];
 
+    send( c, status, strlen(status), 0 );
     send( c, headers, sizeof(headers) - 1, 0 );
-    sprintf( buf, fmt, action, len );
+    sprintf( buf, fmt, len );
     send( c, buf, strlen(buf), 0 );
     send( c, data, len, 0 );
 }
@@ -570,7 +687,7 @@ static DWORD CALLBACK server_proc( void *arg )
         }
         buf[i] = 0;
 
-        for (j = 0; j < sizeof(tests)/sizeof(tests[0]); j++)
+        for (j = 0; j < ARRAY_SIZE( tests ); j++)
         {
             if (strstr( buf, tests[j].req_action ))
             {
@@ -580,9 +697,9 @@ static DWORD CALLBACK server_proc( void *arg )
                     ok( tests[j].req_len == data_len, "%u: unexpected data length %u %u\n",
                         j, data_len, tests[j].req_len );
                     if (tests[j].req_len == data_len)
-                        ok( !memcmp( tests[j].req_data, buf, tests[j].req_len ), "%u: unexpected data\n", j );
+                        ok( !memcmp( tests[j].req_data, buf, tests[j].req_len ), "%u: unexpected data %s\n", j, buf );
                 }
-                send_response( c, tests[j].resp_action, tests[j].resp_data, tests[j].resp_len );
+                send_response( c, tests[j].resp_status, tests[j].resp_data, tests[j].resp_len );
                 break;
             }
         }
@@ -591,6 +708,7 @@ static DWORD CALLBACK server_proc( void *arg )
         closesocket( c );
         if (quit) break;
     }
+    closesocket( s );
 
     return 0;
 }
@@ -606,6 +724,7 @@ START_TEST(proxy)
     test_WsCreateServiceProxy();
     test_WsCreateServiceProxyFromTemplate();
     test_WsOpenServiceProxy();
+    test_WsResetServiceProxy();
 
     info.port  = 7533;
     info.event = CreateEventW( NULL, 0, 0, NULL );
@@ -614,12 +733,18 @@ START_TEST(proxy)
 
     ret = WaitForSingleObject( info.event, 3000 );
     ok(ret == WAIT_OBJECT_0, "failed to start test server %u\n", GetLastError());
-    if (ret != WAIT_OBJECT_0) return;
+    if (ret != WAIT_OBJECT_0)
+    {
+        CloseHandle(thread);
+        return;
+    }
 
     test_WsSendMessage( info.port, &test1 );
     test_WsReceiveMessage( info.port );
     test_WsCall( info.port );
+    test_empty_response( info.port );
 
     test_WsSendMessage( info.port, &quit );
     WaitForSingleObject( thread, 3000 );
+    CloseHandle(thread);
 }

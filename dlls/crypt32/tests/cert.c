@@ -21,6 +21,8 @@
 #include <stdio.h>
 #include <stdarg.h>
 
+#include <ntstatus.h>
+#define WIN32_NO_STATUS
 #include <windef.h>
 #include <winbase.h>
 #include <winreg.h>
@@ -29,11 +31,11 @@
 
 #include "wine/test.h"
 
-static BOOL (WINAPI *pCertAddStoreToCollection)(HCERTSTORE,HCERTSTORE,DWORD,DWORD);
 static PCCERT_CONTEXT (WINAPI *pCertCreateSelfSignCertificate)(HCRYPTPROV_OR_NCRYPT_KEY_HANDLE,PCERT_NAME_BLOB,DWORD,PCRYPT_KEY_PROV_INFO,PCRYPT_ALGORITHM_IDENTIFIER,PSYSTEMTIME,PSYSTEMTIME,PCERT_EXTENSIONS);
 static BOOL (WINAPI *pCertGetValidUsages)(DWORD,PCCERT_CONTEXT*,int*,LPSTR*,DWORD*);
 static BOOL (WINAPI *pCryptAcquireCertificatePrivateKey)(PCCERT_CONTEXT,DWORD,void*,HCRYPTPROV_OR_NCRYPT_KEY_HANDLE*,DWORD*,BOOL*);
 static BOOL (WINAPI *pCryptEncodeObjectEx)(DWORD,LPCSTR,const void*,DWORD,PCRYPT_ENCODE_PARA,void*,DWORD*);
+static BOOL (WINAPI *pCryptHashCertificate2)(LPCWSTR, DWORD, void*, const BYTE*, DWORD, BYTE*, DWORD*);
 static BOOL (WINAPI * pCryptVerifyCertificateSignatureEx)
                         (HCRYPTPROV, DWORD, DWORD, void *, DWORD, void *, DWORD, void *);
 
@@ -50,11 +52,11 @@ static void init_function_pointers(void)
     if(!p ## func) \
       trace("GetProcAddress(%s) failed\n", #func);
 
-    GET_PROC(hCrypt32, CertAddStoreToCollection)
     GET_PROC(hCrypt32, CertCreateSelfSignCertificate)
     GET_PROC(hCrypt32, CertGetValidUsages)
     GET_PROC(hCrypt32, CryptAcquireCertificatePrivateKey)
     GET_PROC(hCrypt32, CryptEncodeObjectEx)
+    GET_PROC(hCrypt32, CryptHashCertificate2)
     GET_PROC(hCrypt32, CryptVerifyCertificateSignatureEx)
 
     GET_PROC(hAdvapi32, CryptAcquireContextA)
@@ -279,10 +281,10 @@ static void testAddCert(void)
     collection = CertOpenStore(CERT_STORE_PROV_COLLECTION, 0, 0,
      CERT_STORE_CREATE_NEW_FLAG, NULL);
     ok(collection != NULL, "CertOpenStore failed: %08x\n", GetLastError());
-    if (collection && pCertAddStoreToCollection)
+    if (collection)
     {
         /* Add store to the collection, but disable updates */
-        pCertAddStoreToCollection(collection, store, 0, 0);
+        CertAddStoreToCollection(collection, store, 0, 0);
 
         context = CertCreateCertificateContext(X509_ASN_ENCODING, bigCert2,
          sizeof(bigCert2));
@@ -1786,6 +1788,80 @@ static void testCryptHashCert(void)
     ok(!memcmp(hash, knownHash, sizeof(knownHash)), "Unexpected hash\n");
 }
 
+static void testCryptHashCert2(void)
+{
+    static const BYTE emptyHash[] = { 0xda, 0x39, 0xa3, 0xee, 0x5e, 0x6b, 0x4b,
+     0x0d, 0x32, 0x55, 0xbf, 0xef, 0x95, 0x60, 0x18, 0x90, 0xaf, 0xd8, 0x07,
+     0x09 };
+    static const BYTE knownHash[] = { 0xae, 0x9d, 0xbf, 0x6d, 0xf5, 0x46, 0xee,
+     0x8b, 0xc5, 0x7a, 0x13, 0xba, 0xc2, 0xb1, 0x04, 0xf2, 0xbf, 0x52, 0xa8,
+     0xa2 };
+    static const BYTE toHash[] = "abcdefghijklmnopqrstuvwxyz0123456789.,;!?:";
+    BOOL ret;
+    BYTE hash[20];
+    DWORD hashLen;
+    const WCHAR SHA1[] = { 'S', 'H', 'A', '1', '\0' };
+    const WCHAR invalidAlgorithm[] = { '_', 'S', 'H', 'O', 'U', 'L', 'D',
+                                       'N', 'O', 'T',
+                                       'E', 'X', 'I', 'S', 'T', '_', '\0' };
+
+    if (!pCryptHashCertificate2)
+    {
+        win_skip("CryptHashCertificate2() is not available\n");
+        return;
+    }
+
+    /* Test empty hash */
+    hashLen = sizeof(hash);
+    ret = pCryptHashCertificate2(SHA1, 0, NULL, NULL, 0, hash, &hashLen);
+    ok(ret, "CryptHashCertificate2 failed: %08x\n", GetLastError());
+    ok(hashLen == sizeof(hash), "Got unexpected size of hash %d\n", hashLen);
+    ok(!memcmp(hash, emptyHash, sizeof(emptyHash)), "Unexpected hash of nothing\n");
+
+    /* Test known hash */
+    hashLen = sizeof(hash);
+    ret = pCryptHashCertificate2(SHA1, 0, NULL, toHash, sizeof(toHash), hash, &hashLen);
+    ok(ret, "CryptHashCertificate2 failed: %08x\n", GetLastError());
+    ok(hashLen == sizeof(hash), "Got unexpected size of hash %d\n", hashLen);
+    ok(!memcmp(hash, knownHash, sizeof(knownHash)), "Unexpected hash\n");
+
+    /* Test null hash size pointer just sets hash size */
+    hashLen = 0;
+    ret = pCryptHashCertificate2(SHA1, 0, NULL, toHash, sizeof(toHash), NULL, &hashLen);
+    ok(ret, "CryptHashCertificate2 failed: %08x\n", GetLastError());
+    ok(hashLen == sizeof(hash), "Hash size not set correctly (%d)\n", hashLen);
+
+    /* Null algorithm ID crashes Windows implementations */
+    if (0) {
+        /* Test null algorithm ID */
+        hashLen = sizeof(hash);
+        ret = pCryptHashCertificate2(NULL, 0, NULL, toHash, sizeof(toHash), hash, &hashLen);
+    }
+
+    /* Test invalid algorithm */
+    hashLen = sizeof(hash);
+    SetLastError(0xdeadbeef);
+    ret = pCryptHashCertificate2(invalidAlgorithm, 0, NULL, toHash, sizeof(toHash), hash, &hashLen);
+    ok(!ret && GetLastError() == STATUS_NOT_FOUND,
+     "Expected STATUS_NOT_FOUND (0x%08x), got 0x%08x\n", STATUS_NOT_FOUND, GetLastError());
+
+    /* Test hash buffer too small */
+    hashLen = sizeof(hash) / 2;
+    SetLastError(0xdeadbeef);
+    ret = pCryptHashCertificate2(SHA1, 0, NULL, toHash, sizeof(toHash), hash, &hashLen);
+    ok(!ret && GetLastError() == ERROR_MORE_DATA,
+     "Expected ERROR_MORE_DATA (%d), got %d\n", ERROR_MORE_DATA, GetLastError());
+
+    /* Null hash length crashes Windows implementations */
+    if (0) {
+        /* Test hashLen null with hash */
+        ret = pCryptHashCertificate2(SHA1, 0, NULL, toHash, sizeof(toHash), hash, NULL);
+
+        /* Test hashLen null with no hash */
+        ret = pCryptHashCertificate2(SHA1, 0, NULL, toHash, sizeof(toHash), NULL, NULL);
+    }
+}
+
 static void verifySig(HCRYPTPROV csp, const BYTE *toSign, size_t toSignLen,
  const BYTE *sig, unsigned int sigLen)
 {
@@ -3179,7 +3255,7 @@ static void testCompareIntegerBlob(void)
     DWORD i;
     BOOL ret;
 
-    for (i = 0; i < sizeof(intBlobs) / sizeof(intBlobs[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(intBlobs); i++)
     {
         ret = CertCompareIntegerBlob(&intBlobs[i].blob1, &intBlobs[i].blob2);
         ok(ret == intBlobs[i].areEqual,
@@ -3198,9 +3274,12 @@ static void testComparePublicKeyInfo(void)
     static BYTE bits1[] = { 1, 0 };
     static BYTE bits2[] = { 0 };
     static BYTE bits3[] = { 1 };
-    static BYTE bits4[] = { 0x30,8, 2,1,0x81, 2,3,1,0,1 };
-    static BYTE bits5[] = { 0x30,9, 2,2,0,0x81, 2,3,1,0,1 };
-    static BYTE bits6[] = { 0x30,9, 2,2,0,0x82, 2,3,1,0,1 };
+    static BYTE bits4[] = { 0x30,8, 2,1,0x81, 2,3,1,0,1 }; /* ASN_SEQUENCE */
+    static BYTE bits5[] = { 0x30,9, 2,2,0,0x81, 2,3,1,0,1 }; /* ASN_SEQUENCE */
+    static BYTE bits6[] = { 0x30,9, 2,2,0,0x82, 2,3,1,0,1 }; /* ASN_SEQUENCE */
+    static BYTE bits7[] = { 0x04,8, 2,1,0x81, 2,3,1,0,1 }; /* ASN_OCTETSTRING */
+    static BYTE bits8[] = { 0x04,9, 2,2,0,0x81, 2,3,1,0,1 }; /* ASN_OCTETSTRING */
+    static BYTE bits9[] = { 0x04,9, 2,2,0,0x82, 2,3,1,0,1 }; /* ASN_OCTETSTRING */
 
     /* crashes
     ret = CertComparePublicKeyInfo(0, NULL, NULL);
@@ -3208,14 +3287,23 @@ static void testComparePublicKeyInfo(void)
     /* Empty public keys compare */
     ret = CertComparePublicKeyInfo(0, &info1, &info2);
     ok(ret, "CertComparePublicKeyInfo failed: %08x\n", GetLastError());
+    ret = CertComparePublicKeyInfo(X509_ASN_ENCODING, &info1, &info2);
+    ok(ret, "CertComparePublicKeyInfo failed: %08x\n", GetLastError());
+
     /* Different OIDs appear to compare */
     info1.Algorithm.pszObjId = oid_rsa_rsa;
     info2.Algorithm.pszObjId = oid_rsa_sha1rsa;
     ret = CertComparePublicKeyInfo(0, &info1, &info2);
     ok(ret, "CertComparePublicKeyInfo failed: %08x\n", GetLastError());
+    ret = CertComparePublicKeyInfo(X509_ASN_ENCODING, &info1, &info2);
+    ok(ret, "CertComparePublicKeyInfo failed: %08x\n", GetLastError());
+
     info2.Algorithm.pszObjId = oid_x957_dsa;
     ret = CertComparePublicKeyInfo(0, &info1, &info2);
     ok(ret, "CertComparePublicKeyInfo failed: %08x\n", GetLastError());
+    ret = CertComparePublicKeyInfo(X509_ASN_ENCODING, &info1, &info2);
+    ok(ret, "CertComparePublicKeyInfo failed: %08x\n", GetLastError());
+
     info1.PublicKey.cbData = sizeof(bits1);
     info1.PublicKey.pbData = bits1;
     info1.PublicKey.cUnusedBits = 0;
@@ -3224,6 +3312,9 @@ static void testComparePublicKeyInfo(void)
     info2.PublicKey.cUnusedBits = 0;
     ret = CertComparePublicKeyInfo(0, &info1, &info2);
     ok(ret, "CertComparePublicKeyInfo failed: %08x\n", GetLastError());
+    ret = CertComparePublicKeyInfo(X509_ASN_ENCODING, &info1, &info2);
+    ok(ret, "CertComparePublicKeyInfo failed: %08x\n", GetLastError());
+
     info2.Algorithm.pszObjId = oid_rsa_rsa;
     info1.PublicKey.cbData = sizeof(bits4);
     info1.PublicKey.pbData = bits4;
@@ -3234,15 +3325,12 @@ static void testComparePublicKeyInfo(void)
     ret = CertComparePublicKeyInfo(0, &info1, &info2);
     ok(!ret, "CertComparePublicKeyInfo: as raw binary: keys should be unequal\n");
     ret = CertComparePublicKeyInfo(X509_ASN_ENCODING, &info1, &info2);
-    ok(ret ||
-     broken(!ret), /* win9x */
-     "CertComparePublicKeyInfo: as ASN.1 encoded: keys should be equal\n");
+    ok(ret, "CertComparePublicKeyInfo: as ASN.1 encoded: keys should be equal\n");
+
     info1.PublicKey.cUnusedBits = 1;
     info2.PublicKey.cUnusedBits = 5;
     ret = CertComparePublicKeyInfo(X509_ASN_ENCODING, &info1, &info2);
-    ok(ret ||
-     broken(!ret), /* win9x */
-     "CertComparePublicKeyInfo: ASN.1 encoding should ignore cUnusedBits\n");
+    ok(ret, "CertComparePublicKeyInfo: ASN.1 encoding should ignore cUnusedBits\n");
     info1.PublicKey.cUnusedBits = 0;
     info2.PublicKey.cUnusedBits = 0;
     info1.PublicKey.cbData--; /* kill one byte, make ASN.1 encoded data invalid */
@@ -3258,17 +3346,52 @@ static void testComparePublicKeyInfo(void)
     ret = CertComparePublicKeyInfo(0, &info1, &info2);
     /* Simple (non-comparing) case */
     ok(!ret, "Expected keys not to compare\n");
+    ret = CertComparePublicKeyInfo(X509_ASN_ENCODING, &info1, &info2);
+    ok(!ret, "Expected keys not to compare\n");
+
     info2.PublicKey.cbData = sizeof(bits1);
     info2.PublicKey.pbData = bits1;
     info2.PublicKey.cUnusedBits = 0;
     ret = CertComparePublicKeyInfo(0, &info1, &info2);
     ok(!ret, "Expected keys not to compare\n");
+    ret = CertComparePublicKeyInfo(X509_ASN_ENCODING, &info1, &info2);
+    ok(!ret, "Expected keys not to compare\n");
+
+    info1.PublicKey.cbData = sizeof(bits7);
+    info1.PublicKey.pbData = bits7;
+    info1.PublicKey.cUnusedBits = 0;
+    info2.PublicKey.cbData = sizeof(bits8);
+    info2.PublicKey.pbData = bits8;
+    info2.PublicKey.cUnusedBits = 0;
+    ret = CertComparePublicKeyInfo(0, &info1, &info2);
+    ok(!ret, "CertComparePublicKeyInfo: as raw binary: keys should be unequal\n");
+    ret = CertComparePublicKeyInfo(X509_ASN_ENCODING, &info1, &info2);
+    ok(!ret, "CertComparePublicKeyInfo: as ASN.1 encoded: keys should be unequal\n");
+
+    ret = CertComparePublicKeyInfo(0, &info1, &info1);
+    ok(ret, "CertComparePublicKeyInfo: as raw binary: keys should be equal\n");
+    ret = CertComparePublicKeyInfo(X509_ASN_ENCODING, &info1, &info1);
+    ok(ret, "CertComparePublicKeyInfo: as ASN.1 encoded: keys should be equal\n");
+    info1.PublicKey.cbData--; /* kill one byte, make ASN.1 encoded data invalid */
+    ret = CertComparePublicKeyInfo(X509_ASN_ENCODING, &info1, &info1);
+    ok(ret, "CertComparePublicKeyInfo: as ASN.1 encoded: keys should be equal\n");
+
     /* ASN.1 encoded non-comparing case */
     info1.PublicKey.cbData = sizeof(bits5);
     info1.PublicKey.pbData = bits5;
     info1.PublicKey.cUnusedBits = 0;
     info2.PublicKey.cbData = sizeof(bits6);
     info2.PublicKey.pbData = bits6;
+    info2.PublicKey.cUnusedBits = 0;
+    ret = CertComparePublicKeyInfo(X509_ASN_ENCODING, &info1, &info2);
+    ok(!ret, "CertComparePublicKeyInfo: different keys should be unequal\n");
+
+    /* ASN.1 encoded non-comparing case */
+    info1.PublicKey.cbData = sizeof(bits8);
+    info1.PublicKey.pbData = bits8;
+    info1.PublicKey.cUnusedBits = 0;
+    info2.PublicKey.cbData = sizeof(bits9);
+    info2.PublicKey.pbData = bits9;
     info2.PublicKey.cUnusedBits = 0;
     ret = CertComparePublicKeyInfo(X509_ASN_ENCODING, &info1, &info2);
     ok(!ret, "CertComparePublicKeyInfo: different keys should be unequal\n");
@@ -4029,6 +4152,7 @@ START_TEST(cert)
     testLinkCert();
 
     testCryptHashCert();
+    testCryptHashCert2();
     testCertSigs();
     testSignAndEncodeCert();
     testCreateSelfSignCert();

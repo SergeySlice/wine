@@ -41,6 +41,8 @@ typedef const char *exception_name;
 #define EXCEPTION_NAME(str) (str)
 #endif
 
+void (CDECL *_Raise_handler)(const exception*) = NULL;
+
 /* vtables */
 extern const vtable_ptr MSVCP_exception_vtable;
 /* ??_7bad_alloc@std@@6B@ */
@@ -54,9 +56,13 @@ extern const vtable_ptr MSVCP_out_of_range_vtable;
 extern const vtable_ptr MSVCP_invalid_argument_vtable;
 /* ??_7runtime_error@std@@6B@ */
 extern const vtable_ptr MSVCP_runtime_error_vtable;
+extern const vtable_ptr MSVCP__System_error_vtable;
+extern const vtable_ptr MSVCP_system_error_vtable;
 extern const vtable_ptr MSVCP_failure_vtable;
 /* ??_7bad_cast@std@@6B@ */
 extern const vtable_ptr MSVCP_bad_cast_vtable;
+/* ??_7range_error@std@@6B@ */
+extern const vtable_ptr MSVCP_range_error_vtable;
 
 static void MSVCP_type_info_dtor(type_info * _this)
 {
@@ -193,6 +199,8 @@ exception* __thiscall MSVCP_exception_assign(exception *this, const exception *a
 /* ?_Doraise@runtime_error@std@@MEBAXXZ */
 /* ?_Doraise@bad_cast@std@@MBEXXZ */
 /* ?_Doraise@bad_cast@std@@MEBAXXZ */
+/* ?_Doraise@range_error@std@@MBEXXZ */
+/* ?_Doraise@range_error@std@@MEBAXXZ */
 DEFINE_THISCALL_WRAPPER(MSVCP_exception__Doraise, 4)
 void __thiscall MSVCP_exception__Doraise(exception *this)
 {
@@ -206,7 +214,7 @@ const char* __thiscall MSVCP_exception_what(exception * this)
     return this->name ? this->name : "Unknown exception";
 }
 
-#ifdef _MSVCIRT
+#if _MSVCP_VER >= 80
 DEFINE_RTTI_DATA0(exception, 0, ".?AVexception@std@@")
 #else
 DEFINE_RTTI_DATA0(exception, 0, ".?AVexception@@")
@@ -291,7 +299,7 @@ DEFINE_CXX_DATA1(bad_alloc, &exception_cxx_type_info, MSVCP_bad_alloc_dtor)
 /* logic_error class data */
 typedef struct {
     exception e;
-#ifndef _MSVCIRT
+#if _MSVCP_VER <= 90 && !defined _MSVCIRT
     basic_string_char str;
 #endif
 } logic_error;
@@ -302,12 +310,15 @@ DEFINE_THISCALL_WRAPPER(MSVCP_logic_error_ctor, 8)
 logic_error* __thiscall MSVCP_logic_error_ctor( logic_error *this, exception_name name )
 {
     TRACE("%p %s\n", this, EXCEPTION_STR(name));
-#ifdef _MSVCIRT
-    MSVCP_exception_ctor(&this->e, name);
+#if _MSVCP_VER <= 90 && !defined _MSVCIRT
+#if _MSVCP_VER == 60
+    MSVCP_exception_ctor(&this->e, "");
 #else
-    this->e.name = NULL;
-    this->e.do_free = FALSE;
+    MSVCP_exception_ctor(&this->e, NULL);
+#endif
     MSVCP_basic_string_char_ctor_cstr(&this->str, EXCEPTION_STR(name));
+#else
+    MSVCP_exception_ctor(&this->e, name);
 #endif
     this->e.vtable = &MSVCP_logic_error_vtable;
     return this;
@@ -321,7 +332,7 @@ logic_error* __thiscall MSVCP_logic_error_copy_ctor(
 {
     TRACE("%p %p\n", this, rhs);
     MSVCP_exception_copy_ctor(&this->e, &rhs->e);
-#ifndef _MSVCIRT
+#if _MSVCP_VER <= 90 && !defined _MSVCIRT
     MSVCP_basic_string_char_copy_ctor(&this->str, &rhs->str);
 #endif
     this->e.vtable = &MSVCP_logic_error_vtable;
@@ -351,7 +362,7 @@ void __thiscall MSVCP_logic_error_dtor(logic_error *this)
 {
     TRACE("%p\n", this);
     MSVCP_exception_dtor(&this->e);
-#ifndef _MSVCIRT
+#if _MSVCP_VER <= 90 && !defined _MSVCIRT
     MSVCP_basic_string_char_dtor(&this->str);
 #endif
 }
@@ -402,14 +413,14 @@ DEFINE_THISCALL_WRAPPER(MSVCP_logic_error_what, 4)
 const char* __thiscall MSVCP_logic_error_what(logic_error *this)
 {
     TRACE("%p\n", this);
-#ifdef _MSVCIRT
+#if _MSVCP_VER > 90 || defined _MSVCIRT
     return MSVCP_exception_what( &this->e );
 #else
     return MSVCP_basic_string_char_c_str(&this->str);
 #endif
 }
 
-#ifdef _MSVCIRT
+#if _MSVCP_VER >= 80
 DEFINE_RTTI_DATA1(logic_error, 0, &exception_rtti_base_descriptor, ".?AVlogic_error@std@@")
 #else
 DEFINE_RTTI_DATA1(logic_error, 0, &exception_rtti_base_descriptor, ".?AVlogic_error@@")
@@ -537,18 +548,23 @@ DEFINE_CXX_DATA2(invalid_argument, &logic_error_cxx_type_info,  &exception_cxx_t
 /* runtime_error class data */
 typedef struct {
     exception e;
+#if _MSVCP_VER <= 90 && !defined _MSVCIRT
     basic_string_char str;
+#endif
 } runtime_error;
 
 static runtime_error* MSVCP_runtime_error_ctor( runtime_error *this, exception_name name )
 {
     TRACE("%p %s\n", this, EXCEPTION_STR(name));
-#ifdef _MSVCIRT
-    MSVCP_exception_ctor(&this->e, name);
+#if _MSVCP_VER <= 90 && !defined _MSVCIRT
+#if _MSVCP_VER == 60
+    MSVCP_exception_ctor(&this->e, "");
 #else
-    this->e.name = NULL;
-    this->e.do_free = FALSE;
+    MSVCP_exception_ctor(&this->e, NULL);
+#endif
     MSVCP_basic_string_char_ctor_cstr(&this->str, EXCEPTION_STR(name));
+#else
+    MSVCP_exception_ctor(&this->e, name);
 #endif
     this->e.vtable = &MSVCP_runtime_error_vtable;
     return this;
@@ -562,7 +578,7 @@ runtime_error* __thiscall MSVCP_runtime_error_copy_ctor(
 {
     TRACE("%p %p\n", this, rhs);
     MSVCP_exception_copy_ctor(&this->e, &rhs->e);
-#ifndef _MSVCIRT
+#if _MSVCP_VER <= 90 && !defined _MSVCIRT
     MSVCP_basic_string_char_copy_ctor(&this->str, &rhs->str);
 #endif
     this->e.vtable = &MSVCP_runtime_error_vtable;
@@ -583,12 +599,14 @@ runtime_error* __thiscall MSVCP_runtime_error_ctor_bstr(runtime_error *this, con
 
 /* ??1runtime_error@std@@UAE@XZ */
 /* ??1runtime_error@std@@UEAA@XZ */
+/* ??1range_error@std@@UAE@XZ */
+/* ??1range_error@std@@UEAA@XZ */
 DEFINE_THISCALL_WRAPPER(MSVCP_runtime_error_dtor, 4)
 void __thiscall MSVCP_runtime_error_dtor(runtime_error *this)
 {
     TRACE("%p\n", this);
     MSVCP_exception_dtor(&this->e);
-#ifndef _MSVCIRT
+#if _MSVCP_VER <= 90 && !defined _MSVCIRT
     MSVCP_basic_string_char_dtor(&this->str);
 #endif
 }
@@ -629,7 +647,7 @@ DEFINE_THISCALL_WRAPPER(MSVCP_runtime_error_what, 4)
 const char* __thiscall MSVCP_runtime_error_what(runtime_error *this)
 {
     TRACE("%p\n", this);
-#ifdef _MSVCIRT
+#if _MSVCP_VER > 90 || defined _MSVCIRT
     return MSVCP_exception_what( &this->e );
 #else
     return MSVCP_basic_string_char_c_str(&this->str);
@@ -640,13 +658,24 @@ DEFINE_RTTI_DATA1(runtime_error, 0, &exception_rtti_base_descriptor, ".?AVruntim
 DEFINE_CXX_DATA1(runtime_error, &exception_cxx_type_info, MSVCP_runtime_error_dtor)
 
 /* failure class data */
-typedef runtime_error failure;
+typedef struct {
+    runtime_error base;
+#if _MSVCP_VER > 90
+    int err;
+#endif
+} system_error;
+typedef system_error _System_error;
+typedef system_error failure;
 
 static failure* MSVCP_failure_ctor( failure *this, exception_name name )
 {
     TRACE("%p %s\n", this, EXCEPTION_STR(name));
-    MSVCP_runtime_error_ctor(this, name);
-    this->e.vtable = &MSVCP_failure_vtable;
+    MSVCP_runtime_error_ctor(&this->base, name);
+#if _MSVCP_VER > 90
+    /* FIXME: set err correctly */
+    this->err = 0;
+#endif
+    this->base.e.vtable = &MSVCP_failure_vtable;
     return this;
 }
 
@@ -655,8 +684,11 @@ failure* __thiscall MSVCP_failure_copy_ctor(
         failure *this, failure *rhs)
 {
     TRACE("%p %p\n", this, rhs);
-    MSVCP_runtime_error_copy_ctor(this, rhs);
-    this->e.vtable = &MSVCP_failure_vtable;
+    MSVCP_runtime_error_copy_ctor(&this->base, &rhs->base);
+#if _MSVCP_VER > 90
+    this->err = rhs->err;
+#endif
+    this->base.e.vtable = &MSVCP_failure_vtable;
     return this;
 }
 
@@ -664,7 +696,7 @@ DEFINE_THISCALL_WRAPPER(MSVCP_failure_dtor, 4)
 void __thiscall MSVCP_failure_dtor(failure *this)
 {
     TRACE("%p\n", this);
-    MSVCP_runtime_error_dtor(this);
+    MSVCP_runtime_error_dtor(&this->base);
 }
 
 DEFINE_THISCALL_WRAPPER(MSVCP_failure_vector_dtor, 8)
@@ -672,18 +704,67 @@ void* __thiscall MSVCP_failure_vector_dtor(
         failure *this, unsigned int flags)
 {
     TRACE("%p %x\n", this, flags);
-    return MSVCP_runtime_error_vector_dtor(this, flags);
+    return MSVCP_runtime_error_vector_dtor(&this->base, flags);
 }
 
 DEFINE_THISCALL_WRAPPER(MSVCP_failure_what, 4)
 const char* __thiscall MSVCP_failure_what(failure *this)
 {
     TRACE("%p\n", this);
-    return MSVCP_runtime_error_what(this);
+    return MSVCP_runtime_error_what(&this->base);
 }
 
-DEFINE_RTTI_DATA2(failure, 0, &runtime_error_rtti_base_descriptor, &exception_rtti_base_descriptor, ".?AVfailure@std@@")
-DEFINE_CXX_DATA2(failure, &runtime_error_cxx_type_info, &exception_cxx_type_info, MSVCP_runtime_error_dtor)
+#if _MSVCP_VER > 90
+DEFINE_THISCALL_WRAPPER(MSVCP_system_error_copy_ctor, 8)
+system_error* __thiscall MSVCP_system_error_copy_ctor(
+        system_error *this, system_error *rhs)
+{
+    MSVCP_failure_copy_ctor(this, rhs);
+    this->base.e.vtable = &MSVCP_system_error_vtable;
+    return this;
+}
+#endif
+
+#if _MSVCP_VER > 110
+DEFINE_THISCALL_WRAPPER(MSVCP__System_error_copy_ctor, 8)
+_System_error* __thiscall MSVCP__System_error_copy_ctor(
+        _System_error *this, _System_error *rhs)
+{
+    MSVCP_failure_copy_ctor(this, rhs);
+    this->base.e.vtable = &MSVCP__System_error_vtable;
+    return this;
+}
+#endif
+
+#if _MSVCP_VER > 110
+DEFINE_RTTI_DATA2(_System_error, 0, &runtime_error_rtti_base_descriptor,
+        &exception_rtti_base_descriptor, ".?AV_System_error@std@@")
+DEFINE_RTTI_DATA3(system_error, 0, &_System_error_rtti_base_descriptor,
+        &runtime_error_rtti_base_descriptor, &exception_rtti_base_descriptor,
+        ".?AVsystem_error@std@@")
+DEFINE_RTTI_DATA4(failure, 0, &system_error_rtti_base_descriptor,
+        &_System_error_rtti_base_descriptor, &runtime_error_rtti_base_descriptor,
+        &exception_rtti_base_descriptor, ".?AVfailure@ios_base@std@@")
+DEFINE_CXX_TYPE_INFO(_System_error)
+DEFINE_CXX_TYPE_INFO(system_error);
+DEFINE_CXX_DATA4(failure, &system_error_cxx_type_info,
+        &_System_error_cxx_type_info, &runtime_error_cxx_type_info,
+        &exception_cxx_type_info, MSVCP_runtime_error_dtor)
+#elif _MSVCP_VER > 90
+DEFINE_RTTI_DATA2(system_error, 0, &runtime_error_rtti_base_descriptor,
+        &exception_rtti_base_descriptor, ".?AVsystem_error@std@@")
+DEFINE_RTTI_DATA3(failure, 0, &system_error_rtti_base_descriptor,
+        &runtime_error_rtti_base_descriptor, &exception_rtti_base_descriptor,
+        ".?AVfailure@ios_base@std@@")
+DEFINE_CXX_TYPE_INFO(system_error);
+DEFINE_CXX_DATA3(failure, &system_error_cxx_type_info, &runtime_error_cxx_type_info,
+        &exception_cxx_type_info, MSVCP_runtime_error_dtor)
+#else
+DEFINE_RTTI_DATA2(failure, 0, &runtime_error_rtti_base_descriptor,
+        &exception_rtti_base_descriptor, ".?AVfailure@ios_base@std@@")
+DEFINE_CXX_DATA2(failure, &runtime_error_cxx_type_info,
+        &exception_cxx_type_info, MSVCP_runtime_error_dtor)
+#endif
 
 /* bad_cast class data */
 typedef exception bad_cast;
@@ -764,6 +845,53 @@ bad_cast* __thiscall MSVCP_bad_cast_opequals(bad_cast *this, const bad_cast *rhs
 DEFINE_RTTI_DATA1(bad_cast, 0, &exception_rtti_base_descriptor, ".?AVbad_cast@std@@")
 DEFINE_CXX_DATA1(bad_cast, &exception_cxx_type_info, MSVCP_bad_cast_dtor)
 
+/* range_error class data */
+typedef runtime_error range_error;
+
+static range_error* MSVCP_range_error_ctor( range_error *this, exception_name name )
+{
+    TRACE("%p %s\n", this, EXCEPTION_STR(name));
+    MSVCP_runtime_error_ctor(this, name);
+    this->e.vtable = &MSVCP_range_error_vtable;
+    return this;
+}
+
+/* ??0range_error@std@@QAE@ABV01@@Z */
+/* ??0range_error@std@@QEAA@AEBV01@@Z */
+DEFINE_THISCALL_WRAPPER(MSVCP_range_error_copy_ctor, 8)
+range_error* __thiscall MSVCP_range_error_copy_ctor(
+        range_error *this, const range_error *rhs)
+{
+    TRACE("%p %p\n", this, rhs);
+    MSVCP_runtime_error_copy_ctor(this, rhs);
+    this->e.vtable = &MSVCP_range_error_vtable;
+    return this;
+}
+
+/* ??0range_error@std@@QAE@ABV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@1@@Z */
+/* ??0range_error@std@@QEAA@AEBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@1@@Z */
+#ifndef _MSVCIRT
+DEFINE_THISCALL_WRAPPER(MSVCP_range_error_ctor_bstr, 8)
+range_error* __thiscall MSVCP_range_error_ctor_bstr(range_error *this, const basic_string_char *str)
+{
+    const char *name = MSVCP_basic_string_char_c_str(str);
+    TRACE("(%p %p %s)\n", this, str, name);
+    return MSVCP_range_error_ctor(this, EXCEPTION_NAME(name));
+}
+#endif
+
+/* ??4range_error@std@@QAEAAV01@ABV01@@Z */
+/* ??4range_error@std@@QEAAAEAV01@AEBV01@@Z */
+DEFINE_THISCALL_WRAPPER(MSVCP_range_error_assign, 8)
+range_error* __thiscall MSVCP_range_error_assign(range_error *this, const range_error *assign)
+{
+    MSVCP_runtime_error_dtor(this);
+    return MSVCP_range_error_copy_ctor(this, assign);
+}
+
+DEFINE_RTTI_DATA2(range_error, 0, &runtime_error_rtti_base_descriptor, &exception_rtti_base_descriptor, ".?AVrange_error@std@@")
+DEFINE_CXX_DATA2(range_error, &runtime_error_cxx_type_info, &exception_cxx_type_info, MSVCP_runtime_error_dtor)
+
 /* ?_Nomemory@std@@YAXXZ */
 void __cdecl _Nomemory(void)
 {
@@ -816,6 +944,13 @@ MSVCP_bool __cdecl MSVCP__uncaught_exception(void)
     return __uncaught_exception();
 }
 
+#if _MSVCP_VER >= 140
+int __cdecl __uncaught_exceptions(void)
+{
+    return *UCRTBASE___processing_throw();
+}
+#endif
+
 #if _MSVCP_VER >= 70 || defined(_MSVCIRT)
 #define EXCEPTION_VTABLE(name,funcs) __ASM_VTABLE(name,funcs)
 #else
@@ -848,12 +983,25 @@ void __asm_dummy_vtables(void) {
     EXCEPTION_VTABLE(runtime_error,
             VTABLE_ADD_FUNC(MSVCP_runtime_error_vector_dtor)
             VTABLE_ADD_FUNC(MSVCP_runtime_error_what));
+#if _MSVCP_VER > 110
+    EXCEPTION_VTABLE(_System_error,
+            VTABLE_ADD_FUNC(MSVCP_failure_vector_dtor)
+            VTABLE_ADD_FUNC(MSVCP_failure_what));
+#endif
+#if _MSVCP_VER > 90
+    EXCEPTION_VTABLE(system_error,
+            VTABLE_ADD_FUNC(MSVCP_failure_vector_dtor)
+            VTABLE_ADD_FUNC(MSVCP_failure_what));
+#endif
     EXCEPTION_VTABLE(failure,
             VTABLE_ADD_FUNC(MSVCP_failure_vector_dtor)
             VTABLE_ADD_FUNC(MSVCP_failure_what));
     EXCEPTION_VTABLE(bad_cast,
             VTABLE_ADD_FUNC(MSVCP_bad_cast_vector_dtor)
             VTABLE_ADD_FUNC(MSVCP_exception_what));
+    EXCEPTION_VTABLE(range_error,
+            VTABLE_ADD_FUNC(MSVCP_runtime_error_vector_dtor)
+            VTABLE_ADD_FUNC(MSVCP_runtime_error_what));
 #ifndef __GNUC__
 }
 #endif
@@ -911,6 +1059,11 @@ void throw_exception(exception_type et, const char *str)
         MSVCP_failure_ctor(&e, name);
         _CxxThrowException((exception*)&e, &failure_cxx_type);
     }
+    case EXCEPTION_RANGE_ERROR: {
+        range_error e;
+        MSVCP_range_error_ctor(&e, name);
+        _CxxThrowException((exception*)&e, &range_error_cxx_type);
+    }
     }
 }
 
@@ -925,8 +1078,15 @@ void init_exception(void *base)
     init_out_of_range_rtti(base);
     init_invalid_argument_rtti(base);
     init_runtime_error_rtti(base);
+#if _MSVCP_VER > 110
+    init__System_error_rtti(base);
+#endif
+#if _MSVCP_VER > 90
+    init_system_error_rtti(base);
+#endif
     init_failure_rtti(base);
     init_bad_cast_rtti(base);
+    init_range_error_rtti(base);
 
     init_exception_cxx(base);
     init_bad_alloc_cxx(base);
@@ -935,7 +1095,14 @@ void init_exception(void *base)
     init_out_of_range_cxx(base);
     init_invalid_argument_cxx(base);
     init_runtime_error_cxx(base);
+#if _MSVCP_VER > 110
+    init__System_error_cxx_type_info(base);
+#endif
+#if _MSVCP_VER > 90
+    init_system_error_cxx_type_info(base);
+#endif
     init_failure_cxx(base);
     init_bad_cast_cxx(base);
+    init_range_error_cxx(base);
 #endif
 }

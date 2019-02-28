@@ -314,7 +314,7 @@ static HRESULT WINAPI IAVIFile_fnCreateStream(IAVIFile *iface, IAVIStream **avis
   This->sInfo.dwStart             = 0;
   This->sInfo.dwInitialFrames     = 0;
   This->sInfo.dwFormatChangeCount = 0;
-  memset(&This->sInfo.rcFrame, 0, sizeof(This->sInfo.rcFrame));
+  SetRectEmpty(&This->sInfo.rcFrame);
 
   This->fInfo.dwStreams = 1;
   This->fInfo.dwScale   = This->sInfo.dwScale;
@@ -522,9 +522,9 @@ static HRESULT WINAPI IPersistFile_fnLoad(IPersistFile *iface, LPCOLESTR pszFile
   memset(& This->sInfo, 0, sizeof(This->sInfo));
 
   LoadStringW(AVIFILE_hModule, IDS_WAVEFILETYPE, This->fInfo.szFileType,
-	      sizeof(This->fInfo.szFileType)/sizeof(This->fInfo.szFileType[0]));
+	      ARRAY_SIZE(This->fInfo.szFileType));
   if (LoadStringW(AVIFILE_hModule, IDS_WAVESTREAMFORMAT,
-		  wszStreamFmt, sizeof(wszStreamFmt)/sizeof(wszStreamFmt[0])) > 0) {
+		  wszStreamFmt, ARRAY_SIZE(wszStreamFmt)) > 0) {
     wsprintfW(This->sInfo.szName, wszStreamFmt,
 	      AVIFILE_BasenameW(This->szFileName));
   }

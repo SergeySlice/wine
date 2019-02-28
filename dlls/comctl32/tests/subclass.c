@@ -28,6 +28,7 @@
 #include "winuser.h"
 #include "commctrl.h"
 
+#include "wine/heap.h"
 #include "wine/test.h"
 
 static BOOL (WINAPI *pSetWindowSubclass)(HWND, SUBCLASSPROC, UINT_PTR, DWORD_PTR);
@@ -119,12 +120,12 @@ static void add_message(const struct message *msg)
     if (!sequence)
     {
         sequence_size = 10;
-        sequence = HeapAlloc( GetProcessHeap(), 0, sequence_size * sizeof (struct message) );
+        sequence = heap_alloc( sequence_size * sizeof (struct message) );
     }
     if (sequence_cnt == sequence_size)
     {
         sequence_size *= 2;
-        sequence = HeapReAlloc( GetProcessHeap(), 0, sequence, sequence_size * sizeof (struct message) );
+        sequence = heap_realloc( sequence, sequence_size * sizeof (struct message) );
     }
     assert(sequence);
 
@@ -136,8 +137,8 @@ static void add_message(const struct message *msg)
 
 static void flush_sequence(void)
 {
-    HeapFree(GetProcessHeap(), 0, sequence);
-    sequence = 0;
+    heap_free(sequence);
+    sequence = NULL;
     sequence_cnt = sequence_size = 0;
 }
 
@@ -217,45 +218,60 @@ static LRESULT WINAPI wnd_proc_sub(HWND hwnd, UINT message, WPARAM wParam, LPARA
 
 static void test_subclass(void)
 {
+    BOOL ret;
     HWND hwnd = CreateWindowExA(0, "TestSubclass", "Test subclass", WS_OVERLAPPEDWINDOW,
                            100, 100, 200, 200, 0, 0, 0, NULL);
     ok(hwnd != NULL, "failed to create test subclass wnd\n");
 
-    pSetWindowSubclass(hwnd, wnd_proc_sub, 2, 0);
+    ret = pSetWindowSubclass(hwnd, wnd_proc_sub, 2, 0);
+    ok(ret == TRUE, "Expected TRUE\n");
     SendMessageA(hwnd, WM_USER, 1, 0);
     SendMessageA(hwnd, WM_USER, 2, 0);
     ok_sequence(Sub_BasicTest, "Basic");
 
-    pSetWindowSubclass(hwnd, wnd_proc_sub, 2, DELETE_SELF);
+    ret = pSetWindowSubclass(hwnd, wnd_proc_sub, 2, DELETE_SELF);
+    ok(ret == TRUE, "Expected TRUE\n");
     SendMessageA(hwnd, WM_USER, 1, 1);
     ok_sequence(Sub_DeletedTest, "Deleted");
 
     SendMessageA(hwnd, WM_USER, 1, 0);
     ok_sequence(Sub_AfterDeletedTest, "After Deleted");
 
-    pSetWindowSubclass(hwnd, wnd_proc_sub, 2, 0);
+    ret = pSetWindowSubclass(hwnd, wnd_proc_sub, 2, 0);
+    ok(ret == TRUE, "Expected TRUE\n");
     orig_proc_3 = (WNDPROC)SetWindowLongPtrA(hwnd, GWLP_WNDPROC, (LONG_PTR)wnd_proc_3);
     SendMessageA(hwnd, WM_USER, 1, 0);
     SendMessageA(hwnd, WM_USER, 2, 0);
     ok_sequence(Sub_OldAfterNewTest, "Old after New");
 
-    pSetWindowSubclass(hwnd, wnd_proc_sub, 4, 0);
+    ret = pSetWindowSubclass(hwnd, wnd_proc_sub, 4, 0);
+    ok(ret == TRUE, "Expected TRUE\n");
     SendMessageA(hwnd, WM_USER, 1, 0);
     ok_sequence(Sub_MixTest, "Mix");
 
     /* Now the fun starts */
-    pSetWindowSubclass(hwnd, wnd_proc_sub, 4, SEND_NEST);
+    ret = pSetWindowSubclass(hwnd, wnd_proc_sub, 4, SEND_NEST);
+    ok(ret == TRUE, "Expected TRUE\n");
     SendMessageA(hwnd, WM_USER, 1, 1);
     ok_sequence(Sub_MixAndNestTest, "Mix and nest");
 
-    pSetWindowSubclass(hwnd, wnd_proc_sub, 4, SEND_NEST | DELETE_SELF);
+    ret = pSetWindowSubclass(hwnd, wnd_proc_sub, 4, SEND_NEST | DELETE_SELF);
+    ok(ret == TRUE, "Expected TRUE\n");
     SendMessageA(hwnd, WM_USER, 1, 1);
     ok_sequence(Sub_MixNestDelTest, "Mix, nest, del");
 
-    pSetWindowSubclass(hwnd, wnd_proc_sub, 4, 0);
-    pSetWindowSubclass(hwnd, wnd_proc_sub, 5, DELETE_PREV);
+    ret = pSetWindowSubclass(hwnd, wnd_proc_sub, 4, 0);
+    ok(ret == TRUE, "Expected TRUE\n");
+    ret = pSetWindowSubclass(hwnd, wnd_proc_sub, 5, DELETE_PREV);
+    ok(ret == TRUE, "Expected TRUE\n");
     SendMessageA(hwnd, WM_USER, 1, 1);
     ok_sequence(Sub_MixDelPrevTest, "Mix and del prev");
+
+    ret = pSetWindowSubclass(NULL, wnd_proc_sub, 1, 0);
+    ok(ret == FALSE, "Expected FALSE\n");
+
+    ret = pSetWindowSubclass(hwnd, NULL, 1, 0);
+    ok(ret == FALSE, "Expected FALSE\n");
 
     DestroyWindow(hwnd);
 }
@@ -286,7 +302,7 @@ static BOOL init_function_pointers(void)
     HMODULE hmod;
     void *ptr;
 
-    hmod = GetModuleHandleA("comctl32.dll");
+    hmod = LoadLibraryA("comctl32.dll");
     ok(hmod != NULL, "got %p\n", hmod);
 
     /* Functions have to be loaded by ordinal. Only XP and W2K3 export

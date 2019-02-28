@@ -33,6 +33,7 @@
 
 #include "wine/debug.h"
 #include "wine/unicode.h"
+#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(scrrun);
 
@@ -1000,7 +1001,7 @@ static HRESULT WINAPI drive_get_VolumeName(IDrive *iface, BSTR *name)
         return E_POINTER;
 
     *name = NULL;
-    ret = GetVolumeInformationW(This->root, nameW, sizeof(nameW)/sizeof(WCHAR), NULL, NULL, NULL, NULL, 0);
+    ret = GetVolumeInformationW(This->root, nameW, ARRAY_SIZE(nameW), NULL, NULL, NULL, NULL, 0);
     if (ret)
         *name = SysAllocString(nameW);
     return ret ? S_OK : E_FAIL;
@@ -1025,7 +1026,7 @@ static HRESULT WINAPI drive_get_FileSystem(IDrive *iface, BSTR *fs)
         return E_POINTER;
 
     *fs = NULL;
-    ret = GetVolumeInformationW(This->root, NULL, 0, NULL, NULL, NULL, nameW, sizeof(nameW)/sizeof(WCHAR));
+    ret = GetVolumeInformationW(This->root, NULL, 0, NULL, NULL, NULL, nameW, ARRAY_SIZE(nameW));
     if (ret)
         *fs = SysAllocString(nameW);
     return ret ? S_OK : E_FAIL;
@@ -2712,6 +2713,21 @@ static HRESULT WINAPI file_put_Attributes(IFile *iface, FileAttribute pfa)
     return SetFileAttributesW(This->path, pfa) ? S_OK : create_error(GetLastError());
 }
 
+static HRESULT get_date_from_filetime(const FILETIME *ft, DATE *date)
+{
+    FILETIME ftlocal;
+    SYSTEMTIME st;
+
+    if (!date)
+        return E_POINTER;
+
+    FileTimeToLocalFileTime(ft, &ftlocal);
+    FileTimeToSystemTime(&ftlocal, &st);
+    SystemTimeToVariantTime(&st, date);
+
+    return S_OK;
+}
+
 static HRESULT WINAPI file_get_DateCreated(IFile *iface, DATE *pdate)
 {
     struct file *This = impl_from_IFile(iface);
@@ -2719,11 +2735,17 @@ static HRESULT WINAPI file_get_DateCreated(IFile *iface, DATE *pdate)
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI file_get_DateLastModified(IFile *iface, DATE *pdate)
+static HRESULT WINAPI file_get_DateLastModified(IFile *iface, DATE *date)
 {
     struct file *This = impl_from_IFile(iface);
-    FIXME("(%p)->(%p)\n", This, pdate);
-    return E_NOTIMPL;
+    WIN32_FILE_ATTRIBUTE_DATA attrs;
+
+    TRACE("(%p)->(%p)\n", This, date);
+
+    if (GetFileAttributesExW(This->path, GetFileExInfoStandard, &attrs))
+        return get_date_from_filetime(&attrs.ftLastWriteTime, date);
+
+    return E_FAIL;
 }
 
 static HRESULT WINAPI file_get_DateLastAccessed(IFile *iface, DATE *pdate)
@@ -3419,13 +3441,13 @@ static HRESULT WINAPI filesys_GetSpecialFolder(IFileSystem3 *iface,
     switch (SpecialFolder)
     {
     case WindowsFolder:
-        ret = GetWindowsDirectoryW(pathW, sizeof(pathW)/sizeof(WCHAR));
+        ret = GetWindowsDirectoryW(pathW, ARRAY_SIZE(pathW));
         break;
     case SystemFolder:
-        ret = GetSystemDirectoryW(pathW, sizeof(pathW)/sizeof(WCHAR));
+        ret = GetSystemDirectoryW(pathW, ARRAY_SIZE(pathW));
         break;
     case TemporaryFolder:
-        ret = GetTempPathW(sizeof(pathW)/sizeof(WCHAR), pathW);
+        ret = GetTempPathW(ARRAY_SIZE(pathW), pathW);
         /* we don't want trailing backslash */
         if (ret && pathW[ret-1] == '\\')
             pathW[ret-1] = 0;

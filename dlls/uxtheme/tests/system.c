@@ -77,7 +77,6 @@ static void test_GetWindowTheme(void)
 {
     HTHEME    hTheme;
     HWND      hWnd;
-    BOOL    bDestroyed;
 
     SetLastError(0xdeadbeef);
     hTheme = GetWindowTheme(NULL);
@@ -89,7 +88,7 @@ static void test_GetWindowTheme(void)
 
     /* Only do the bare minimum to get a valid hwnd */
     hWnd = CreateWindowExA(0, "static", "", WS_POPUP, 0,0,100,100,0, 0, 0, NULL);
-    if (!hWnd) return;
+    ok(hWnd != NULL, "Failed to create a test window.\n");
 
     SetLastError(0xdeadbeef);
     hTheme = GetWindowTheme(hWnd);
@@ -98,17 +97,13 @@ static void test_GetWindowTheme(void)
         "Expected 0xdeadbeef, got 0x%08x\n",
         GetLastError());
 
-    bDestroyed = DestroyWindow(hWnd);
-    if (!bDestroyed)
-        trace("Window %p couldn't be destroyed : 0x%08x\n",
-            hWnd, GetLastError());
+    DestroyWindow(hWnd);
 }
 
 static void test_SetWindowTheme(void)
 {
     HRESULT hRes;
     HWND    hWnd;
-    BOOL    bDestroyed;
 
     hRes = SetWindowTheme(NULL, NULL, NULL);
 todo_wine
@@ -116,15 +111,12 @@ todo_wine
 
     /* Only do the bare minimum to get a valid hwnd */
     hWnd = CreateWindowExA(0, "static", "", WS_POPUP, 0,0,100,100,0, 0, 0, NULL);
-    if (!hWnd) return;
+    ok(hWnd != NULL, "Failed to create a test window.\n");
 
     hRes = SetWindowTheme(hWnd, NULL, NULL);
     ok( hRes == S_OK, "Expected S_OK, got 0x%08x\n", hRes);
 
-    bDestroyed = DestroyWindow(hWnd);
-    if (!bDestroyed)
-        trace("Window %p couldn't be destroyed : 0x%08x\n",
-            hWnd, GetLastError());
+    DestroyWindow(hWnd);
 }
 
 static void test_OpenThemeData(void)
@@ -133,7 +125,6 @@ static void test_OpenThemeData(void)
     HWND      hWnd;
     BOOL      bThemeActive;
     HRESULT   hRes;
-    BOOL      bDestroyed;
     BOOL      bTPDefined;
 
     WCHAR szInvalidClassList[] = {'D','E','A','D','B','E','E','F', 0 };
@@ -274,10 +265,7 @@ static void test_OpenThemeData(void)
             GetLastError());
     }
 
-    bDestroyed = DestroyWindow(hWnd);
-    if (!bDestroyed)
-        trace("Window %p couldn't be destroyed : 0x%08x\n",
-            hWnd, GetLastError());
+    DestroyWindow(hWnd);
 }
 
 static void test_OpenThemeDataEx(void)
@@ -285,7 +273,6 @@ static void test_OpenThemeDataEx(void)
     HTHEME    hTheme;
     HWND      hWnd;
     BOOL      bThemeActive;
-    BOOL      bDestroyed;
 
     WCHAR szInvalidClassList[] = {'D','E','A','D','B','E','E','F', 0 };
     WCHAR szButtonClassList[]  = {'B','u','t','t','o','n', 0 };
@@ -419,10 +406,7 @@ static void test_OpenThemeDataEx(void)
             "Expected ERROR_SUCCESS, got 0x%08x\n",
             GetLastError());
 
-    bDestroyed = DestroyWindow(hWnd);
-    if (!bDestroyed)
-        trace("Window %p couldn't be destroyed : 0x%08x\n",
-            hWnd, GetLastError());
+    DestroyWindow(hWnd);
 }
 
 static void test_GetCurrentThemeName(void)
@@ -459,9 +443,8 @@ static void test_GetCurrentThemeName(void)
         ok( hRes == E_PROP_ID_UNSUPPORTED, "Expected E_PROP_ID_UNSUPPORTED, got 0x%08x\n", hRes);
 
     /* The same is true if the number of characters is too small for Color and/or Size */
-    hRes = GetCurrentThemeName(currentTheme, sizeof(currentTheme) / sizeof(WCHAR),
-                                currentColor, 2,
-                                currentSize,  sizeof(currentSize)  / sizeof(WCHAR));
+    hRes = GetCurrentThemeName(currentTheme, ARRAY_SIZE(currentTheme), currentColor, 2,
+                               currentSize,  ARRAY_SIZE(currentSize));
     if (bThemeActive)
         todo_wine
             ok(hRes == E_NOT_SUFFICIENT_BUFFER ||
@@ -471,7 +454,7 @@ static void test_GetCurrentThemeName(void)
         ok( hRes == E_PROP_ID_UNSUPPORTED, "Expected E_PROP_ID_UNSUPPORTED, got 0x%08x\n", hRes);
 
     /* Given number of characters is correct */
-    hRes = GetCurrentThemeName(currentTheme, sizeof(currentTheme) / sizeof(WCHAR), NULL, 0, NULL, 0);
+    hRes = GetCurrentThemeName(currentTheme, ARRAY_SIZE(currentTheme), NULL, 0, NULL, 0);
     if (bThemeActive)
         ok( hRes == S_OK, "Expected S_OK, got 0x%08x\n", hRes);
     else
@@ -487,26 +470,23 @@ static void test_GetCurrentThemeName(void)
             "Expected E_PROP_ID_UNSUPPORTED, got 0x%08x\n", hRes);
  
     /* The too large case is only for the theme name, not for color name or size name */
-    hRes = GetCurrentThemeName(currentTheme, sizeof(currentTheme) / sizeof(WCHAR),
-                                currentColor, sizeof(currentTheme),
-                                currentSize,  sizeof(currentSize)  / sizeof(WCHAR));
+    hRes = GetCurrentThemeName(currentTheme, ARRAY_SIZE(currentTheme), currentColor,
+                               sizeof(currentTheme), currentSize,  ARRAY_SIZE(currentSize));
     if (bThemeActive)
         ok( hRes == S_OK, "Expected S_OK, got 0x%08x\n", hRes);
     else
         ok( hRes == E_PROP_ID_UNSUPPORTED, "Expected E_PROP_ID_UNSUPPORTED, got 0x%08x\n", hRes);
 
-    hRes = GetCurrentThemeName(currentTheme, sizeof(currentTheme) / sizeof(WCHAR),
-                                currentColor, sizeof(currentTheme) / sizeof(WCHAR),
-                                currentSize,  sizeof(currentSize));
+    hRes = GetCurrentThemeName(currentTheme, ARRAY_SIZE(currentTheme), currentColor,
+                               ARRAY_SIZE(currentTheme), currentSize,  sizeof(currentSize));
     if (bThemeActive)
         ok( hRes == S_OK, "Expected S_OK, got 0x%08x\n", hRes);
     else
         ok( hRes == E_PROP_ID_UNSUPPORTED, "Expected E_PROP_ID_UNSUPPORTED, got 0x%08x\n", hRes);
 
     /* Correct call */
-    hRes = GetCurrentThemeName(currentTheme, sizeof(currentTheme) / sizeof(WCHAR),
-                                currentColor, sizeof(currentColor) / sizeof(WCHAR),
-                                currentSize,  sizeof(currentSize)  / sizeof(WCHAR));
+    hRes = GetCurrentThemeName(currentTheme, ARRAY_SIZE(currentTheme), currentColor,
+                               ARRAY_SIZE(currentColor), currentSize,  ARRAY_SIZE(currentSize));
     if (bThemeActive)
         ok( hRes == S_OK, "Expected S_OK, got 0x%08x\n", hRes);
     else
@@ -523,14 +503,44 @@ static void test_CloseThemeData(void)
     ok( hRes == E_HANDLE, "Expected E_HANDLE, got 0x%08x\n", hRes);
 }
 
+static void test_buffer_dc_props(HDC hdc, const RECT *rect)
+{
+    static const XFORM ident = { 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f };
+    XFORM xform;
+    POINT org;
+    RECT box;
+    BOOL ret;
+
+    ret = GetWorldTransform(hdc, &xform);
+    ok(ret, "Failed to get world transform\n");
+    ok(!memcmp(&xform, &ident, sizeof(xform)), "Unexpected world transform\n");
+
+    ret = GetViewportOrgEx(hdc, &org);
+    ok(ret, "Failed to get vport origin\n");
+    ok(org.x == 0 && org.y == 0, "Unexpected vport origin\n");
+
+    ret = GetWindowOrgEx(hdc, &org);
+    ok(ret, "Failed to get vport origin\n");
+    ok(org.x == rect->left && org.y == rect->top, "Unexpected window origin\n");
+
+    ret = GetClipBox(hdc, &box);
+    ok(ret, "Failed to get clip box\n");
+    ok(box.left == rect->left && box.top == rect->top, "Unexpected clip box\n");
+
+    ok(GetGraphicsMode(hdc) == GM_COMPATIBLE, "wrong graphics mode\n");
+}
+
 static void test_buffered_paint(void)
 {
+    HDC target, src, hdc, screen_dc;
     BP_PAINTPARAMS params = { 0 };
     BP_BUFFERFORMAT format;
-    HDC target, src, hdc;
     HPAINTBUFFER buffer;
     RECT rect, rect2;
+    RGBQUAD *bits;
+    HBITMAP hbm;
     HRESULT hr;
+    int row;
 
     if (!pBeginBufferedPaint)
     {
@@ -552,31 +562,55 @@ static void test_buffered_paint(void)
             &params, NULL);
     ok(buffer == NULL, "Unexpected buffer %p\n", buffer);
 
+    src = (void *)0xdeadbeef;
     buffer = pBeginBufferedPaint(target, NULL, BPBF_COMPATIBLEBITMAP,
             &params, &src);
     ok(buffer == NULL, "Unexpected buffer %p\n", buffer);
+    ok(src == NULL, "Unexpected buffered dc %p\n", src);
 
     /* target rect is mandatory */
-    rect.left = rect.top = 0;
-    rect.right = rect.bottom = 0;
+    SetRectEmpty(&rect);
+    src = (void *)0xdeadbeef;
     buffer = pBeginBufferedPaint(target, &rect, BPBF_COMPATIBLEBITMAP,
             &params, &src);
     ok(buffer == NULL, "Unexpected buffer %p\n", buffer);
+    ok(src == NULL, "Unexpected buffered dc %p\n", src);
 
-    rect.left = rect.top = 0;
-    rect.right = rect.bottom = 5;
+    /* inverted rectangle */
+    SetRect(&rect, 10, 0, 5, 5);
+    src = (void *)0xdeadbeef;
     buffer = pBeginBufferedPaint(target, &rect, BPBF_COMPATIBLEBITMAP,
             &params, &src);
-todo_wine
+    ok(buffer == NULL, "Unexpected buffer %p\n", buffer);
+    ok(src == NULL, "Unexpected buffered dc %p\n", src);
+
+    SetRect(&rect, 0, 10, 5, 0);
+    src = (void *)0xdeadbeef;
+    buffer = pBeginBufferedPaint(target, &rect, BPBF_COMPATIBLEBITMAP,
+            &params, &src);
+    ok(buffer == NULL, "Unexpected buffer %p\n", buffer);
+    ok(src == NULL, "Unexpected buffered dc %p\n", src);
+
+    /* valid rectangle, no target dc */
+    SetRect(&rect, 0, 0, 5, 5);
+    src = (void *)0xdeadbeef;
+    buffer = pBeginBufferedPaint(NULL, &rect, BPBF_COMPATIBLEBITMAP,
+            &params, &src);
+    ok(buffer == NULL, "Unexpected buffer %p\n", buffer);
+    ok(src == NULL, "Unexpected buffered dc %p\n", src);
+
+    SetRect(&rect, 0, 0, 5, 5);
+    src = NULL;
+    buffer = pBeginBufferedPaint(target, &rect, BPBF_COMPATIBLEBITMAP,
+            &params, &src);
     ok(buffer != NULL, "Unexpected buffer %p\n", buffer);
+    ok(src != NULL, "Expected buffered dc\n");
     hr = pEndBufferedPaint(buffer, FALSE);
     ok(hr == S_OK, "Unexpected return code %#x\n", hr);
 
-    rect.left = rect.top = 0;
-    rect.right = rect.bottom = 5;
+    SetRect(&rect, 0, 0, 5, 5);
     buffer = pBeginBufferedPaint(target, &rect, BPBF_COMPATIBLEBITMAP,
             &params, &src);
-todo_wine
     ok(buffer != NULL, "Unexpected buffer %p\n", buffer);
 
     /* clearing */
@@ -590,48 +624,103 @@ todo_wine
 
     /* access buffer attributes */
     hdc = pGetBufferedPaintDC(buffer);
-todo_wine
     ok(hdc == src, "Unexpected hdc, %p, buffered dc %p\n", hdc, src);
 
     hdc = pGetBufferedPaintTargetDC(buffer);
-todo_wine
     ok(hdc == target, "Unexpected target hdc %p, original %p\n", hdc, target);
 
-    hr = pGetBufferedPaintTargetRect(buffer, NULL);
-todo_wine
+    hr = pGetBufferedPaintTargetRect(NULL, NULL);
     ok(hr == E_POINTER, "Unexpected return code %#x\n", hr);
+
+    hr = pGetBufferedPaintTargetRect(buffer, NULL);
+    ok(hr == E_POINTER, "Unexpected return code %#x\n", hr);
+
+    hr = pGetBufferedPaintTargetRect(NULL, &rect2);
+    ok(hr == E_FAIL, "Unexpected return code %#x\n", hr);
 
     SetRectEmpty(&rect2);
     hr = pGetBufferedPaintTargetRect(buffer, &rect2);
-todo_wine {
     ok(hr == S_OK, "Unexpected return code %#x\n", hr);
     ok(EqualRect(&rect, &rect2), "Wrong target rect\n");
-}
+
+    hr = pEndBufferedPaint(buffer, FALSE);
+    ok(hr == S_OK, "Unexpected return code %#x\n", hr);
+
+    /* invalid buffer handle */
+    hr = pEndBufferedPaint(NULL, FALSE);
+    ok(hr == E_INVALIDARG, "Unexpected return code %#x\n", hr);
+
+    hdc = pGetBufferedPaintDC(NULL);
+    ok(hdc == NULL, "Unexpected hdc %p\n", hdc);
+
+    hdc = pGetBufferedPaintTargetDC(NULL);
+    ok(hdc == NULL, "Unexpected target hdc %p\n", hdc);
+
+    hr = pGetBufferedPaintTargetRect(NULL, &rect2);
+    ok(hr == E_FAIL, "Unexpected return code %#x\n", hr);
+
+    hr = pGetBufferedPaintTargetRect(NULL, NULL);
+    ok(hr == E_POINTER, "Unexpected return code %#x\n", hr);
+
+    bits = (void *)0xdeadbeef;
+    row = 10;
+    hr = pGetBufferedPaintBits(NULL, &bits, &row);
+    ok(hr == E_FAIL, "Unexpected return code %#x\n", hr);
+    ok(row == 10, "Unexpected row count %d\n", row);
+    ok(bits == (void *)0xdeadbeef, "Unexpected data pointer %p\n", bits);
+
+    hr = pGetBufferedPaintBits(NULL, NULL, NULL);
+    ok(hr == E_POINTER, "Unexpected return code %#x\n", hr);
+
+    hr = pGetBufferedPaintBits(NULL, &bits, NULL);
+    ok(hr == E_POINTER, "Unexpected return code %#x\n", hr);
+
+    hr = pGetBufferedPaintBits(NULL, NULL, &row);
+    ok(hr == E_POINTER, "Unexpected return code %#x\n", hr);
+
+    screen_dc = GetDC(0);
+
+    hdc = CreateCompatibleDC(screen_dc);
+    ok(hdc != NULL, "Failed to create a DC\n");
+    hbm = CreateCompatibleBitmap(screen_dc, 64, 64);
+    ok(hbm != NULL, "Failed to create a bitmap\n");
+    SelectObject(hdc, hbm);
+
+    ReleaseDC(0, screen_dc);
+
+    SetRect(&rect, 1, 2, 34, 56);
+
+    buffer = pBeginBufferedPaint(hdc, &rect, BPBF_COMPATIBLEBITMAP, NULL, &src);
+    test_buffer_dc_props(src, &rect);
+    hr = pEndBufferedPaint(buffer, FALSE);
+    ok(hr == S_OK, "Unexpected return code %#x\n", hr);
+
+    DeleteObject(hbm);
+    DeleteDC(hdc);
+
+    buffer = pBeginBufferedPaint(target, &rect, BPBF_COMPATIBLEBITMAP, NULL, &src);
+    test_buffer_dc_props(src, &rect);
     hr = pEndBufferedPaint(buffer, FALSE);
     ok(hr == S_OK, "Unexpected return code %#x\n", hr);
 
     /* access buffer bits */
     for (format = BPBF_COMPATIBLEBITMAP; format <= BPBF_TOPDOWNMONODIB; format++)
     {
-        RGBQUAD *bits;
-        int row;
-
         buffer = pBeginBufferedPaint(target, &rect, format, &params, &src);
 
         /* only works for DIB buffers */
         bits = NULL;
         row = 0;
         hr = pGetBufferedPaintBits(buffer, &bits, &row);
-todo_wine {
         if (format == BPBF_COMPATIBLEBITMAP)
             ok(hr == E_FAIL, "Unexpected return code %#x\n", hr);
         else
         {
             ok(hr == S_OK, "Unexpected return code %#x\n", hr);
             ok(bits != NULL, "Bitmap bits %p\n", bits);
-            ok(row > 0, "Bitmap width %d\n", row);
+            ok(row >= (rect.right - rect.left), "format %d: bitmap width %d\n", format, row);
         }
-}
+
         hr = pEndBufferedPaint(buffer, FALSE);
         ok(hr == S_OK, "Unexpected return code %#x\n", hr);
     }
@@ -643,37 +732,16 @@ START_TEST(system)
 {
     init_funcs();
 
-    /* No real functional tests will be done (yet). The current tests
+    /* No real functional theme API tests will be done (yet). The current tests
      * only show input/return behaviour
      */
 
-    /* IsThemeActive, IsAppThemed and IsThemePartDefined*/
-    trace("Starting test_IsThemed()\n");
     test_IsThemed();
-
-    /* GetWindowTheme */
-    trace("Starting test_GetWindowTheme()\n");
     test_GetWindowTheme();
-
-    /* SetWindowTheme */
-    trace("Starting test_SetWindowTheme()\n");
     test_SetWindowTheme();
-
-    /* OpenThemeData, a bit more functional now */
-    trace("Starting test_OpenThemeData()\n");
     test_OpenThemeData();
-
-    /* OpenThemeDataEx */
-    trace("Starting test_OpenThemeDataEx()\n");
     test_OpenThemeDataEx();
-
-    /* GetCurrentThemeName */
-    trace("Starting test_GetCurrentThemeName()\n");
     test_GetCurrentThemeName();
-
-    /* CloseThemeData */
-    trace("Starting test_CloseThemeData()\n");
     test_CloseThemeData();
-
     test_buffered_paint();
 }

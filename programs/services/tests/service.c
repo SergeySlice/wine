@@ -16,9 +16,13 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include <stdarg.h>
+
 #include <windef.h>
 #include <winsvc.h>
 #include <stdio.h>
+#include <winbase.h>
+#include <winuser.h>
 
 #include "wine/test.h"
 
@@ -30,6 +34,8 @@ static SERVICE_STATUS_HANDLE service_handle;
 
 /* Service process global variables */
 static HANDLE service_stop_event;
+
+static int monitor_count;
 
 static void send_msg(const char *type, const char *msg)
 {
@@ -62,6 +68,112 @@ static void service_ok(int cnd, const char *msg, ...)
     send_msg(cnd ? "OK" : "FAIL", buf);
 }
 
+static void test_winstation(void)
+{
+    HWINSTA winstation;
+    USEROBJECTFLAGS flags;
+    BOOL r;
+
+    winstation = GetProcessWindowStation();
+    service_ok(winstation != NULL, "winstation = NULL\n");
+
+    r = GetUserObjectInformationA(winstation, UOI_FLAGS, &flags, sizeof(flags), NULL);
+    service_ok(r, "GetUserObjectInformation(UOI_NAME) failed: %u\n", GetLastError());
+    service_ok(!(flags.dwFlags & WSF_VISIBLE), "winstation has flags %x\n", flags.dwFlags);
+}
+
+/*
+ * Test creating window in a service process. Although services run in non-interactive,
+ * they may create windows that will never be visible.
+ */
+static void test_create_window(void)
+{
+    DWORD style;
+    ATOM class;
+    HWND hwnd;
+    BOOL r;
+
+    static WNDCLASSEXA wndclass = {
+        sizeof(WNDCLASSEXA),
+        0,
+        DefWindowProcA,
+        0, 0, NULL, NULL, NULL, NULL, NULL,
+        "service_test",
+        NULL
+    };
+
+    hwnd = GetDesktopWindow();
+    service_ok(IsWindow(hwnd), "GetDesktopWindow returned invalid window %p\n", hwnd);
+
+    class = RegisterClassExA(&wndclass);
+    service_ok(class, "RegisterClassFailed\n");
+
+    hwnd = CreateWindowA("service_test", "service_test",
+            WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
+            515, 530, NULL, NULL, NULL, NULL);
+    service_ok(hwnd != NULL, "CreateWindow failed: %u\n", GetLastError());
+
+    style = GetWindowLongW(hwnd, GWL_STYLE);
+    service_ok(!(style & WS_VISIBLE), "style = %x, expected invisible\n", style);
+
+    r = ShowWindow(hwnd, SW_SHOW);
+    service_ok(!r, "ShowWindow returned %x\n", r);
+
+    style = GetWindowLongW(hwnd, GWL_STYLE);
+    service_ok(style & WS_VISIBLE, "style = %x, expected visible\n", style);
+
+    r = ShowWindow(hwnd, SW_SHOW);
+    service_ok(r, "ShowWindow returned %x\n", r);
+
+    r = DestroyWindow(hwnd);
+    service_ok(r, "DestroyWindow failed: %08x\n", GetLastError());
+}
+
+static BOOL CALLBACK monitor_enum_proc(HMONITOR hmon, HDC hdc, LPRECT lprc, LPARAM lparam)
+{
+    BOOL r;
+    MONITORINFOEXA mi;
+
+    service_ok(hmon != NULL, "Unexpected hmon=%#x\n", hmon);
+
+    monitor_count++;
+
+    mi.cbSize = sizeof(mi);
+
+    SetLastError(0xdeadbeef);
+    r = GetMonitorInfoA(NULL, (MONITORINFO*)&mi);
+    service_ok(GetLastError() == ERROR_INVALID_MONITOR_HANDLE, "Unexpected GetLastError: %#x.\n", GetLastError());
+    service_ok(!r, "GetMonitorInfo with NULL HMONITOR succeeded.\n");
+
+    r = GetMonitorInfoA(hmon, (MONITORINFO*)&mi);
+    service_ok(r, "GetMonitorInfo failed.\n");
+
+    service_ok(mi.rcMonitor.left == 0 && mi.rcMonitor.top == 0 && mi.rcMonitor.right >= 640 && mi.rcMonitor.bottom >= 480,
+               "Unexpected monitor rcMonitor values: {%d,%d,%d,%d}\n",
+               mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right, mi.rcMonitor.bottom);
+
+    service_ok(mi.rcWork.left == 0 && mi.rcWork.top == 0 && mi.rcWork.right >= 640 && mi.rcWork.bottom >= 480,
+               "Unexpected monitor rcWork values: {%d,%d,%d,%d}\n",
+               mi.rcWork.left, mi.rcWork.top, mi.rcWork.right, mi.rcWork.bottom);
+
+    service_ok(!strcmp(mi.szDevice, "WinDisc") || !strcmp(mi.szDevice, "\\\\.\\DISPLAY1"),
+               "Unexpected szDevice received: %s\n", mi.szDevice);
+
+    service_ok(mi.dwFlags == MONITORINFOF_PRIMARY, "Unexpected secondary monitor info.\n");
+
+    return TRUE;
+}
+
+/* query monitor information, even in non-interactive services */
+static void test_monitors(void)
+{
+    BOOL r;
+
+    r = EnumDisplayMonitors(0, 0, monitor_enum_proc, 0);
+    service_ok(r, "EnumDisplayMonitors failed.\n");
+    service_ok(monitor_count == 1, "Callback got called less or more than once. %d\n", monitor_count);
+}
+
 static DWORD WINAPI service_handler(DWORD ctrl, DWORD event_type, void *event_data, void *context)
 {
     SERVICE_STATUS status;
@@ -84,6 +196,9 @@ static DWORD WINAPI service_handler(DWORD ctrl, DWORD event_type, void *event_da
         SetEvent(service_stop_event);
         return NO_ERROR;
     case 128:
+        test_winstation();
+        test_create_window();
+        test_monitors();
         service_event("CUSTOM");
         return 0xdeadbeef;
     default:
@@ -474,7 +589,7 @@ static void test_runner(void (*p_run_test)(void))
     sprintf(named_pipe_name, "\\\\.\\pipe\\%s_pipe", service_name);
 
     pipe_handle = CreateNamedPipeA(named_pipe_name, PIPE_ACCESS_INBOUND,
-                                   PIPE_TYPE_BYTE|PIPE_READMODE_BYTE|PIPE_WAIT, 10, 2048, 2048, 10000, NULL);
+                                   PIPE_TYPE_MESSAGE|PIPE_READMODE_MESSAGE|PIPE_WAIT, 10, 2048, 2048, 10000, NULL);
     ok(pipe_handle != INVALID_HANDLE_VALUE, "CreateNamedPipe failed: %u\n", GetLastError());
     if(pipe_handle == INVALID_HANDLE_VALUE)
         return;
@@ -494,6 +609,7 @@ static void test_runner(void (*p_run_test)(void))
     WaitForSingleObject(thread, INFINITE);
     CloseHandle(event_handle);
     CloseHandle(pipe_handle);
+    CloseHandle(thread);
 }
 
 START_TEST(service)

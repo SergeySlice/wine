@@ -40,14 +40,8 @@ static inline MACDRV_PDEVICE *get_macdrv_dev(PHYSDEV dev)
 
 /* a few dynamic device caps */
 static CGRect desktop_rect;     /* virtual desktop rectangle */
-static int log_pixels_x;        /* pixels per logical inch in x direction */
-static int log_pixels_y;        /* pixels per logical inch in y direction */
 static int horz_size;           /* horz. size of screen in millimeters */
 static int vert_size;           /* vert. size of screen in millimeters */
-static int horz_res;            /* width in pixels of screen */
-static int vert_res;            /* height in pixels of screen */
-static int desktop_horz_res;    /* width in pixels of virtual desktop */
-static int desktop_vert_res;    /* height in pixels of virtual desktop */
 static int bits_per_pixel;      /* pixel depth of screen */
 static int device_data_valid;   /* do the above variables have up-to-date values? */
 
@@ -63,37 +57,7 @@ static CRITICAL_SECTION_DEBUG critsect_debug =
 static CRITICAL_SECTION device_data_section = { &critsect_debug, -1, 0, 0, 0, 0 };
 
 
-static const WCHAR dpi_key_name[] = {'S','o','f','t','w','a','r','e','\\','F','o','n','t','s','\0'};
-static const WCHAR dpi_value_name[] = {'L','o','g','P','i','x','e','l','s','\0'};
-
 static const struct gdi_dc_funcs macdrv_funcs;
-
-
-/******************************************************************************
- *              get_dpi
- *
- * get the dpi from the registry
- */
-static DWORD get_dpi(void)
-{
-    DWORD dpi = 0;
-    HKEY hkey;
-
-    if (RegOpenKeyW(HKEY_CURRENT_CONFIG, dpi_key_name, &hkey) == ERROR_SUCCESS)
-    {
-        DWORD type, size, new_dpi;
-
-        size = sizeof(new_dpi);
-        if (RegQueryValueExW(hkey, dpi_value_name, NULL, &type, (void *)&new_dpi, &size) == ERROR_SUCCESS)
-        {
-            if (type == REG_DWORD && new_dpi != 0)
-                dpi = new_dpi;
-        }
-        RegCloseKey(hkey);
-    }
-    return dpi;
-}
-
 
 /***********************************************************************
  *              compute_desktop_rect
@@ -104,8 +68,7 @@ static void compute_desktop_rect(void)
     uint32_t count, i;
 
     desktop_rect = CGRectNull;
-    if (CGGetActiveDisplayList(sizeof(displayIDs)/sizeof(displayIDs[0]),
-                               displayIDs, &count) != kCGErrorSuccess ||
+    if (CGGetActiveDisplayList(ARRAY_SIZE(displayIDs), displayIDs, &count) != kCGErrorSuccess ||
         !count)
     {
         displayIDs[0] = CGMainDisplayID();
@@ -158,24 +121,6 @@ static void device_init(void)
     check_retina_status();
 
     /* Initialize device caps */
-    log_pixels_x = log_pixels_y = get_dpi();
-    if (!log_pixels_x)
-    {
-        size_t width = CGDisplayPixelsWide(mainDisplay);
-        size_t height = CGDisplayPixelsHigh(mainDisplay);
-
-        if (retina_on)
-        {
-            /* Although CGDisplayPixelsWide/High() claim to report in pixels, they
-               actually report in points. */
-            width *= 2;
-            height *= 2;
-        }
-
-        log_pixels_x = MulDiv(width, 254, size_mm.width * 10);
-        log_pixels_y = MulDiv(height, 254, size_mm.height * 10);
-    }
-
     horz_size = size_mm.width;
     vert_size = size_mm.height;
 
@@ -183,9 +128,6 @@ static void device_init(void)
     if (mode)
     {
         CFStringRef pixelEncoding = CGDisplayModeCopyPixelEncoding(mode);
-
-        horz_res = CGDisplayModeGetWidth(mode);
-        vert_res = CGDisplayModeGetHeight(mode);
 
         if (pixelEncoding)
         {
@@ -200,21 +142,8 @@ static void device_init(void)
 
         CGDisplayModeRelease(mode);
     }
-    else
-    {
-        horz_res = CGDisplayPixelsWide(mainDisplay);
-        vert_res = CGDisplayPixelsHigh(mainDisplay);
-    }
-
-    if (retina_on)
-    {
-        horz_res *= 2;
-        vert_res *= 2;
-    }
 
     compute_desktop_rect();
-    desktop_horz_res = desktop_rect.size.width;
-    desktop_vert_res = desktop_rect.size.height;
 
     device_data_valid = TRUE;
 }
@@ -305,136 +234,28 @@ static INT macdrv_GetDeviceCaps(PHYSDEV dev, INT cap)
 
     switch(cap)
     {
-    case DRIVERVERSION:
-        ret = 0x300;
-        break;
-    case TECHNOLOGY:
-        ret = DT_RASDISPLAY;
-        break;
     case HORZSIZE:
         ret = horz_size;
         break;
     case VERTSIZE:
         ret = vert_size;
         break;
-    case HORZRES:
-        ret = horz_res;
-        break;
-    case VERTRES:
-        ret = vert_res;
-        break;
-    case DESKTOPHORZRES:
-        ret = desktop_horz_res;
-        break;
-    case DESKTOPVERTRES:
-        ret = desktop_vert_res;
-        break;
     case BITSPIXEL:
         ret = bits_per_pixel;
         break;
-    case PLANES:
-        ret = 1;
-        break;
-    case NUMBRUSHES:
-        ret = -1;
-        break;
-    case NUMPENS:
-        ret = -1;
-        break;
-    case NUMMARKERS:
-        ret = 0;
-        break;
-    case NUMFONTS:
-        ret = 0;
-        break;
-    case NUMCOLORS:
-        /* MSDN: Number of entries in the device's color table, if the device has
-         * a color depth of no more than 8 bits per pixel.For devices with greater
-         * color depths, -1 is returned. */
-        ret = (bits_per_pixel > 8) ? -1 : (1 << bits_per_pixel);
-        break;
-    case PDEVICESIZE:
-        ret = sizeof(MACDRV_PDEVICE);
-        break;
-    case CURVECAPS:
-        ret = (CC_CIRCLES | CC_PIE | CC_CHORD | CC_ELLIPSES | CC_WIDE |
-               CC_STYLED | CC_WIDESTYLED | CC_INTERIORS | CC_ROUNDRECT);
-        break;
-    case LINECAPS:
-        ret = (LC_POLYLINE | LC_MARKER | LC_POLYMARKER | LC_WIDE |
-               LC_STYLED | LC_WIDESTYLED | LC_INTERIORS);
-        break;
-    case POLYGONALCAPS:
-        ret = (PC_POLYGON | PC_RECTANGLE | PC_WINDPOLYGON | PC_SCANLINE |
-               PC_WIDE | PC_STYLED | PC_WIDESTYLED | PC_INTERIORS);
-        break;
-    case TEXTCAPS:
-        ret = (TC_OP_CHARACTER | TC_OP_STROKE | TC_CP_STROKE |
-               TC_CR_ANY | TC_SF_X_YINDEP | TC_SA_DOUBLE | TC_SA_INTEGER |
-               TC_SA_CONTIN | TC_UA_ABLE | TC_SO_ABLE | TC_RA_ABLE | TC_VA_ABLE);
-        break;
-    case CLIPCAPS:
-        ret = CP_REGION;
-        break;
-    case COLORRES:
-        /* The observed correspondence between BITSPIXEL and COLORRES is:
-         * BITSPIXEL: 8  -> COLORRES: 18
-         * BITSPIXEL: 16 -> COLORRES: 16
-         * BITSPIXEL: 24 -> COLORRES: 24
-         * (note that bits_per_pixel is never 24)
-         * BITSPIXEL: 32 -> COLORRES: 24 */
-        ret = (bits_per_pixel <= 8) ? 18 : (bits_per_pixel == 32) ? 24 : bits_per_pixel;
-        break;
-    case RASTERCAPS:
-        ret = (RC_BITBLT | RC_BANDING | RC_SCALING | RC_BITMAP64 | RC_DI_BITMAP |
-               RC_DIBTODEV | RC_BIGFONT | RC_STRETCHBLT | RC_STRETCHDIB | RC_DEVBITS |
-               (bits_per_pixel <= 8 ? RC_PALETTE : 0));
-        break;
-    case SHADEBLENDCAPS:
-        ret = (SB_GRAD_RECT | SB_GRAD_TRI | SB_CONST_ALPHA | SB_PIXEL_ALPHA);
-        break;
-    case ASPECTX:
-    case ASPECTY:
-        ret = 36;
-        break;
-    case ASPECTXY:
-        ret = 51;
-        break;
-    case LOGPIXELSX:
-        ret = log_pixels_x;
-        break;
-    case LOGPIXELSY:
-        ret = log_pixels_y;
-        break;
-    case CAPS1:
-        FIXME("(%p): CAPS1 is unimplemented, will return 0\n", dev->hdc);
-        /* please see wingdi.h for the possible bit-flag values that need
-           to be returned. */
-        ret = 0;
-        break;
-    case SIZEPALETTE:
-        ret = bits_per_pixel <= 8 ? 1 << bits_per_pixel : 0;
-        break;
-    case NUMRESERVED:
-    case PHYSICALWIDTH:
-    case PHYSICALHEIGHT:
-    case PHYSICALOFFSETX:
-    case PHYSICALOFFSETY:
-    case SCALINGFACTORX:
-    case SCALINGFACTORY:
-    case VREFRESH:
-    case BLTALIGNMENT:
-        ret = 0;
-        break;
+    case HORZRES:
+    case VERTRES:
     default:
-        FIXME("(%p): unsupported capability %d, will return 0\n", dev->hdc, cap);
-        ret = 0;
-        goto done;
+        LeaveCriticalSection(&device_data_section);
+        dev = GET_NEXT_PHYSDEV( dev, pGetDeviceCaps );
+        ret = dev->funcs->pGetDeviceCaps( dev, cap );
+        if ((cap == HORZRES || cap == VERTRES) && retina_on)
+            ret *= 2;
+        return ret;
     }
 
     TRACE("cap %d -> %d\n", cap, ret);
 
-done:
     LeaveCriticalSection(&device_data_section);
     return ret;
 }
@@ -569,6 +390,7 @@ static const struct gdi_dc_funcs macdrv_funcs =
     NULL,                                   /* pUnrealizePalette */
     NULL,                                   /* pWidenPath */
     macdrv_wine_get_wgl_driver,             /* wine_get_wgl_driver */
+    macdrv_wine_get_vulkan_driver,          /* wine_get_vulkan_driver */
     GDI_PRIORITY_GRAPHICS_DRV               /* priority */
 };
 

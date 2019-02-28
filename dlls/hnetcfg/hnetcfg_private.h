@@ -26,6 +26,8 @@ enum type_id
     INetFwPolicy_tid,
     INetFwPolicy2_tid,
     INetFwProfile_tid,
+    INetFwRules_tid,
+    IUPnPNAT_tid,
     last_tid
 };
 
@@ -41,3 +43,4 @@ HRESULT NetFwAuthorizedApplications_create(IUnknown *, LPVOID *) DECLSPEC_HIDDEN
 HRESULT NetFwOpenPorts_create(IUnknown *, LPVOID *) DECLSPEC_HIDDEN;
 HRESULT NetFwOpenPort_create(IUnknown *, LPVOID *) DECLSPEC_HIDDEN;
 HRESULT NetFwServices_create(IUnknown *, LPVOID *) DECLSPEC_HIDDEN;
+HRESULT IUPnPNAT_create(IUnknown *, void **) DECLSPEC_HIDDEN;

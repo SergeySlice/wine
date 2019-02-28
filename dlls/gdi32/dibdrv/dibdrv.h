@@ -75,7 +75,7 @@ typedef struct dib_brush
     rop_mask_bits masks;
     struct brush_pattern pattern;
     BOOL (*rects)(struct dibdrv_physdev *pdev, struct dib_brush *brush, dib_info *dib,
-                  int num, const RECT *rects, INT rop);
+                  int num, const RECT *rects, const POINT *brush_org, INT rop);
 } dib_brush;
 
 struct intensity_range
@@ -83,6 +83,12 @@ struct intensity_range
     BYTE r_min, r_max;
     BYTE g_min, g_max;
     BYTE b_min, b_max;
+};
+
+struct font_intensities
+{
+    struct intensity_range ranges[17];
+    struct font_gamma_ramp *gamma_ramp;
 };
 
 typedef struct dibdrv_physdev
@@ -192,7 +198,7 @@ typedef struct primitive_funcs
     void             (* draw_glyph)(const dib_info *dst, const RECT *rc, const dib_info *glyph,
                                     const POINT *origin, DWORD text_pixel, const struct intensity_range *ranges);
     void    (* draw_subpixel_glyph)(const dib_info *dst, const RECT *rc, const dib_info *glyph,
-                                    const POINT *origin, DWORD text_pixel );
+                                    const POINT *origin, DWORD text_pixel, const struct font_gamma_ramp *gamma_ramp);
     DWORD             (* get_pixel)(const dib_info *dib, int x, int y);
     DWORD     (* colorref_to_pixel)(const dib_info *dib, COLORREF color);
     COLORREF  (* pixel_to_colorref)(const dib_info *dib, DWORD pixel);
@@ -251,12 +257,14 @@ extern void free_pattern_brush(dib_brush *brush) DECLSPEC_HIDDEN;
 extern void copy_dib_color_info(dib_info *dst, const dib_info *src) DECLSPEC_HIDDEN;
 extern BOOL convert_dib(dib_info *dst, const dib_info *src) DECLSPEC_HIDDEN;
 extern DWORD get_pixel_color( DC *dc, const dib_info *dib, COLORREF color, BOOL mono_fixup ) DECLSPEC_HIDDEN;
+extern int get_dib_rect( const dib_info *dib, RECT *rc ) DECLSPEC_HIDDEN;
 extern int clip_rect_to_dib( const dib_info *dib, RECT *rc ) DECLSPEC_HIDDEN;
 extern int get_clipped_rects( const dib_info *dib, const RECT *rc, HRGN clip, struct clipped_rects *clip_rects ) DECLSPEC_HIDDEN;
 extern void add_clipped_bounds( dibdrv_physdev *dev, const RECT *rect, HRGN clip ) DECLSPEC_HIDDEN;
 extern int clip_line(const POINT *start, const POINT *end, const RECT *clip,
                      const bres_params *params, POINT *pt1, POINT *pt2) DECLSPEC_HIDDEN;
 extern void release_cached_font( struct cached_font *font ) DECLSPEC_HIDDEN;
+extern BOOL fill_with_pixel( DC *dc, dib_info *dib, DWORD pixel, int num, const RECT *rects, INT rop ) DECLSPEC_HIDDEN;
 
 static inline void init_clipped_rects( struct clipped_rects *clip_rects )
 {

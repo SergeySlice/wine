@@ -99,6 +99,61 @@ extern HBRUSH  COMCTL32_hPattern55AABrush DECLSPEC_HIDDEN;
 #define IDI_TT_WARN_SM                   25
 #define IDI_TT_ERROR_SM                  28
 
+/* Taskdialog strings */
+#define IDS_BUTTON_YES    3000
+#define IDS_BUTTON_NO     3001
+#define IDS_BUTTON_RETRY  3002
+#define IDS_BUTTON_OK     3003
+#define IDS_BUTTON_CANCEL 3004
+#define IDS_BUTTON_CLOSE  3005
+
+/* Task dialog expando control default text */
+#define IDS_TD_EXPANDED   3020
+#define IDS_TD_COLLAPSED  3021
+
+#define WM_SYSTIMER     0x0118
+
+enum combobox_state_flags
+{
+    CBF_DROPPED      = 0x0001,
+    CBF_BUTTONDOWN   = 0x0002,
+    CBF_NOROLLUP     = 0x0004,
+    CBF_MEASUREITEM  = 0x0008,
+    CBF_FOCUSED      = 0x0010,
+    CBF_CAPTURE      = 0x0020,
+    CBF_EDIT         = 0x0040,
+    CBF_NORESIZE     = 0x0080,
+    CBF_NOTIFY       = 0x0100,
+    CBF_NOREDRAW     = 0x0200,
+    CBF_SELCHANGE    = 0x0400,
+    CBF_HOT          = 0x0800,
+    CBF_NOEDITNOTIFY = 0x1000,
+    CBF_NOLBSELECT   = 0x2000, /* do not change current selection */
+    CBF_BEENFOCUSED  = 0x4000, /* has it ever had focus           */
+    CBF_EUI          = 0x8000,
+};
+
+typedef struct
+{
+   HWND           self;
+   HWND           owner;
+   UINT           dwStyle;
+   HWND           hWndEdit;
+   HWND           hWndLBox;
+   UINT           wState;
+   HFONT          hFont;
+   RECT           textRect;
+   RECT           buttonRect;
+   RECT           droppedRect;
+   INT            droppedIndex;
+   INT            fixedOwnerDrawHeight;
+   INT            droppedWidth;   /* last two are not used unless set */
+   INT            editHeight;     /* explicitly */
+   INT            visibleItems;
+} HEADCOMBO, *LPHEADCOMBO;
+
+extern BOOL COMBO_FlipListbox(HEADCOMBO *lphc, BOOL ok, BOOL bRedrawButton) DECLSPEC_HIDDEN;
+
 typedef struct
 {
     COLORREF clrBtnHighlight;       /* COLOR_BTNHIGHLIGHT                  */
@@ -165,12 +220,18 @@ INT  WINAPI Str_GetPtrW (LPCWSTR, LPWSTR, INT);
 LRESULT WINAPI SetPathWordBreakProc(HWND hwnd, BOOL bSet);
 BOOL WINAPI MirrorIcon(HICON *phicon1, HICON *phicon2);
 
+HRGN set_control_clipping(HDC hdc, const RECT *rect) DECLSPEC_HIDDEN;
+
 extern void ANIMATE_Register(void) DECLSPEC_HIDDEN;
 extern void ANIMATE_Unregister(void) DECLSPEC_HIDDEN;
+extern void BUTTON_Register(void) DECLSPEC_HIDDEN;
+extern void COMBO_Register(void) DECLSPEC_HIDDEN;
 extern void COMBOEX_Register(void) DECLSPEC_HIDDEN;
 extern void COMBOEX_Unregister(void) DECLSPEC_HIDDEN;
+extern void COMBOLBOX_Register(void) DECLSPEC_HIDDEN;
 extern void DATETIME_Register(void) DECLSPEC_HIDDEN;
 extern void DATETIME_Unregister(void) DECLSPEC_HIDDEN;
+extern void EDIT_Register(void) DECLSPEC_HIDDEN;
 extern void FLATSB_Register(void) DECLSPEC_HIDDEN;
 extern void FLATSB_Unregister(void) DECLSPEC_HIDDEN;
 extern void HEADER_Register(void) DECLSPEC_HIDDEN;
@@ -179,6 +240,7 @@ extern void HOTKEY_Register(void) DECLSPEC_HIDDEN;
 extern void HOTKEY_Unregister(void) DECLSPEC_HIDDEN;
 extern void IPADDRESS_Register(void) DECLSPEC_HIDDEN;
 extern void IPADDRESS_Unregister(void) DECLSPEC_HIDDEN;
+extern void LISTBOX_Register(void) DECLSPEC_HIDDEN;
 extern void LISTVIEW_Register(void) DECLSPEC_HIDDEN;
 extern void LISTVIEW_Unregister(void) DECLSPEC_HIDDEN;
 extern void MONTHCAL_Register(void) DECLSPEC_HIDDEN;
@@ -191,6 +253,7 @@ extern void PROGRESS_Register(void) DECLSPEC_HIDDEN;
 extern void PROGRESS_Unregister(void) DECLSPEC_HIDDEN;
 extern void REBAR_Register(void) DECLSPEC_HIDDEN;
 extern void REBAR_Unregister(void) DECLSPEC_HIDDEN;
+extern void STATIC_Register(void) DECLSPEC_HIDDEN;
 extern void STATUS_Register(void) DECLSPEC_HIDDEN;
 extern void STATUS_Unregister(void) DECLSPEC_HIDDEN;
 extern void SYSLINK_Register(void) DECLSPEC_HIDDEN;
@@ -216,6 +279,5 @@ LONG MONTHCAL_CompareSystemTime(const SYSTEMTIME *first, const SYSTEMTIME *secon
 extern void THEMING_Initialize(void) DECLSPEC_HIDDEN;
 extern void THEMING_Uninitialize(void) DECLSPEC_HIDDEN;
 extern LRESULT THEMING_CallOriginalClass(HWND, UINT, WPARAM, LPARAM) DECLSPEC_HIDDEN;
-extern void THEMING_SetSubclassData(HWND, ULONG_PTR) DECLSPEC_HIDDEN;
 
 #endif  /* __WINE_COMCTL32_H */

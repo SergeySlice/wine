@@ -1,0 +1,32 @@
+commit 3a5967f24414ffa797a856c29b09cfee877fd365
+Author: Sergey Isakov <isakov-sl@bk.ru>
+Date:   Wed Feb 27 06:58:48 2019 +0300
+
+    define if not defined
+    
+    Signed-off-by: Sergey Isakov <isakov-sl@bk.ru>
+
+diff --git a/dlls/bcrypt/gnutls.c b/dlls/bcrypt/gnutls.c
+index d79a328..99a2714 100644
+--- a/dlls/bcrypt/gnutls.c
++++ b/dlls/bcrypt/gnutls.c
+@@ -42,6 +42,10 @@
+ #include "wine/library.h"
+ #include "wine/unicode.h"
+ 
++#ifndef GNUTLS_CURVE_TO_BITS
++#define GNUTLS_CURVE_TO_BITS(curve) (unsigned int)(((unsigned int)1<<31)|((unsigned int)(curve)))
++#endif
++
+ #ifdef HAVE_GNUTLS_CIPHER_INIT
+ WINE_DEFAULT_DEBUG_CHANNEL(bcrypt);
+ WINE_DECLARE_DEBUG_CHANNEL(winediag);
+@@ -52,8 +56,6 @@ WINE_DECLARE_DEBUG_CHANNEL(winediag);
+ #define GNUTLS_CIPHER_AES_256_GCM 94
+ #define GNUTLS_PK_ECC 4
+ 
+-#define GNUTLS_CURVE_TO_BITS(curve) (unsigned int)(((unsigned int)1<<31)|((unsigned int)(curve)))
+-
+ typedef enum
+ {
+     GNUTLS_ECC_CURVE_INVALID,

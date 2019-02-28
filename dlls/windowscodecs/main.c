@@ -42,6 +42,9 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
         case DLL_PROCESS_ATTACH:
             DisableThreadLibraryCalls(hinstDLL);
             break;
+        case DLL_PROCESS_DETACH:
+            ReleaseComponentInfos();
+            break;
     }
 
     return WIC_DllMain(hinstDLL, fdwReason, lpvReserved);
@@ -79,7 +82,7 @@ HRESULT copy_pixels(UINT bpp, const BYTE *srcbuffer,
     if (dststride < bytesperrow)
         return E_INVALIDARG;
 
-    if ((dststride * (rc->Height-1)) + ((rc->Width * bpp) + 7)/8 > dstbuffersize)
+    if ((dststride * (rc->Height-1)) + bytesperrow > dstbuffersize)
         return E_INVALIDARG;
 
     /* if the whole bitmap is copied and the buffer format matches then it's a matter of a single memcpy */
@@ -179,7 +182,7 @@ HRESULT write_source(IWICBitmapFrameEncode *iface,
     if (FAILED(hr))
     {
         ERR("Failed to convert source, target format %s, %#x\n", debugstr_guid(format), hr);
-        return hr;
+        return E_NOTIMPL;
     }
 
     stride = (bpp * width + 7)/8;

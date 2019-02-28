@@ -59,13 +59,7 @@ static HRESULT SMTPTransport_ParseResponse(SMTPTransport *This, char *pszRespons
     pResponse->rIxpResult.pszResponse = pszResponse;
     pResponse->rIxpResult.dwSocketError = 0;
     pResponse->rIxpResult.uiServerError = strtol(pszResponse, &pszResponse, 10);
-    if (*pszResponse == '-')
-    {
-        pResponse->fDone = FALSE;
-        pszResponse++;
-    }
-    else
-        pResponse->fDone = TRUE;
+    pResponse->fDone = (*pszResponse != '-');
 
     switch (pResponse->rIxpResult.uiServerError)
     {
@@ -287,7 +281,7 @@ static void SMTPTransport_CallbackSendHello(IInternetTransport *iface, char *pBu
     HRESULT hr;
     const char *pszHello;
     char *pszCommand;
-    const char szHostName[] = "localhost"; /* FIXME */
+    static const char szHostName[] = "localhost"; /* FIXME */
 
     TRACE("\n");
 
@@ -489,7 +483,7 @@ static void SMTPTransport_CallbackMessageSendTo(IInternetTransport *iface, char 
 
         if ((This->pending_message.rAddressList.prgAddress[This->ulCurrentAddressIndex].addrtype & ADDR_TOFROM_MASK) == ADDR_TO)
         {
-            const char szCommandFormat[] = "RCPT TO: <%s>\n";
+            static const char szCommandFormat[] = "RCPT TO: <%s>\n";
             char *szCommand;
             int len = sizeof(szCommandFormat) - 2 /* "%s" */ +
                 strlen(This->pending_message.rAddressList.prgAddress[This->ulCurrentAddressIndex].szEmail);
@@ -665,10 +659,10 @@ static HRESULT WINAPI SMTPTransport_InitNew(ISMTPTransport2 *iface,
 static HRESULT WINAPI SMTPTransport_SendMessage(ISMTPTransport2 *iface,
     LPSMTPMESSAGE pMessage)
 {
+    static const char szCommandFormat[] = "MAIL FROM: <%s>\n";
     SMTPTransport *This = (SMTPTransport *)iface;
     ULONG i, size;
     LPSTR pszFromAddress = NULL;
-    const char szCommandFormat[] = "MAIL FROM: <%s>\n";
     char *szCommand;
     int len;
     HRESULT hr;
@@ -729,8 +723,8 @@ static HRESULT WINAPI SMTPTransport_SendMessage(ISMTPTransport2 *iface,
 
 static HRESULT WINAPI SMTPTransport_CommandMAIL(ISMTPTransport2 *iface, LPSTR pszEmailFrom)
 {
+    static const char szCommandFormat[] = "MAIL FROM: <%s>\n";
     SMTPTransport *This = (SMTPTransport *)iface;
-    const char szCommandFormat[] = "MAIL FROM: <%s>\n";
     char *szCommand;
     int len;
     HRESULT hr;
@@ -756,8 +750,8 @@ static HRESULT WINAPI SMTPTransport_CommandMAIL(ISMTPTransport2 *iface, LPSTR ps
 
 static HRESULT WINAPI SMTPTransport_CommandRCPT(ISMTPTransport2 *iface, LPSTR pszEmailTo)
 {
+    static const char szCommandFormat[] = "RCPT TO: <%s>\n";
     SMTPTransport *This = (SMTPTransport *)iface;
-    const char szCommandFormat[] = "RCPT TO: <%s>\n";
     char *szCommand;
     int len;
     HRESULT hr;
@@ -783,9 +777,9 @@ static HRESULT WINAPI SMTPTransport_CommandRCPT(ISMTPTransport2 *iface, LPSTR ps
 
 static HRESULT WINAPI SMTPTransport_CommandEHLO(ISMTPTransport2 *iface)
 {
+    static const char szCommandFormat[] = "EHLO %s\n";
+    static const char szHostname[] = "localhost"; /* FIXME */
     SMTPTransport *This = (SMTPTransport *)iface;
-    const char szCommandFormat[] = "EHLO %s\n";
-    const char szHostname[] = "localhost"; /* FIXME */
     char *szCommand;
     int len = sizeof(szCommandFormat) - 2 /* "%s" */ + sizeof(szHostname);
     HRESULT hr;
@@ -807,9 +801,9 @@ static HRESULT WINAPI SMTPTransport_CommandEHLO(ISMTPTransport2 *iface)
 
 static HRESULT WINAPI SMTPTransport_CommandHELO(ISMTPTransport2 *iface)
 {
+    static const char szCommandFormat[] = "HELO %s\n";
+    static const char szHostname[] = "localhost"; /* FIXME */
     SMTPTransport *This = (SMTPTransport *)iface;
-    const char szCommandFormat[] = "HELO %s\n";
-    const char szHostname[] = "localhost"; /* FIXME */
     char *szCommand;
     int len = sizeof(szCommandFormat) - 2 /* "%s" */ + sizeof(szHostname);
     HRESULT hr;
@@ -832,8 +826,8 @@ static HRESULT WINAPI SMTPTransport_CommandHELO(ISMTPTransport2 *iface)
 static HRESULT WINAPI SMTPTransport_CommandAUTH(ISMTPTransport2 *iface,
     LPSTR pszAuthType)
 {
+    static const char szCommandFormat[] = "AUTH %s\n";
     SMTPTransport *This = (SMTPTransport *)iface;
-    const char szCommandFormat[] = "AUTH %s\n";
     char *szCommand;
     int len;
     HRESULT hr;

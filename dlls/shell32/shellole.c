@@ -36,6 +36,8 @@
 #include "shlobj.h"
 #include "shlguid.h"
 #include "shldisp.h"
+#include "gdiplus.h"
+#include "shimgdata.h"
 #include "winreg.h"
 #include "winerror.h"
 
@@ -50,6 +52,7 @@
 WINE_DEFAULT_DEBUG_CHANNEL(shell);
 
 extern INT WINAPI SHStringFromGUIDW(REFGUID guid, LPWSTR lpszDest, INT cchMax);  /* shlwapi.24 */
+static HRESULT WINAPI ShellImageDataFactory_Constructor(IUnknown *outer, REFIID riid, void **obj);
 
 /**************************************************************************
  * Default ClassFactory types
@@ -64,6 +67,7 @@ static const struct {
 } InterfaceTable[] = {
 
 	{&CLSID_ApplicationAssociationRegistration, ApplicationAssociationRegistration_Constructor},
+	{&CLSID_ApplicationDestinations, ApplicationDestinations_Constructor},
 	{&CLSID_AutoComplete,   IAutoComplete_Constructor},
 	{&CLSID_ControlPanel,	IControlPanel_Constructor},
 	{&CLSID_DragDropHelper, IDropTargetHelper_Constructor},
@@ -84,6 +88,7 @@ static const struct {
 	{&CLSID_KnownFolderManager, KnownFolderManager_Constructor},
 	{&CLSID_Shell,          IShellDispatch_Constructor},
 	{&CLSID_DestinationList, CustomDestinationList_Constructor},
+	{&CLSID_ShellImageDataFactory, ShellImageDataFactory_Constructor},
 	{NULL, NULL}
 };
 
@@ -145,7 +150,7 @@ HRESULT WINAPI SHCoCreateInstance(
         }
 
 	/* we look up the dll path in the registry */
-        SHStringFromGUIDW(myclsid, sClassID, sizeof(sClassID)/sizeof(WCHAR));
+        SHStringFromGUIDW(myclsid, sClassID, ARRAY_SIZE(sClassID));
 	lstrcpyW(sKeyName, sCLSID);
 	lstrcatW(sKeyName, sClassID);
 	lstrcatW(sKeyName, sInProcServer32);
@@ -253,7 +258,7 @@ DWORD WINAPI SHCLSIDFromStringA (LPCSTR clsid, CLSID *id)
 {
     WCHAR buffer[40];
     TRACE("(%p(%s) %p)\n", clsid, clsid, id);
-    if (!MultiByteToWideChar( CP_ACP, 0, clsid, -1, buffer, sizeof(buffer)/sizeof(WCHAR) ))
+    if (!MultiByteToWideChar( CP_ACP, 0, clsid, -1, buffer, ARRAY_SIZE(buffer) ))
         return CO_E_CLASSSTRING;
     return CLSIDFromString( buffer, id );
 }
@@ -386,7 +391,7 @@ static IClassFactory * IDefClF_fnConstructor(LPFNCREATEINSTANCE lpfnCI, PLONG pc
 {
 	IDefClFImpl* lpclf;
 
-	lpclf = HeapAlloc(GetProcessHeap(),0,sizeof(IDefClFImpl));
+	lpclf = heap_alloc(sizeof(*lpclf));
 	lpclf->ref = 1;
 	lpclf->IClassFactory_iface.lpVtbl = &dclfvt;
 	lpclf->lpfnCI = lpfnCI;
@@ -446,9 +451,9 @@ static ULONG WINAPI IDefClF_fnRelease(LPCLASSFACTORY iface)
 	  if (This->pcRefDll) InterlockedDecrement(This->pcRefDll);
 
 	  TRACE("-- destroying IClassFactory(%p)\n",This);
-	  HeapFree(GetProcessHeap(),0,This);
-	  return 0;
+	  heap_free(This);
 	}
+
 	return refCount;
 }
 /******************************************************************************
@@ -581,7 +586,7 @@ UINT WINAPI DragQueryFileA(
             LPWSTR lpszFileW = NULL;
 
             if(lpszFile && lFile != 0xFFFFFFFF) {
-                lpszFileW = HeapAlloc(GetProcessHeap(), 0, lLength*sizeof(WCHAR));
+                lpszFileW = heap_alloc(lLength*sizeof(WCHAR));
                 if(lpszFileW == NULL) {
                     goto end;
                 }
@@ -590,7 +595,7 @@ UINT WINAPI DragQueryFileA(
 
             if(lpszFileW) {
                 WideCharToMultiByte(CP_ACP, 0, lpszFileW, -1, lpszFile, lLength, 0, NULL);
-                HeapFree(GetProcessHeap(), 0, lpszFileW);
+                heap_free(lpszFileW);
             }
             goto end;
         }
@@ -636,7 +641,7 @@ UINT WINAPI DragQueryFileW(
             LPSTR lpszFileA = NULL;
 
             if(lpszwFile && lFile != 0xFFFFFFFF) {
-                lpszFileA = HeapAlloc(GetProcessHeap(), 0, lLength);
+                lpszFileA = heap_alloc(lLength);
                 if(lpszFileA == NULL) {
                     goto end;
                 }
@@ -645,7 +650,7 @@ UINT WINAPI DragQueryFileW(
 
             if(lpszFileA) {
                 MultiByteToWideChar(CP_ACP, 0, lpszFileA, -1, lpszwFile, lLength);
-                HeapFree(GetProcessHeap(), 0, lpszFileA);
+                heap_free(lpszFileA);
             }
             goto end;
         }
@@ -806,4 +811,544 @@ HRESULT WINAPI SHCreateQueryCancelAutoPlayMoniker(IMoniker **moniker)
 
     if (!moniker) return E_INVALIDARG;
     return CreateClassMoniker(&CLSID_QueryCancelAutoPlay, moniker);
+}
+
+static HRESULT gpstatus_to_hresult(GpStatus status)
+{
+    switch (status)
+    {
+    case Ok:
+        return S_OK;
+    case InvalidParameter:
+        return E_INVALIDARG;
+    case OutOfMemory:
+        return E_OUTOFMEMORY;
+    case NotImplemented:
+        return E_NOTIMPL;
+    default:
+        return E_FAIL;
+    }
+}
+
+/* IShellImageData */
+typedef struct
+{
+    IShellImageData IShellImageData_iface;
+    LONG ref;
+
+    WCHAR *path;
+    GpImage *image;
+} ShellImageData;
+
+static inline ShellImageData *impl_from_IShellImageData(IShellImageData *iface)
+{
+    return CONTAINING_RECORD(iface, ShellImageData, IShellImageData_iface);
+}
+
+static HRESULT WINAPI ShellImageData_QueryInterface(IShellImageData *iface, REFIID riid, void **obj)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    TRACE("%p, %s, %p\n", This, debugstr_guid(riid), obj);
+
+    if (IsEqualIID(riid, &IID_IShellImageData) || IsEqualIID(riid, &IID_IUnknown))
+    {
+        *obj = &This->IShellImageData_iface;
+        IShellImageData_AddRef(iface);
+        return S_OK;
+    }
+
+    *obj = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI ShellImageData_AddRef(IShellImageData *iface)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+    ULONG ref = InterlockedIncrement(&This->ref);
+
+    TRACE("%p, %u\n", This, ref);
+
+    return ref;
+}
+
+static ULONG WINAPI ShellImageData_Release(IShellImageData *iface)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+    ULONG ref = InterlockedDecrement(&This->ref);
+
+    TRACE("%p, %u\n", This, ref);
+
+    if (!ref)
+    {
+        GdipDisposeImage(This->image);
+        heap_free(This->path);
+        SHFree(This);
+    }
+
+    return ref;
+}
+
+static HRESULT WINAPI ShellImageData_Decode(IShellImageData *iface, DWORD flags, ULONG cx_desired, ULONG cy_desired)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+    GpImage *image;
+    HRESULT hr;
+
+    TRACE("%p, %#x, %u, %u\n", This, flags, cx_desired, cy_desired);
+
+    if (This->image)
+        return S_FALSE;
+
+    if (flags & SHIMGDEC_LOADFULL)
+        FIXME("LOADFULL flag ignored\n");
+
+    hr = gpstatus_to_hresult(GdipLoadImageFromFile(This->path, &image));
+    if (FAILED(hr))
+        return hr;
+
+    if (flags & SHIMGDEC_THUMBNAIL)
+    {
+        hr = gpstatus_to_hresult(GdipGetImageThumbnail(image, cx_desired, cy_desired, &This->image, NULL, NULL));
+        GdipDisposeImage(image);
+    }
+    else
+        This->image = image;
+
+    return hr;
+}
+
+static HRESULT WINAPI ShellImageData_Draw(IShellImageData *iface, HDC hdc, RECT *dest, RECT *src)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+    GpGraphics *graphics;
+    HRESULT hr;
+
+    TRACE("%p, %p, %s, %s\n", This, hdc, wine_dbgstr_rect(dest), wine_dbgstr_rect(src));
+
+    if (!This->image)
+        return E_FAIL;
+
+    if (!dest)
+        return E_INVALIDARG;
+
+    if (!src)
+        return S_OK;
+
+    hr = gpstatus_to_hresult(GdipCreateFromHDC(hdc, &graphics));
+    if (FAILED(hr))
+        return hr;
+
+    hr = gpstatus_to_hresult(GdipDrawImageRectRectI(graphics, This->image, dest->left, dest->top, dest->right - dest->left,
+        dest->bottom - dest->top, src->left, src->top, src->right - src->left, src->bottom - src->top,
+        UnitPixel, NULL, NULL, NULL));
+    GdipDeleteGraphics(graphics);
+
+    return hr;
+}
+
+static HRESULT WINAPI ShellImageData_NextFrame(IShellImageData *iface)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p: stub\n", This);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_NextPage(IShellImageData *iface)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p: stub\n", This);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_PrevPage(IShellImageData *iface)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p: stub\n", This);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_IsTransparent(IShellImageData *iface)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p: stub\n", This);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_IsAnimated(IShellImageData *iface)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p: stub\n", This);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_IsVector(IShellImageData *iface)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p: stub\n", This);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_IsMultipage(IShellImageData *iface)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p: stub\n", This);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_IsEditable(IShellImageData *iface)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p: stub\n", This);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_IsPrintable(IShellImageData *iface)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p: stub\n", This);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_IsDecoded(IShellImageData *iface)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p: stub\n", This);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_GetCurrentPage(IShellImageData *iface, ULONG *page)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p: stub\n", This);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_GetPageCount(IShellImageData *iface, ULONG *count)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %p: stub\n", This, count);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageDate_SelectPage(IShellImageData *iface, ULONG page)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %u: stub\n", This, page);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_GetSize(IShellImageData *iface, SIZE *size)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+    REAL cx, cy;
+    HRESULT hr;
+
+    TRACE("%p, %p\n", This, size);
+
+    if (!This->image)
+        return E_FAIL;
+
+    hr = gpstatus_to_hresult(GdipGetImageDimension(This->image, &cx, &cy));
+    if (SUCCEEDED(hr))
+    {
+        size->cx = cx;
+        size->cy = cy;
+    }
+
+    return hr;
+}
+
+static HRESULT WINAPI ShellImageData_GetRawDataFormat(IShellImageData *iface, GUID *format)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %p: stub\n", This, format);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_GetPixelFormat(IShellImageData *iface, PixelFormat *format)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %p: stub\n", This, format);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_GetDelay(IShellImageData *iface, DWORD *delay)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %p: stub\n", This, delay);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_GetProperties(IShellImageData *iface, DWORD mode, IPropertySetStorage **props)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %#x, %p: stub\n", This, mode, props);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_Rotate(IShellImageData *iface, DWORD angle)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %u: stub\n", This, angle);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_Scale(IShellImageData *iface, ULONG cx, ULONG cy, InterpolationMode mode)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %u, %u, %#x: stub\n", This, cx, cy, mode);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_DiscardEdit(IShellImageData *iface)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p: stub\n", This);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageDate_SetEncoderParams(IShellImageData *iface, IPropertyBag *params)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %p: stub\n", This, params);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_DisplayName(IShellImageData *iface, LPWSTR name, UINT count)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %p, %u: stub\n", This, name, count);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_GetResolution(IShellImageData *iface, ULONG *res_x, ULONG *res_y)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %p, %p: stub\n", This, res_x, res_y);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_GetEncoderParams(IShellImageData *iface, GUID *format, EncoderParameters **params)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %p, %p: stub\n", This, format, params);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_RegisterAbort(IShellImageData *iface, IShellImageDataAbort *abort,
+    IShellImageDataAbort **prev)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %p, %p: stub\n", This, abort, prev);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_CloneFrame(IShellImageData *iface, Image **frame)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %p: stub\n", This, frame);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageData_ReplaceFrame(IShellImageData *iface, Image *frame)
+{
+    ShellImageData *This = impl_from_IShellImageData(iface);
+
+    FIXME("%p, %p: stub\n", This, frame);
+
+    return E_NOTIMPL;
+}
+
+static const IShellImageDataVtbl ShellImageDataVtbl =
+{
+    ShellImageData_QueryInterface,
+    ShellImageData_AddRef,
+    ShellImageData_Release,
+    ShellImageData_Decode,
+    ShellImageData_Draw,
+    ShellImageData_NextFrame,
+    ShellImageData_NextPage,
+    ShellImageData_PrevPage,
+    ShellImageData_IsTransparent,
+    ShellImageData_IsAnimated,
+    ShellImageData_IsVector,
+    ShellImageData_IsMultipage,
+    ShellImageData_IsEditable,
+    ShellImageData_IsPrintable,
+    ShellImageData_IsDecoded,
+    ShellImageData_GetCurrentPage,
+    ShellImageData_GetPageCount,
+    ShellImageDate_SelectPage,
+    ShellImageData_GetSize,
+    ShellImageData_GetRawDataFormat,
+    ShellImageData_GetPixelFormat,
+    ShellImageData_GetDelay,
+    ShellImageData_GetProperties,
+    ShellImageData_Rotate,
+    ShellImageData_Scale,
+    ShellImageData_DiscardEdit,
+    ShellImageDate_SetEncoderParams,
+    ShellImageData_DisplayName,
+    ShellImageData_GetResolution,
+    ShellImageData_GetEncoderParams,
+    ShellImageData_RegisterAbort,
+    ShellImageData_CloneFrame,
+    ShellImageData_ReplaceFrame,
+};
+
+static HRESULT create_shellimagedata_from_path(const WCHAR *path, IShellImageData **data)
+{
+    ShellImageData *This;
+
+    This = SHAlloc(sizeof(*This));
+
+    This->IShellImageData_iface.lpVtbl = &ShellImageDataVtbl;
+    This->ref = 1;
+
+    This->path = strdupW(path);
+    This->image = NULL;
+
+    *data = &This->IShellImageData_iface;
+    return S_OK;
+}
+
+/* IShellImageDataFactory */
+static HRESULT WINAPI ShellImageDataFactory_QueryInterface(IShellImageDataFactory *iface, REFIID riid, void **obj)
+{
+    TRACE("(%p, %s, %p)\n", iface, debugstr_guid(riid), obj);
+
+    if (IsEqualIID(&IID_IShellImageDataFactory, riid) || IsEqualIID(&IID_IUnknown, riid))
+    {
+        *obj = iface;
+    }
+    else
+    {
+        FIXME("not implemented for %s\n", debugstr_guid(riid));
+        *obj = NULL;
+        return E_NOINTERFACE;
+    }
+
+    IUnknown_AddRef((IUnknown*)*obj);
+    return S_OK;
+}
+
+static ULONG WINAPI ShellImageDataFactory_AddRef(IShellImageDataFactory *iface)
+{
+    TRACE("(%p)\n", iface);
+
+    return 2;
+}
+
+static ULONG WINAPI ShellImageDataFactory_Release(IShellImageDataFactory *iface)
+{
+    TRACE("(%p)\n", iface);
+
+    return 1;
+}
+
+static HRESULT WINAPI ShellImageDataFactory_CreateIShellImageData(IShellImageDataFactory *iface, IShellImageData **data)
+{
+    FIXME("%p, %p: stub\n", iface, data);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageDataFactory_CreateImageFromFile(IShellImageDataFactory *iface, const WCHAR *path,
+    IShellImageData **data)
+{
+    TRACE("%p, %s, %p\n", iface, debugstr_w(path), data);
+
+    return create_shellimagedata_from_path(path, data);
+}
+
+static HRESULT WINAPI ShellImageDataFactory_CreateImageFromStream(IShellImageDataFactory *iface, IStream *stream,
+    IShellImageData **data)
+{
+    FIXME("%p, %p, %p: stub\n", iface, stream, data);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ShellImageDataFactory_GetDataFormatFromPath(IShellImageDataFactory *iface, const WCHAR *path,
+    GUID *format)
+{
+    FIXME("%p, %s, %p: stub\n", iface, debugstr_w(path), format);
+
+    return E_NOTIMPL;
+}
+
+static const IShellImageDataFactoryVtbl ShellImageDataFactoryVtbl =
+{
+    ShellImageDataFactory_QueryInterface,
+    ShellImageDataFactory_AddRef,
+    ShellImageDataFactory_Release,
+    ShellImageDataFactory_CreateIShellImageData,
+    ShellImageDataFactory_CreateImageFromFile,
+    ShellImageDataFactory_CreateImageFromStream,
+    ShellImageDataFactory_GetDataFormatFromPath,
+};
+
+static IShellImageDataFactory ShellImageDataFactory = { &ShellImageDataFactoryVtbl };
+
+HRESULT WINAPI ShellImageDataFactory_Constructor(IUnknown *outer, REFIID riid, void **obj)
+{
+    TRACE("%p %s %p\n", outer, debugstr_guid(riid), obj);
+
+    if (outer)
+        return CLASS_E_NOAGGREGATION;
+
+    return IShellImageDataFactory_QueryInterface(&ShellImageDataFactory, riid, obj);
 }

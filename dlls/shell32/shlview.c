@@ -43,6 +43,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define CINTERFACE
 #define COBJMACROS
 #define NONAMELESSUNION
 
@@ -384,6 +385,9 @@ static void ShellView_InitList(IShellViewImpl *This)
     SHELLDETAILS sd;
     WCHAR nameW[50];
     HRESULT hr;
+    HFONT list_font, old_font;
+    HDC list_dc;
+    TEXTMETRICW tm;
 
     TRACE("(%p)\n", This);
 
@@ -405,6 +409,13 @@ static void ShellView_InitList(IShellViewImpl *This)
         }
     }
 
+    list_font = (HFONT)SendMessageW(This->hWndList, WM_GETFONT, 0, 0);
+    list_dc = GetDC(This->hWndList);
+    old_font = SelectObject(list_dc, list_font);
+    GetTextMetricsW(list_dc, &tm);
+    SelectObject(list_dc, old_font);
+    ReleaseDC(This->hWndList, list_dc);
+
     for (This->columns = 0;; This->columns++)
     {
         if (This->pSF2Parent)
@@ -414,9 +425,9 @@ static void ShellView_InitList(IShellViewImpl *This)
         if (FAILED(hr)) break;
 
         lvColumn.fmt = sd.fmt;
-	lvColumn.cx = sd.cxChar*8; /* chars->pixel */
-	StrRetToStrNW(nameW, sizeof(nameW)/sizeof(WCHAR), &sd.str, NULL);
-	SendMessageW(This->hWndList, LVM_INSERTCOLUMNW, This->columns, (LPARAM)&lvColumn);
+        lvColumn.cx = MulDiv(sd.cxChar, tm.tmAveCharWidth * 3, 2); /* chars->pixel */
+        StrRetToStrNW(nameW, ARRAY_SIZE(nameW), &sd.str, NULL);
+        SendMessageW(This->hWndList, LVM_INSERTCOLUMNW, This->columns, (LPARAM)&lvColumn);
     }
 
     if (details) IShellDetails_Release(details);
@@ -1544,7 +1555,7 @@ static LRESULT ShellView_OnNotify(IShellViewImpl * This, UINT CtlID, LPNMHDR lpn
 		  }
 
 		  /* allocate memory for the pidl array */
-		  pItems = HeapAlloc(GetProcessHeap(), 0, sizeof(LPITEMIDLIST) * count);
+		  pItems = heap_alloc(sizeof(LPITEMIDLIST) * count);
 
 		  /* retrieve all selected items */
 		  i = 0;
@@ -1570,7 +1581,7 @@ static LRESULT ShellView_OnNotify(IShellViewImpl * This, UINT CtlID, LPNMHDR lpn
 		  ISFHelper_Release(psfhlp);
 
 		  /* free pidl array memory */
-		  HeapFree(GetProcessHeap(), 0, pItems);
+		  heap_free(pItems);
                 }
 		break;
 
@@ -1712,7 +1723,8 @@ static HRESULT WINAPI IShellView_fnQueryInterface(IShellView3 *iface, REFIID rii
 	if(IsEqualIID(riid, &IID_IUnknown) ||
 	   IsEqualIID(riid, &IID_IShellView) ||
 	   IsEqualIID(riid, &IID_IShellView2) ||
-	   IsEqualIID(riid, &IID_IShellView3))
+	   IsEqualIID(riid, &IID_IShellView3) ||
+	   IsEqualIID(riid, &IID_CDefView))
 	{
 	  *ppvObj = &This->IShellView3_iface;
 	}
@@ -1791,7 +1803,7 @@ static ULONG WINAPI IShellView_fnRelease(IShellView3 *iface)
 	  if(This->pAdvSink)
 	    IAdviseSink_Release(This->pAdvSink);
 
-	  HeapFree(GetProcessHeap(),0,This);
+	  heap_free(This);
 	}
 	return refCount;
 }
@@ -3716,7 +3728,7 @@ IShellView *IShellView_Constructor(IShellFolder *folder)
 {
     IShellViewImpl *sv;
 
-    sv = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IShellViewImpl));
+    sv = heap_alloc_zero(sizeof(*sv));
     if (!sv)
         return NULL;
 
@@ -3743,4 +3755,74 @@ IShellView *IShellView_Constructor(IShellFolder *folder)
 
     TRACE("(%p)->(%p)\n", sv, folder);
     return (IShellView*)&sv->IShellView3_iface;
+}
+
+/*************************************************************************
+ * SHCreateShellFolderView			[SHELL32.256]
+ *
+ * Create a new instance of the default Shell folder view object.
+ *
+ * RETURNS
+ *  Success: S_OK
+ *  Failure: error value
+ *
+ * NOTES
+ *  see IShellFolder::CreateViewObject
+ */
+HRESULT WINAPI SHCreateShellFolderView(const SFV_CREATE *desc, IShellView **shellview)
+{
+    TRACE("(%p, %p)\n", desc, shellview);
+
+    *shellview = NULL;
+
+    if (!desc || desc->cbSize != sizeof(*desc))
+        return E_INVALIDARG;
+
+    TRACE("sf=%p outer=%p callback=%p\n", desc->pshf, desc->psvOuter, desc->psfvcb);
+
+    if (!desc->pshf)
+        return E_UNEXPECTED;
+
+    *shellview = IShellView_Constructor(desc->pshf);
+    if (!*shellview)
+        return E_OUTOFMEMORY;
+
+    if (desc->psfvcb)
+    {
+        IShellFolderView *view;
+        IShellView_QueryInterface(*shellview, &IID_IShellFolderView, (void **)&view);
+        IShellFolderView_SetCallback(view, desc->psfvcb, NULL);
+        IShellFolderView_Release(view);
+    }
+
+    return S_OK;
+}
+
+/*************************************************************************
+ * SHCreateShellFolderViewEx			[SHELL32.174]
+ *
+ * Create a new instance of the default Shell folder view object.
+ *
+ * RETURNS
+ *  Success: S_OK
+ *  Failure: error value
+ *
+ * NOTES
+ *  see IShellFolder::CreateViewObject
+ */
+HRESULT WINAPI SHCreateShellFolderViewEx(CSFV *desc, IShellView **shellview)
+{
+    TRACE("(%p, %p)\n", desc, shellview);
+
+    TRACE("sf=%p pidl=%p cb=%p mode=0x%08x parm=%p\n", desc->pshf, desc->pidl, desc->pfnCallback,
+        desc->fvm, desc->psvOuter);
+
+    if (!desc->pshf)
+        return E_UNEXPECTED;
+
+    *shellview = IShellView_Constructor(desc->pshf);
+    if (!*shellview)
+        return E_OUTOFMEMORY;
+
+    return S_OK;
 }

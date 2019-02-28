@@ -565,7 +565,7 @@ static void test_cookie_attrs(void)
     DWORD size, state;
     BOOL ret;
 
-    if(!GetProcAddress(GetModuleHandleA("wininet.dll"), "InternetGetSecurityInfoByURLA")) {
+    if(!GetProcAddress(GetModuleHandleA("wininet.dll"), "DeleteWpadCacheForNetworks")) {
         win_skip("Skipping cookie attributes tests. Too old IE.\n");
         return;
     }
@@ -629,7 +629,7 @@ static void test_cookie_url(void)
     ok(!res && GetLastError() == ERROR_INVALID_PARAMETER,
        "InternetGetCookeA failed: %u, expected ERROR_INVALID_PARAMETER\n", GetLastError());
 
-    len = sizeof(bufw)/sizeof(*bufw);
+    len = ARRAY_SIZE(bufw);
     res = InternetGetCookieW(about_blankW, NULL, bufw, &len);
     ok(!res && GetLastError() == ERROR_INVALID_PARAMETER,
        "InternetGetCookeW failed: %u, expected ERROR_INVALID_PARAMETER\n", GetLastError());
@@ -639,7 +639,7 @@ static void test_cookie_url(void)
     ok(!res && GetLastError() == ERROR_INVALID_PARAMETER,
        "InternetGetCookeExA failed: %u, expected ERROR_INVALID_PARAMETER\n", GetLastError());
 
-    len = sizeof(bufw)/sizeof(*bufw);
+    len = ARRAY_SIZE(bufw);
     res = pInternetGetCookieExW(about_blankW, NULL, bufw, &len, 0, NULL);
     ok(!res && GetLastError() == ERROR_INVALID_PARAMETER,
        "InternetGetCookeExW failed: %u, expected ERROR_INVALID_PARAMETER\n", GetLastError());
@@ -887,7 +887,7 @@ static void InternetTimeFromSystemTimeW_test(void)
 
     /* test too small buffer size */
     SetLastError(0xdeadbeef);
-    ret = pInternetTimeFromSystemTimeW( &time, INTERNET_RFC1123_FORMAT, string, sizeof(string)/sizeof(string[0]) );
+    ret = pInternetTimeFromSystemTimeW( &time, INTERNET_RFC1123_FORMAT, string, ARRAY_SIZE(string));
     error = GetLastError();
     ok( !ret, "InternetTimeFromSystemTimeW should have returned FALSE\n" );
     ok( error == ERROR_INSUFFICIENT_BUFFER,
@@ -1084,7 +1084,7 @@ static void test_PrivacyGetSetZonePreferenceW(void)
     trace("template %u\n", old_template);
 
     if(old_template == PRIVACY_TEMPLATE_ADVANCED) {
-        pref_size = sizeof(pref)/sizeof(WCHAR);
+        pref_size = ARRAY_SIZE(pref);
         ret = pPrivacyGetZonePreferenceW(zone, type, &old_template, pref, &pref_size);
         ok(ret == 0, "expected ret == 0, got %u\n", ret);
     }
@@ -1165,6 +1165,28 @@ static void test_InternetSetOption(void)
     ok(ret == FALSE, "InternetSetOption should've failed\n");
     ok(GetLastError() == ERROR_INVALID_PARAMETER, "GetLastError() = %x\n", GetLastError());
 
+    ret = InternetSetOptionA(req, INTERNET_OPTION_SETTINGS_CHANGED, NULL, 0);
+    ok(ret == TRUE, "InternetSetOption should've succeeded\n");
+
+    ret = InternetSetOptionA(con, INTERNET_OPTION_SETTINGS_CHANGED, NULL, 0);
+    ok(ret == TRUE, "InternetSetOption should've succeeded\n");
+
+    ret = InternetSetOptionA(ses, INTERNET_OPTION_SETTINGS_CHANGED, NULL, 0);
+    ok(ret == TRUE, "InternetSetOption should've succeeded\n");
+
+    ret = InternetSetOptionA(ses, INTERNET_OPTION_REFRESH, NULL, 0);
+    ok(ret == TRUE, "InternetSetOption should've succeeded\n");
+
+    SetLastError(0xdeadbeef);
+    ret = InternetSetOptionA(req, INTERNET_OPTION_REFRESH, NULL, 0);
+    ok(ret == FALSE, "InternetSetOption should've failed\n");
+    ok(GetLastError() == ERROR_INTERNET_INCORRECT_HANDLE_TYPE, "GetLastError() = %u\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = InternetSetOptionA(con, INTERNET_OPTION_REFRESH, NULL, 0);
+    ok(ret == FALSE, "InternetSetOption should've failed\n");
+    ok(GetLastError() == ERROR_INTERNET_INCORRECT_HANDLE_TYPE, "GetLastError() = %u\n", GetLastError());
+
     ret = InternetCloseHandle(req);
     ok(ret == TRUE, "InternetCloseHandle failed: 0x%08x\n", GetLastError());
     ret = InternetCloseHandle(con);
@@ -1187,7 +1209,7 @@ static void test_end_browser_session(void)
     ok(len != 0, "len = 0\n");
 
     ret = InternetSetOptionA(NULL, INTERNET_OPTION_END_BROWSER_SESSION, NULL, 0);
-    ok(ret, "InternetSetOptio(INTERNET_OPTION_END_BROWSER_SESSION) failed: %u\n", GetLastError());
+    ok(ret, "InternetSetOption(INTERNET_OPTION_END_BROWSER_SESSION) failed: %u\n", GetLastError());
 
     len = 1024;
     ret = InternetGetCookieA("http://www.example.com/test_end", NULL, NULL, &len);
@@ -1595,12 +1617,16 @@ static void test_InternetGetConnectedStateExA(void)
         return;
     }
 
+    flags = 0;
+    buffer[0] = 0;
     res = pInternetGetConnectedStateExA(&flags, buffer, sizeof(buffer), 0);
+    trace("Internet Connection: Flags 0x%02x - Name '%s'\n", flags, buffer);
+todo_wine
+    ok (flags & INTERNET_RAS_INSTALLED, "Missing RAS flag\n");
     if(!res) {
         win_skip("InternetGetConnectedStateExA tests require a valid connection\n");
         return;
     }
-    trace("Internet Connection: Flags 0x%02x - Name '%s'\n", flags, buffer);
 
     res = pInternetGetConnectedStateExA(NULL, NULL, 0, 0);
     ok(res == TRUE, "Expected TRUE, got %d\n", res);
@@ -1608,7 +1634,16 @@ static void test_InternetGetConnectedStateExA(void)
     flags = 0;
     res = pInternetGetConnectedStateExA(&flags, NULL, 0, 0);
     ok(res == TRUE, "Expected TRUE, got %d\n", res);
-    ok(flags, "Expected at least one flag set\n");
+    if (flags & INTERNET_CONNECTION_CONFIGURED)
+    {
+        ok(flags & INTERNET_CONNECTION_MODEM, "Modem connection flag missing\n");
+        ok(flags & ~INTERNET_CONNECTION_LAN, "Mixed Modem and LAN flags\n");
+    }
+    else
+    {
+        ok(flags & INTERNET_CONNECTION_LAN, "LAN connection flag missing\n");
+        ok(flags & ~INTERNET_CONNECTION_MODEM, "Mixed Modem and LAN flags\n");
+    }
 
     buffer[0] = 0;
     flags = 0;
@@ -1684,12 +1719,16 @@ static void test_InternetGetConnectedStateExW(void)
         return;
     }
 
-    res = pInternetGetConnectedStateExW(&flags, buffer, sizeof(buffer) / sizeof(buffer[0]), 0);
+    flags = 0;
+    buffer[0] = 0;
+    res = pInternetGetConnectedStateExW(&flags, buffer, ARRAY_SIZE(buffer), 0);
+    trace("Internet Connection: Flags 0x%02x - Name '%s'\n", flags, wine_dbgstr_w(buffer));
+todo_wine
+    ok (flags & INTERNET_RAS_INSTALLED, "Missing RAS flag\n");
     if(!res) {
         win_skip("InternetGetConnectedStateExW tests require a valid connection\n");
         return;
     }
-    trace("Internet Connection: Flags 0x%02x - Name '%s'\n", flags, wine_dbgstr_w(buffer));
 
     res = pInternetGetConnectedStateExW(NULL, NULL, 0, 0);
     ok(res == TRUE, "Expected TRUE, got %d\n", res);
@@ -1697,7 +1736,16 @@ static void test_InternetGetConnectedStateExW(void)
     flags = 0;
     res = pInternetGetConnectedStateExW(&flags, NULL, 0, 0);
     ok(res == TRUE, "Expected TRUE, got %d\n", res);
-    ok(flags, "Expected at least one flag set\n");
+    if (flags & INTERNET_CONNECTION_CONFIGURED)
+    {
+        ok(flags & INTERNET_CONNECTION_MODEM, "Modem connection flag missing\n");
+        ok(flags & ~INTERNET_CONNECTION_LAN, "Mixed Modem and LAN flags\n");
+    }
+    else
+    {
+        ok(flags & INTERNET_CONNECTION_LAN, "LAN connection flag missing\n");
+        ok(flags & ~INTERNET_CONNECTION_MODEM, "Mixed Modem and LAN flags\n");
+    }
 
     buffer[0] = 0;
     flags = 0;
@@ -1707,21 +1755,21 @@ static void test_InternetGetConnectedStateExW(void)
     ok(!buffer[0], "Buffer must not change, got %02X\n", buffer[0]);
 
     buffer[0] = 0;
-    res = pInternetGetConnectedStateExW(NULL, buffer, sizeof(buffer) / sizeof(buffer[0]), 0);
+    res = pInternetGetConnectedStateExW(NULL, buffer, ARRAY_SIZE(buffer), 0);
     ok(res == TRUE, "Expected TRUE, got %d\n", res);
     sz = lstrlenW(buffer);
     ok(sz > 0, "Expected a connection name\n");
 
     buffer[0] = 0;
     flags = 0;
-    res = pInternetGetConnectedStateExW(&flags, buffer, sizeof(buffer) / sizeof(buffer[0]), 0);
+    res = pInternetGetConnectedStateExW(&flags, buffer, ARRAY_SIZE(buffer), 0);
     ok(res == TRUE, "Expected TRUE, got %d\n", res);
     ok(flags, "Expected at least one flag set\n");
     sz = lstrlenW(buffer);
     ok(sz > 0, "Expected a connection name\n");
 
     flags = 0;
-    res = pInternetGetConnectedStateExW(&flags, NULL, sizeof(buffer) / sizeof(buffer[0]), 0);
+    res = pInternetGetConnectedStateExW(&flags, NULL, ARRAY_SIZE(buffer), 0);
     ok(res == TRUE, "Expected TRUE, got %d\n", res);
     ok(flags, "Expected at least one flag set\n");
 
@@ -1731,14 +1779,20 @@ static void test_InternetGetConnectedStateExW(void)
     res = pInternetGetConnectedStateExW(&flags, buffer, sz, 0);
     ok(res == TRUE, "Expected TRUE, got %d\n", res);
     ok(flags, "Expected at least one flag set\n");
-    ok(sz - 1 == lstrlenW(buffer), "Expected %u bytes, got %u\n", sz - 1, lstrlenW(buffer));
+    if (flags & INTERNET_CONNECTION_MODEM)
+        ok(!buffer[0], "Expected 0 bytes, got %u\n", lstrlenW(buffer));
+    else
+        ok(sz - 1 == lstrlenW(buffer), "Expected %u bytes, got %u\n", sz - 1, lstrlenW(buffer));
 
     buffer[0] = 0;
     flags = 0;
     res = pInternetGetConnectedStateExW(&flags, buffer, sz / 2, 0);
     ok(res == TRUE, "Expected TRUE, got %d\n", res);
     ok(flags, "Expected at least one flag set\n");
-    ok(sz / 2 - 1 == lstrlenW(buffer), "Expected %u bytes, got %u\n", sz / 2 - 1, lstrlenW(buffer));
+    if (flags & INTERNET_CONNECTION_MODEM)
+        ok(!buffer[0], "Expected 0 bytes, got %u\n", lstrlenW(buffer));
+    else
+        ok(sz / 2 - 1 == lstrlenW(buffer), "Expected %u bytes, got %u\n", sz / 2 - 1, lstrlenW(buffer));
 
     buffer[0] = 0;
     flags = 0;
@@ -1752,7 +1806,10 @@ static void test_InternetGetConnectedStateExW(void)
     res = pInternetGetConnectedStateExW(&flags, buffer, 2, 0);
     ok(res == TRUE, "Expected TRUE, got %d\n", res);
     ok(flags, "Expected at least one flag set\n");
-    ok(lstrlenW(buffer) == 1, "Expected 1 byte, got %u\n", lstrlenW(buffer));
+    if (flags & INTERNET_CONNECTION_MODEM)
+        ok(!buffer[0], "Expected 0 bytes, got %u\n", lstrlenW(buffer));
+    else
+        ok(lstrlenW(buffer) == 1, "Expected 1 byte, got %u\n", lstrlenW(buffer));
 
     buffer[0] = 0xDEAD;
     flags = 0;
@@ -1760,6 +1817,65 @@ static void test_InternetGetConnectedStateExW(void)
     ok(res == TRUE, "Expected TRUE, got %d\n", res);
     ok(flags, "Expected at least one flag set\n");
     ok(!buffer[0], "Expected 0 bytes, got %u\n", lstrlenW(buffer));
+}
+
+static void test_format_message(HMODULE hdll)
+{
+    DWORD ret;
+    CHAR out[0x100];
+
+    /* These messages come from wininet and not the system. */
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM , NULL, ERROR_INTERNET_TIMEOUT,
+                         MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), out, sizeof(out), NULL);
+    ok(ret == 0, "FormatMessageA returned %d\n", ret);
+
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_HMODULE, hdll, ERROR_INTERNET_TIMEOUT,
+                         MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), out, sizeof(out), NULL);
+    ok(ret != 0, "FormatMessageA returned %d\n", ret);
+
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_HMODULE, hdll, ERROR_INTERNET_INTERNAL_ERROR,
+                         MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), out, sizeof(out), NULL);
+    ok(ret != 0, "FormatMessageA returned %d\n", ret);
+
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_HMODULE, hdll, ERROR_INTERNET_INVALID_URL,
+                         MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), out, sizeof(out), NULL);
+    ok(ret != 0, "FormatMessageA returned %d\n", ret);
+
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_HMODULE, hdll, ERROR_INTERNET_UNRECOGNIZED_SCHEME,
+                         MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), out, sizeof(out), NULL);
+    ok(ret != 0, "FormatMessageA returned %d\n", ret);
+
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_HMODULE, hdll, ERROR_INTERNET_NAME_NOT_RESOLVED,
+                         MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), out, sizeof(out), NULL);
+    ok(ret != 0, "FormatMessageA returned %d\n", ret);
+
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_HMODULE, hdll, ERROR_INTERNET_INVALID_OPERATION,
+                         MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), out, sizeof(out), NULL);
+    ok(ret != 0 || broken(!ret) /* XP, w2k3 */, "FormatMessageA returned %d\n", ret);
+
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_HMODULE, hdll, ERROR_INTERNET_OPERATION_CANCELLED,
+                         MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), out, sizeof(out), NULL);
+    ok(ret != 0, "FormatMessageA returned %d\n", ret);
+
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_HMODULE, hdll, ERROR_INTERNET_ITEM_NOT_FOUND,
+                         MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), out, sizeof(out), NULL);
+    ok(ret != 0, "FormatMessageA returned %d\n", ret);
+
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_HMODULE, hdll, ERROR_INTERNET_CANNOT_CONNECT,
+                         MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), out, sizeof(out), NULL);
+    ok(ret != 0, "FormatMessageA returned %d\n", ret);
+
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_HMODULE, hdll, ERROR_INTERNET_CONNECTION_ABORTED,
+                         MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), out, sizeof(out), NULL);
+    ok(ret != 0, "FormatMessageA returned %d\n", ret);
+
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_HMODULE, hdll, ERROR_INTERNET_SEC_CERT_DATE_INVALID,
+                         MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), out, sizeof(out), NULL);
+    ok(ret != 0, "FormatMessageA returned %d\n", ret);
+
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_HMODULE, hdll, ERROR_INTERNET_SEC_CERT_CN_INVALID,
+                         MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), out, sizeof(out), NULL);
+    ok(ret != 0, "FormatMessageA returned %d\n", ret);
 }
 
 /* ############################### */
@@ -1828,4 +1944,5 @@ START_TEST(internet)
 
     test_InternetSetOption();
     test_end_browser_session();
+    test_format_message(hdll);
 }

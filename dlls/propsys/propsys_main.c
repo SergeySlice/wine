@@ -268,6 +268,12 @@ HRESULT WINAPI PSGetPropertyDescriptionListFromString(LPCWSTR proplist, REFIID r
     return E_NOTIMPL;
 }
 
+HRESULT WINAPI PSGetPropertyKeyFromName(PCWSTR name, PROPERTYKEY *key)
+{
+    FIXME("%s, %p\n", debugstr_w(name), key);
+    return E_NOTIMPL;
+}
+
 HRESULT WINAPI PSRefreshPropertySchema(void)
 {
     FIXME("\n");
@@ -502,4 +508,11 @@ HRESULT WINAPI PSPropertyKeyFromString(LPCWSTR pszString, PROPERTYKEY *pkey)
         pkey->pid = ~pkey->pid + 1;
 
     return S_OK;
+}
+
+HRESULT WINAPI PSCreateMemoryPropertyStore(REFIID riid, void **ppv)
+{
+    TRACE("(%s, %p)\n", debugstr_guid(riid), ppv);
+
+    return PropertyStore_CreateInstance(NULL, riid, ppv);
 }

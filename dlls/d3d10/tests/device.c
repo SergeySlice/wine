@@ -21,6 +21,28 @@
 #include "d3d10.h"
 #include "wine/test.h"
 
+static void test_create_device(void)
+{
+    ID3D10Device *device;
+    unsigned int i;
+    HRESULT hr;
+
+    if (FAILED(hr = D3D10CreateDevice(NULL, D3D10_DRIVER_TYPE_HARDWARE, NULL, 0, D3D10_SDK_VERSION, &device)))
+    {
+        skip("Failed to create HAL device.\n");
+        return;
+    }
+    ID3D10Device_Release(device);
+
+    for (i = 0; i < 100; ++i)
+    {
+        if (i == D3D10_SDK_VERSION)
+            continue;
+        hr = D3D10CreateDevice(NULL, D3D10_DRIVER_TYPE_HARDWARE, NULL, 0, i, &device);
+        ok(hr == E_INVALIDARG, "Got unexpected hr %#x for SDK version %#x.\n", hr, i);
+    }
+}
+
 static void test_stateblock_mask(void)
 {
     static const struct
@@ -132,7 +154,7 @@ static void test_stateblock_mask(void)
     ok(hr == E_INVALIDARG, "Got unexpect hr %#x.\n", hr);
     hr = D3D10StateBlockMaskEnableCapture(NULL, D3D10_DST_VS, 0, 1);
     ok(hr == E_INVALIDARG, "Got unexpect hr %#x.\n", hr);
-    for (i = 0; i < sizeof(capture_test) / sizeof(*capture_test); ++i)
+    for (i = 0; i < ARRAY_SIZE(capture_test); ++i)
     {
         memset(&result, 0xff, sizeof(result));
         hr = D3D10StateBlockMaskDisableCapture(&result, D3D10_DST_VS_SHADER_RESOURCES,
@@ -181,5 +203,6 @@ static void test_stateblock_mask(void)
 
 START_TEST(device)
 {
+    test_create_device();
     test_stateblock_mask();
 }

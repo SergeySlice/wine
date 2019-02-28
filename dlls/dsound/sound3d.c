@@ -111,7 +111,13 @@ static inline D3DVALUE AngleBetweenVectorsRad (const D3DVECTOR *a, const D3DVECT
 		return 0;
 
 	cos = product/(la*lb);
-	angle = acos(cos);
+	if(cos > 1.f){
+		angle = 0;
+	}else if(cos < -1.f){
+		angle = M_PI;
+	}else{
+		angle = acos(cos);
+	}
 	TRACE("angle between (%f,%f,%f) and (%f,%f,%f) = %f radians (%f degrees)\n",  a->x, a->y, a->z, b->x,
 	      b->y, b->z, angle, RadToDeg(angle));
 	return angle;	
@@ -390,7 +396,7 @@ static ULONG WINAPI IDirectSound3DBufferImpl_AddRef(IDirectSound3DBuffer *iface)
     IDirectSoundBufferImpl *This = impl_from_IDirectSound3DBuffer(iface);
     ULONG ref = InterlockedIncrement(&This->ref3D);
 
-    TRACE("(%p) ref was %d\n", This, ref - 1);
+    TRACE("(%p) ref %d\n", This, ref);
 
     if(ref == 1)
         InterlockedIncrement(&This->numIfaces);
@@ -403,7 +409,7 @@ static ULONG WINAPI IDirectSound3DBufferImpl_Release(IDirectSound3DBuffer *iface
     IDirectSoundBufferImpl *This = impl_from_IDirectSound3DBuffer(iface);
     ULONG ref = InterlockedDecrement(&This->ref3D);
 
-    TRACE("(%p) ref was %d\n", This, ref + 1);
+    TRACE("(%p) ref %d\n", This, ref);
 
     if (!ref && !InterlockedDecrement(&This->numIfaces))
         secondarybuffer_destroy(This);
@@ -730,7 +736,7 @@ static HRESULT WINAPI IDirectSound3DListenerImpl_QueryInterface(IDirectSound3DLi
 
         TRACE("(%p,%s,%p)\n", iface, debugstr_guid(riid), ppobj);
 
-        return IDirectSoundBuffer_QueryInterface(&This->IDirectSoundBuffer8_iface, riid, ppobj);
+        return IDirectSoundBuffer8_QueryInterface(&This->IDirectSoundBuffer8_iface, riid, ppobj);
 }
 
 static ULONG WINAPI IDirectSound3DListenerImpl_AddRef(IDirectSound3DListener *iface)
@@ -738,7 +744,7 @@ static ULONG WINAPI IDirectSound3DListenerImpl_AddRef(IDirectSound3DListener *if
     IDirectSoundBufferImpl *This = impl_from_IDirectSound3DListener(iface);
     ULONG ref = InterlockedIncrement(&This->ref3D);
 
-    TRACE("(%p) ref was %d\n", This, ref - 1);
+    TRACE("(%p) ref %d\n", This, ref);
 
     if(ref == 1)
         InterlockedIncrement(&This->numIfaces);
@@ -755,7 +761,7 @@ static ULONG WINAPI IDirectSound3DListenerImpl_Release(IDirectSound3DListener *i
     if(!ref)
         capped_refcount_dec(&This->numIfaces);
 
-    TRACE("(%p) ref is now %d\n", This, ref);
+    TRACE("(%p) ref %d\n", This, ref);
 
     return ref;
 }

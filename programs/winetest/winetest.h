@@ -34,7 +34,7 @@ char *strmake (size_t *lenp, ...);
 int goodtagchar (char c);
 const char *findbadtagchar (const char *tag);
 
-int send_file (const char *name);
+int send_file (const char *url, const char *name);
 
 extern HANDLE logfile;
 
@@ -66,7 +66,7 @@ enum report_type {
     R_QUIET
 };
 
-#define MAXTAGLEN 20
+#define MAXTAGLEN 30
 extern char *tag;
 extern char *email;
 extern BOOL aborting;

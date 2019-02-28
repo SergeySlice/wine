@@ -292,6 +292,116 @@ static int midiCloseSeq(void)
     return 0;
 }
 
+static void handle_midi_event(snd_seq_event_t *ev)
+{
+    WORD wDevID;
+
+    /* Find the target device */
+    for (wDevID = 0; wDevID < MIDM_NumDevs; wDevID++)
+        if ( (ev->source.client == MidiInDev[wDevID].addr.client) && (ev->source.port == MidiInDev[wDevID].addr.port) )
+            break;
+    if ((wDevID == MIDM_NumDevs) || (MidiInDev[wDevID].state != 1))
+        FIXME("Unexpected event received, type = %x from %d:%d\n", ev->type, ev->source.client, ev->source.port);
+    else {
+        DWORD dwTime, toSend = 0;
+        int value = 0;
+        /* FIXME: Should use ev->time instead for better accuracy */
+        dwTime = GetTickCount() - MidiInDev[wDevID].startTime;
+        TRACE("Event received, type = %x, device = %d\n", ev->type, wDevID);
+        switch(ev->type)
+        {
+        case SND_SEQ_EVENT_NOTEOFF:
+            toSend = (ev->data.note.velocity << 16) | (ev->data.note.note << 8) | MIDI_CMD_NOTE_OFF | ev->data.control.channel;
+            break;
+        case SND_SEQ_EVENT_NOTEON:
+            toSend = (ev->data.note.velocity << 16) | (ev->data.note.note << 8) | MIDI_CMD_NOTE_ON | ev->data.control.channel;
+            break;
+        case SND_SEQ_EVENT_KEYPRESS:
+            toSend = (ev->data.note.velocity << 16) | (ev->data.note.note << 8) | MIDI_CMD_NOTE_PRESSURE | ev->data.control.channel;
+            break;
+        case SND_SEQ_EVENT_CONTROLLER:
+            toSend = (ev->data.control.value << 16) | (ev->data.control.param << 8) | MIDI_CMD_CONTROL | ev->data.control.channel;
+            break;
+        case SND_SEQ_EVENT_PITCHBEND:
+            value = ev->data.control.value + 0x2000;
+            toSend = (((value >> 7) & 0x7f) << 16) | ((value & 0x7f) << 8) | MIDI_CMD_BENDER | ev->data.control.channel;
+            break;
+        case SND_SEQ_EVENT_PGMCHANGE:
+            toSend = ((ev->data.control.value & 0x7f) << 8) | MIDI_CMD_PGM_CHANGE | ev->data.control.channel;
+            break;
+        case SND_SEQ_EVENT_CHANPRESS:
+            toSend = ((ev->data.control.value & 0x7f) << 8) | MIDI_CMD_CHANNEL_PRESSURE | ev->data.control.channel;
+            break;
+        case SND_SEQ_EVENT_CLOCK:
+            toSend = 0xF8;
+            break;
+        case SND_SEQ_EVENT_START:
+            toSend = 0xFA;
+            break;
+        case SND_SEQ_EVENT_CONTINUE:
+            toSend = 0xFB;
+            break;
+        case SND_SEQ_EVENT_STOP:
+            toSend = 0xFC;
+            break;
+        case SND_SEQ_EVENT_SONGPOS:
+            toSend = (((ev->data.control.value >> 7) & 0x7f) << 16) | ((ev->data.control.value & 0x7f) << 8) | MIDI_CMD_COMMON_SONG_POS;
+            break;
+        case SND_SEQ_EVENT_SONGSEL:
+          toSend = ((ev->data.control.value & 0x7f) << 8) | MIDI_CMD_COMMON_SONG_SELECT;
+            break;
+        case SND_SEQ_EVENT_RESET:
+            toSend = 0xFF;
+            break;
+        case SND_SEQ_EVENT_QFRAME:
+          toSend = ((ev->data.control.value & 0x7f) << 8) | MIDI_CMD_COMMON_MTC_QUARTER;
+            break;
+        case SND_SEQ_EVENT_SYSEX:
+            {
+                int pos = 0;
+                int len = ev->data.ext.len;
+                LPBYTE ptr = ev->data.ext.ptr;
+                LPMIDIHDR lpMidiHdr;
+
+                EnterCriticalSection(&crit_sect);
+                while (len) {
+                    if ((lpMidiHdr = MidiInDev[wDevID].lpQueueHdr) != NULL) {
+                        int copylen = min(len, lpMidiHdr->dwBufferLength - lpMidiHdr->dwBytesRecorded);
+                        memcpy(lpMidiHdr->lpData + lpMidiHdr->dwBytesRecorded, ptr + pos, copylen);
+                        lpMidiHdr->dwBytesRecorded += copylen;
+                        len -= copylen;
+                        pos += copylen;
+                        /* We check if we reach the end of buffer or the end of sysex before notifying
+                         * to handle the case where ALSA split the sysex into several events */
+                        if ((lpMidiHdr->dwBytesRecorded == lpMidiHdr->dwBufferLength) ||
+                            (*(BYTE*)(lpMidiHdr->lpData + lpMidiHdr->dwBytesRecorded - 1) == 0xF7)) {
+                            MidiInDev[wDevID].lpQueueHdr = lpMidiHdr->lpNext;
+                            lpMidiHdr->dwFlags &= ~MHDR_INQUEUE;
+                            lpMidiHdr->dwFlags |= MHDR_DONE;
+                            MIDI_NotifyClient(wDevID, MIM_LONGDATA, (DWORD_PTR)lpMidiHdr, dwTime);
+                        }
+                    } else {
+                        FIXME("Sysex data received but no buffer to store it!\n");
+                        break;
+                    }
+                }
+                LeaveCriticalSection(&crit_sect);
+            }
+            break;
+        case SND_SEQ_EVENT_SENSING:
+            /* Noting to do */
+            break;
+        default:
+            FIXME("Unhandled event received, type = %x\n", ev->type);
+            break;
+        }
+        if (toSend != 0) {
+            TRACE("Received event %08x from %d:%d\n", toSend, ev->source.client, ev->source.port);
+            MIDI_NotifyClient(wDevID, MIM_DATA, toSend, dwTime);
+        }
+    }
+}
+
 static DWORD WINAPI midRecThread(LPVOID arg)
 {
     int npfd;
@@ -323,116 +433,16 @@ static DWORD WINAPI midRecThread(LPVOID arg)
 	   }*/
 
 	do {
-	    WORD wDevID;
-	    snd_seq_event_t* ev;
-            EnterCriticalSection(&midiSeqLock);
-	    snd_seq_event_input(midiSeq, &ev);
-            LeaveCriticalSection(&midiSeqLock);
-	    /* Find the target device */
-	    for (wDevID = 0; wDevID < MIDM_NumDevs; wDevID++)
-		if ( (ev->source.client == MidiInDev[wDevID].addr.client) && (ev->source.port == MidiInDev[wDevID].addr.port) )
-		    break;
-	    if ((wDevID == MIDM_NumDevs) || (MidiInDev[wDevID].state != 1))
-		FIXME("Unexpected event received, type = %x from %d:%d\n", ev->type, ev->source.client, ev->source.port);
-	    else {
-		DWORD dwTime, toSend = 0;
-		int value = 0;
-		/* FIXME: Should use ev->time instead for better accuracy */
-		dwTime = GetTickCount() - MidiInDev[wDevID].startTime;
-		TRACE("Event received, type = %x, device = %d\n", ev->type, wDevID);
-		switch(ev->type)
-		{
-		case SND_SEQ_EVENT_NOTEOFF:
-		    toSend = (ev->data.note.velocity << 16) | (ev->data.note.note << 8) | MIDI_CMD_NOTE_OFF | ev->data.control.channel;
-		    break;
-		case SND_SEQ_EVENT_NOTEON:
-		    toSend = (ev->data.note.velocity << 16) | (ev->data.note.note << 8) | MIDI_CMD_NOTE_ON | ev->data.control.channel;
-		    break;
-		case SND_SEQ_EVENT_KEYPRESS:
-		    toSend = (ev->data.note.velocity << 16) | (ev->data.note.note << 8) | MIDI_CMD_NOTE_PRESSURE | ev->data.control.channel;
-		    break;
-		case SND_SEQ_EVENT_CONTROLLER: 
-		    toSend = (ev->data.control.value << 16) | (ev->data.control.param << 8) | MIDI_CMD_CONTROL | ev->data.control.channel;
-		    break;
-		case SND_SEQ_EVENT_PITCHBEND:
-		    value = ev->data.control.value + 0x2000;
-		    toSend = (((value >> 7) & 0x7f) << 16) | ((value & 0x7f) << 8) | MIDI_CMD_BENDER | ev->data.control.channel;
-		    break;
-		case SND_SEQ_EVENT_PGMCHANGE:
-		    toSend = ((ev->data.control.value & 0x7f) << 8) | MIDI_CMD_PGM_CHANGE | ev->data.control.channel;
-		    break;
-		case SND_SEQ_EVENT_CHANPRESS:
-		    toSend = ((ev->data.control.value & 0x7f) << 8) | MIDI_CMD_CHANNEL_PRESSURE | ev->data.control.channel;
-		    break;
-                case SND_SEQ_EVENT_CLOCK:
-                    toSend = 0xF8;
-                    break;
-                case SND_SEQ_EVENT_START:
-                    toSend = 0xFA;
-                    break;
-                case SND_SEQ_EVENT_CONTINUE:
-                    toSend = 0xFB;
-                    break;
-                case SND_SEQ_EVENT_STOP:
-                    toSend = 0xFC;
-                    break;
-                case SND_SEQ_EVENT_SONGPOS:
-                    toSend = (((ev->data.control.value >> 7) & 0x7f) << 16) | ((ev->data.control.value & 0x7f) << 8) | MIDI_CMD_COMMON_SONG_POS;
-                    break;
-                case SND_SEQ_EVENT_SONGSEL:
-                  toSend = ((ev->data.control.value & 0x7f) << 8) | MIDI_CMD_COMMON_SONG_SELECT;
-                    break;
-                case SND_SEQ_EVENT_RESET:
-                    toSend = 0xFF;
-                    break;
-                case SND_SEQ_EVENT_QFRAME:
-                  toSend = ((ev->data.control.value & 0x7f) << 8) | MIDI_CMD_COMMON_MTC_QUARTER;
-                    break;
-		case SND_SEQ_EVENT_SYSEX:
-		    {
-			int pos = 0;
-			int len = ev->data.ext.len;
-                        LPBYTE ptr = ev->data.ext.ptr;
-			LPMIDIHDR lpMidiHdr;
+            snd_seq_event_t *ev;
 
-			EnterCriticalSection(&crit_sect);
-			while (len) {
-			    if ((lpMidiHdr = MidiInDev[wDevID].lpQueueHdr) != NULL) {
-				int copylen = min(len, lpMidiHdr->dwBufferLength - lpMidiHdr->dwBytesRecorded);
-				memcpy(lpMidiHdr->lpData + lpMidiHdr->dwBytesRecorded, ptr + pos, copylen);
-				lpMidiHdr->dwBytesRecorded += copylen;
-				len -= copylen;
-				pos += copylen;
-				/* We check if we reach the end of buffer or the end of sysex before notifying
-				 * to handle the case where ALSA split the sysex into several events */
-				if ((lpMidiHdr->dwBytesRecorded == lpMidiHdr->dwBufferLength) ||
-				    (*(BYTE*)(lpMidiHdr->lpData + lpMidiHdr->dwBytesRecorded - 1) == 0xF7)) {
-				    MidiInDev[wDevID].lpQueueHdr = lpMidiHdr->lpNext;
-				    lpMidiHdr->dwFlags &= ~MHDR_INQUEUE;
-				    lpMidiHdr->dwFlags |= MHDR_DONE;
-				    MIDI_NotifyClient(wDevID, MIM_LONGDATA, (DWORD_PTR)lpMidiHdr, dwTime);
-				}
-			    } else {
-				FIXME("Sysex data received but no buffer to store it!\n");
-				break;
-			    }
-			}
-			LeaveCriticalSection(&crit_sect);
-		    }
-		    break;
-		case SND_SEQ_EVENT_SENSING:
-		    /* Noting to do */
-		    break;
-		default:
-		    FIXME("Unhandled event received, type = %x\n", ev->type);
-		    break;
-		}
-		if (toSend != 0) {
-		    TRACE("Received event %08x from %d:%d\n", toSend, ev->source.client, ev->source.port);
-		    MIDI_NotifyClient(wDevID, MIM_DATA, toSend, dwTime);
-		}
-	    }
-	    snd_seq_free_event(ev);
+            EnterCriticalSection(&midiSeqLock);
+            snd_seq_event_input(midiSeq, &ev);
+            LeaveCriticalSection(&midiSeqLock);
+
+            if (ev) {
+                handle_midi_event(ev);
+                snd_seq_free_event(ev);
+            }
 
             EnterCriticalSection(&midiSeqLock);
             ret = snd_seq_event_input_pending(midiSeq, 0);
@@ -909,10 +919,15 @@ static DWORD modData(WORD wDevID, DWORD dwParam)
 		case 0x0B:	/* Continue */
 		case 0x0C:	/* Stop */
 		case 0x0E: 	/* Active Sensing. */
-		    /* FIXME: Is this function suitable for these purposes
-		       (and also Song Select and Song Position Pointer) */
-	            snd_seq_ev_set_sysex(&event, 1, &evt);
+		{
+		    snd_midi_event_t *midi_event;
+
+		    snd_midi_event_new(1, &midi_event);
+		    snd_midi_event_init(midi_event);
+		    snd_midi_event_encode_byte(midi_event, evt, &event);
+		    snd_midi_event_free(midi_event);
 		    break;
+		}
 		case 0x0F: 	/* Reset */
 				/* snd_seq_ev_set_sysex(&event, 1, &evt);
 				   this other way may be better */
@@ -1172,9 +1187,8 @@ static void ALSA_AddMidiPort(snd_seq_client_info_t* cinfo, snd_seq_port_info_t* 
 	} else {
 	    lstrcpynA(midiPortName, snd_seq_port_info_get_name(pinfo), MAXPNAMELEN);
 	}
-	MultiByteToWideChar(CP_UNIXCP, 0, midiPortName, -1,
-                            MidiOutDev[MODM_NumDevs].caps.szPname,
-                            sizeof(MidiOutDev[MODM_NumDevs].caps.szPname) / sizeof(WCHAR));
+        MultiByteToWideChar(CP_UNIXCP, 0, midiPortName, -1, MidiOutDev[MODM_NumDevs].caps.szPname,
+                            ARRAY_SIZE(MidiOutDev[MODM_NumDevs].caps.szPname));
 
 	MidiOutDev[MODM_NumDevs].caps.wTechnology = MIDI_AlsaToWindowsDeviceType(type);
 
@@ -1239,9 +1253,8 @@ static void ALSA_AddMidiPort(snd_seq_client_info_t* cinfo, snd_seq_port_info_t* 
 	} else {
 	    lstrcpynA(midiPortName, snd_seq_port_info_get_name(pinfo), MAXPNAMELEN);
         }
-	MultiByteToWideChar(CP_UNIXCP, 0, midiPortName, -1,
-                            MidiInDev[MIDM_NumDevs].caps.szPname,
-                            sizeof(MidiInDev[MIDM_NumDevs].caps.szPname) / sizeof(WCHAR));
+        MultiByteToWideChar(CP_UNIXCP, 0, midiPortName, -1, MidiInDev[MIDM_NumDevs].caps.szPname,
+                            ARRAY_SIZE(MidiInDev[MIDM_NumDevs].caps.szPname));
 	MidiInDev[MIDM_NumDevs].state = 0;
 
 	TRACE("MidiIn [%d]\tname='%s' support=%d\n"

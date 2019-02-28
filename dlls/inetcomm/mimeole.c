@@ -33,6 +33,7 @@
 #include "mimeole.h"
 #include "propvarutil.h"
 
+#include "wine/heap.h"
 #include "wine/list.h"
 #include "wine/debug.h"
 #include "wine/unicode.h"
@@ -818,16 +819,21 @@ static void empty_param_list(struct list *list)
     }
 }
 
+static void free_header(header_t *header)
+{
+    list_remove(&header->entry);
+    PropVariantClear(&header->value);
+    empty_param_list(&header->params);
+    heap_free(header);
+}
+
 static void empty_header_list(struct list *list)
 {
     header_t *header, *cursor2;
 
     LIST_FOR_EACH_ENTRY_SAFE(header, cursor2, list, header_t, entry)
     {
-        list_remove(&header->entry);
-        PropVariantClear(&header->value);
-        empty_param_list(&header->params);
-        HeapFree(GetProcessHeap(), 0, header);
+        free_header(header);
     }
 }
 
@@ -971,10 +977,15 @@ static HRESULT WINAPI MimeBody_GetClassID(
                                  CLSID* pClassID)
 {
     MimeBody *This = impl_from_IMimeBody(iface);
-    FIXME("(%p)->(%p) stub\n", This, pClassID);
-    return E_NOTIMPL;
-}
 
+    TRACE("(%p)->(%p)\n", This, pClassID);
+
+    if(!pClassID)
+        return E_INVALIDARG;
+
+    *pClassID = IID_IMimeBody;
+    return S_OK;
+}
 
 static HRESULT WINAPI MimeBody_IsDirty(
                               IMimeBody* iface)
@@ -1226,8 +1237,7 @@ static HRESULT WINAPI MimeBody_DeleteProp(
 
         if(found)
         {
-             list_remove(&cursor->entry);
-             HeapFree(GetProcessHeap(), 0, cursor);
+             free_header(cursor);
              return S_OK;
         }
     }
@@ -1575,9 +1585,8 @@ static HRESULT decode_base64(IStream *input, IStream **ret_stream)
 
         while(1) {
             /* skip invalid chars */
-            while(ptr < end &&
-                  (*ptr >= sizeof(base64_decode_table)/sizeof(*base64_decode_table)
-                   || base64_decode_table[*ptr] == -1))
+            while(ptr < end && (*ptr >= ARRAY_SIZE(base64_decode_table)
+                                || base64_decode_table[*ptr] == -1))
                 ptr++;
             if(ptr == end)
                 break;
@@ -1755,7 +1764,7 @@ static HRESULT WINAPI MimeBody_SetData(
     }
 
     if(This->data)
-        FIXME("release old data\n");
+        release_data(&This->data_iid, This->data);
 
     This->data_iid = *riid;
     This->data = pvObject;
@@ -3709,7 +3718,7 @@ HRESULT WINAPI MimeOleObjectFromMoniker(BINDF bindf, IMoniker *moniker, IBindCtx
         return E_OUTOFMEMORY;
 
     memcpy(mhtml_url, mhtml_prefixW, sizeof(mhtml_prefixW));
-    strcpyW(mhtml_url + sizeof(mhtml_prefixW)/sizeof(WCHAR), display_name);
+    strcpyW(mhtml_url + ARRAY_SIZE(mhtml_prefixW), display_name);
     HeapFree(GetProcessHeap(), 0, display_name);
 
     hres = CreateURLMoniker(NULL, mhtml_url, moniker_new);

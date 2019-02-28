@@ -24,6 +24,7 @@
 #include "dispex.h"
 
 #include "wine/unicode.h"
+#include "wine/heap.h"
 #include "wine/list.h"
 
 #ifndef __WINE_CONFIG_H
@@ -164,29 +165,9 @@ const IID *get_riid_from_tid(enum tid_t tid) DECLSPEC_HIDDEN;
 
 /* memory allocation functions */
 
-static inline void *heap_alloc(size_t len)
+static inline void* __WINE_ALLOC_SIZE(2) heap_realloc_zero(void *mem, size_t size)
 {
-    return HeapAlloc(GetProcessHeap(), 0, len);
-}
-
-static inline void *heap_alloc_zero(size_t len)
-{
-    return HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, len);
-}
-
-static inline void *heap_realloc(void *mem, size_t len)
-{
-    return HeapReAlloc(GetProcessHeap(), 0, mem, len);
-}
-
-static inline void *heap_realloc_zero(void *mem, size_t len)
-{
-    return HeapReAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, mem, len);
-}
-
-static inline BOOL heap_free(void *mem)
-{
-    return HeapFree(GetProcessHeap(), 0, mem);
+    return HeapReAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, mem, size);
 }
 
 static inline LPWSTR heap_strdupW(LPCWSTR str)
@@ -271,7 +252,7 @@ extern IUnknown         *create_domdoc( xmlNodePtr ) DECLSPEC_HIDDEN;
 extern IUnknown         *create_xmldoc( void ) DECLSPEC_HIDDEN;
 extern IXMLDOMNode      *create_node( xmlNodePtr ) DECLSPEC_HIDDEN;
 extern IUnknown         *create_element( xmlNodePtr ) DECLSPEC_HIDDEN;
-extern IUnknown         *create_attribute( xmlNodePtr ) DECLSPEC_HIDDEN;
+extern IUnknown         *create_attribute( xmlNodePtr, BOOL ) DECLSPEC_HIDDEN;
 extern IUnknown         *create_text( xmlNodePtr ) DECLSPEC_HIDDEN;
 extern IUnknown         *create_pi( xmlNodePtr ) DECLSPEC_HIDDEN;
 extern IUnknown         *create_comment( xmlNodePtr ) DECLSPEC_HIDDEN;
@@ -303,6 +284,7 @@ extern HRESULT xmldoc_add_orphan( xmlDocPtr doc, xmlNodePtr node ) DECLSPEC_HIDD
 extern HRESULT xmldoc_remove_orphan( xmlDocPtr doc, xmlNodePtr node ) DECLSPEC_HIDDEN;
 extern void xmldoc_link_xmldecl(xmlDocPtr doc, xmlNodePtr node) DECLSPEC_HIDDEN;
 extern xmlNodePtr xmldoc_unlink_xmldecl(xmlDocPtr doc) DECLSPEC_HIDDEN;
+extern MSXML_VERSION xmldoc_version( xmlDocPtr doc ) DECLSPEC_HIDDEN;
 
 extern HRESULT XMLElement_create( xmlNodePtr node, LPVOID *ppObj, BOOL own ) DECLSPEC_HIDDEN;
 
@@ -358,7 +340,8 @@ extern HRESULT node_get_text(const xmlnode*,BSTR*) DECLSPEC_HIDDEN;
 extern HRESULT node_select_nodes(const xmlnode*,BSTR,IXMLDOMNodeList**) DECLSPEC_HIDDEN;
 extern HRESULT node_select_singlenode(const xmlnode*,BSTR,IXMLDOMNode**) DECLSPEC_HIDDEN;
 extern HRESULT node_transform_node(const xmlnode*,IXMLDOMNode*,BSTR*) DECLSPEC_HIDDEN;
-extern HRESULT node_transform_node_params(const xmlnode*,IXMLDOMNode*,BSTR*,IStream*,const struct xslprocessor_params*) DECLSPEC_HIDDEN;
+extern HRESULT node_transform_node_params(const xmlnode*,IXMLDOMNode*,BSTR*,ISequentialStream*,
+    const struct xslprocessor_params*) DECLSPEC_HIDDEN;
 extern HRESULT node_create_supporterrorinfo(const tid_t*,void**) DECLSPEC_HIDDEN;
 
 extern HRESULT get_domdoc_from_xmldoc(xmlDocPtr xmldoc, IXMLDOMDocument3 **document) DECLSPEC_HIDDEN;
@@ -378,6 +361,12 @@ extern BSTR EnsureCorrectEOL(BSTR) DECLSPEC_HIDDEN;
 
 extern xmlChar* tagName_to_XPath(const BSTR tagName) DECLSPEC_HIDDEN;
 
+#ifdef SONAME_LIBXSLT
+#  include <libxslt/documents.h>
+extern xmlDocPtr xslt_doc_default_loader(const xmlChar *uri, xmlDictPtr dict, int options,
+    void *_ctxt, xsltLoadType type) DECLSPEC_HIDDEN;
+#endif /* SONAME_LIBXSLT */
+
 static inline BSTR bstr_from_xmlChar(const xmlChar *str)
 {
     BSTR ret = NULL;
@@ -394,12 +383,12 @@ static inline BSTR bstr_from_xmlChar(const xmlChar *str)
     return ret;
 }
 
-static inline xmlChar *xmlchar_from_wcharn(const WCHAR *str, int nchars)
+static inline xmlChar *xmlchar_from_wcharn(const WCHAR *str, int nchars, BOOL use_xml_alloc)
 {
     xmlChar *xmlstr;
     DWORD len = WideCharToMultiByte( CP_UTF8, 0, str, nchars, NULL, 0, NULL, NULL );
 
-    xmlstr = heap_alloc( len+1 );
+    xmlstr = use_xml_alloc ? xmlMalloc( len + 1 ) : heap_alloc( len + 1 );
     if ( xmlstr )
     {
         WideCharToMultiByte( CP_UTF8, 0, str, nchars, (LPSTR) xmlstr, len+1, NULL, NULL );
@@ -410,7 +399,7 @@ static inline xmlChar *xmlchar_from_wcharn(const WCHAR *str, int nchars)
 
 static inline xmlChar *xmlchar_from_wchar( const WCHAR *str )
 {
-    return xmlchar_from_wcharn(str, -1);
+    return xmlchar_from_wcharn(str, -1, FALSE);
 }
 
 static inline xmlChar *heap_strdupxmlChar(const xmlChar *str)
@@ -543,6 +532,7 @@ static inline const CLSID* SchemaCache_version(MSXML_VERSION v)
 typedef struct bsc_t bsc_t;
 
 HRESULT create_moniker_from_url(LPCWSTR, IMoniker**) DECLSPEC_HIDDEN;
+HRESULT create_uri(const WCHAR *, IUri **) DECLSPEC_HIDDEN;
 HRESULT bind_url(IMoniker*, HRESULT (*onDataAvailable)(void*,char*,DWORD), void*, bsc_t**) DECLSPEC_HIDDEN;
 HRESULT detach_bsc(bsc_t*) DECLSPEC_HIDDEN;
 

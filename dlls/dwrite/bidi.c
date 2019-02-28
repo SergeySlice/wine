@@ -278,7 +278,7 @@ static void bidi_resolve_explicit(UINT8 baselevel, UINT8 *classes, UINT8 *levels
         /* X2 */
         case RLE:
             least_odd = get_greater_odd_level(stack[stack_top].level);
-            levels[i] = stack[stack_top].level;
+            levels[i] = valid_level(least_odd) ? least_odd : stack[stack_top].level;
             if (valid_level(least_odd))
                 push_stack(least_odd, NI, FALSE);
             else if (overflow_isolate_count == 0)
@@ -288,7 +288,7 @@ static void bidi_resolve_explicit(UINT8 baselevel, UINT8 *classes, UINT8 *levels
         /* X3 */
         case LRE:
             least_even = get_greater_even_level(stack[stack_top].level);
-            levels[i] = stack[stack_top].level;
+            levels[i] = valid_level(least_even) ? least_even : stack[stack_top].level;
             if (valid_level(least_even))
                 push_stack(least_even, NI, FALSE);
             else if (overflow_isolate_count == 0)
@@ -964,7 +964,7 @@ static HRESULT bidi_compute_isolating_runs_set(UINT8 baselevel, UINT8 *classes, 
     HRESULT hr = S_OK;
     Run *runs;
 
-    runs = heap_alloc(count * sizeof(Run));
+    runs = heap_calloc(count, sizeof(*runs));
     if (!runs)
         return E_OUTOFMEMORY;
 

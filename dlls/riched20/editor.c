@@ -90,7 +90,7 @@
   + EM_REPLACESEL (proper style?) ANSI&Unicode
   + EM_SCROLL
   + EM_SCROLLCARET
-  - EM_SELECTIONTYPE
+  + EM_SELECTIONTYPE
   - EM_SETBIDIOPTIONS 3.0
   + EM_SETBKGNDCOLOR
   + EM_SETCHARFORMAT (partly done, no ANSI)
@@ -176,7 +176,7 @@
   + ES_DISABLENOSCROLL (scrollbar is always visible)
   - ES_EX_NOCALLOLEINIT
   + ES_LEFT
-  - ES_MULTILINE (currently single line controls aren't supported)
+  + ES_MULTILINE
   - ES_NOIME
   - ES_READONLY (I'm not sure if beeping is the proper behaviour)
   + ES_RIGHT
@@ -261,9 +261,7 @@ static inline BOOL is_version_nt(void)
 }
 
 static ME_TextBuffer *ME_MakeText(void) {
-  
-  ME_TextBuffer *buf = ALLOC_OBJ(ME_TextBuffer);
-
+  ME_TextBuffer *buf = heap_alloc(sizeof(*buf));
   ME_DisplayItem *p1 = ME_MakeDI(diTextStart);
   ME_DisplayItem *p2 = ME_MakeDI(diTextEnd);
   
@@ -520,8 +518,8 @@ void ME_RTFCharAttrHook(RTF_Info *info)
         RTFFont *f = RTFGetFont(info, info->rtfParam);
         if (f)
         {
-          MultiByteToWideChar(CP_ACP, 0, f->rtfFName, -1, fmt.szFaceName, sizeof(fmt.szFaceName)/sizeof(WCHAR));
-          fmt.szFaceName[sizeof(fmt.szFaceName)/sizeof(WCHAR)-1] = '\0';
+          MultiByteToWideChar(CP_ACP, 0, f->rtfFName, -1, fmt.szFaceName, ARRAY_SIZE(fmt.szFaceName));
+          fmt.szFaceName[ARRAY_SIZE(fmt.szFaceName)-1] = '\0';
           fmt.bCharSet = f->rtfFCharSet;
           fmt.dwMask = CFM_FACE | CFM_CHARSET;
           fmt.bPitchAndFamily = f->rtfFPitch | (f->rtfFFamily << 4);
@@ -606,8 +604,7 @@ void ME_RTFParAttrHook(RTF_Info *info)
     if (!info->editor->bEmulateVersion10) /* v4.1 */
     {
       while (info->rtfParam > info->nestingLevel) {
-        RTFTable *tableDef = ALLOC_OBJ(RTFTable);
-        ZeroMemory(tableDef, sizeof(RTFTable));
+        RTFTable *tableDef = heap_alloc_zero(sizeof(*tableDef));
         tableDef->parent = info->tableDef;
         info->tableDef = tableDef;
 
@@ -641,10 +638,7 @@ void ME_RTFParAttrHook(RTF_Info *info)
       {
         RTFTable *tableDef;
         if (!info->tableDef)
-        {
-            info->tableDef = ALLOC_OBJ(RTFTable);
-            ZeroMemory(info->tableDef, sizeof(RTFTable));
-        }
+            info->tableDef = heap_alloc_zero(sizeof(*info->tableDef));
         tableDef = info->tableDef;
         RTFFlushOutputBuffer(info);
         if (tableDef->tableRowStart &&
@@ -1122,18 +1116,19 @@ void ME_RTFSpecialCharHook(RTF_Info *info)
   }
 }
 
-static BOOL ME_RTFInsertOleObject(RTF_Info *info, HENHMETAFILE hemf, HBITMAP hbmp,
-                                  const SIZEL* sz)
+static HRESULT insert_static_object(ME_TextEditor *editor, HENHMETAFILE hemf, HBITMAP hbmp,
+                                    const SIZEL* sz)
 {
   LPOLEOBJECT         lpObject = NULL;
   LPSTORAGE           lpStorage = NULL;
   LPOLECLIENTSITE     lpClientSite = NULL;
   LPDATAOBJECT        lpDataObject = NULL;
   LPOLECACHE          lpOleCache = NULL;
+  LPRICHEDITOLE       lpReOle = NULL;
   STGMEDIUM           stgm;
   FORMATETC           fm;
   CLSID               clsid;
-  BOOL                ret = FALSE;
+  HRESULT             hr = E_FAIL;
   DWORD               conn;
 
   if (hemf)
@@ -1155,13 +1150,15 @@ static BOOL ME_RTFInsertOleObject(RTF_Info *info, HENHMETAFILE hemf, HBITMAP hbm
   fm.lindex = -1;
   fm.tymed = stgm.tymed;
 
-  if (!info->lpRichEditOle)
+  if (!editor->reOle)
   {
-    CreateIRichEditOle(NULL, info->editor, (VOID**)&info->lpRichEditOle);
+    if (!CreateIRichEditOle(NULL, editor, (LPVOID *)&editor->reOle))
+      return hr;
   }
 
   if (OleCreateDefaultHandler(&CLSID_NULL, NULL, &IID_IOleObject, (void**)&lpObject) == S_OK &&
-      IRichEditOle_GetClientSite(info->lpRichEditOle, &lpClientSite) == S_OK &&
+      IUnknown_QueryInterface(editor->reOle, &IID_IRichEditOle, (void**)&lpReOle) == S_OK &&
+      IRichEditOle_GetClientSite(lpReOle, &lpClientSite) == S_OK &&
       IOleObject_SetClientSite(lpObject, lpClientSite) == S_OK &&
       IOleObject_GetUserClassID(lpObject, &clsid) == S_OK &&
       IOleObject_QueryInterface(lpObject, &IID_IOleCache, (void**)&lpOleCache) == S_OK &&
@@ -1184,8 +1181,8 @@ static BOOL ME_RTFInsertOleObject(RTF_Info *info, HENHMETAFILE hemf, HBITMAP hbm
     reobject.dwFlags = 0; /* FIXME */
     reobject.dwUser = 0;
 
-    ME_InsertOLEFromCursor(info->editor, &reobject, 0);
-    ret = TRUE;
+    ME_InsertOLEFromCursor(editor, &reobject, 0);
+    hr = S_OK;
   }
 
   if (lpObject)       IOleObject_Release(lpObject);
@@ -1193,8 +1190,9 @@ static BOOL ME_RTFInsertOleObject(RTF_Info *info, HENHMETAFILE hemf, HBITMAP hbm
   if (lpStorage)      IStorage_Release(lpStorage);
   if (lpDataObject)   IDataObject_Release(lpDataObject);
   if (lpOleCache)     IOleCache_Release(lpOleCache);
+  if (lpReOle)        IRichEditOle_Release(lpReOle);
 
-  return ret;
+  return hr;
 }
 
 static void ME_RTFReadShpPictGroup( RTF_Info *info )
@@ -1353,11 +1351,11 @@ static void ME_RTFReadPictGroup(RTF_Info *info)
         {
         case gfx_enhmetafile:
             if ((hemf = SetEnhMetaFileBits( size, buffer )))
-                ME_RTFInsertOleObject( info, hemf, NULL, &sz );
+                insert_static_object( info->editor, hemf, NULL, &sz );
             break;
         case gfx_metafile:
             if ((hemf = SetWinMetaFileBits( size, buffer, NULL, &mfp )))
-                ME_RTFInsertOleObject( info, hemf, NULL, &sz );
+                insert_static_object( info->editor, hemf, NULL, &sz );
             break;
         case gfx_dib:
         {
@@ -1371,7 +1369,7 @@ static void ME_RTFReadPictGroup(RTF_Info *info)
             if ((hbmp = CreateDIBitmap( hdc, &bi->bmiHeader,
                                         CBM_INIT, (char*)(bi + 1) + nc * sizeof(RGBQUAD),
                                         bi, DIB_RGB_COLORS)) )
-                ME_RTFInsertOleObject( info, NULL, hbmp, &sz );
+                insert_static_object( info->editor, NULL, hbmp, &sz );
             ReleaseDC( 0, hdc );
             break;
         }
@@ -1727,8 +1725,6 @@ static LRESULT ME_StreamIn(ME_TextEditor *editor, DWORD format, EDITSTREAM *stre
       }
       ME_CheckTablesForCorruption(editor);
       RTFDestroy(&parser);
-      if (parser.lpRichEditOle)
-        IRichEditOle_Release(parser.lpRichEditOle);
 
       if (parser.stackTop > 0)
       {
@@ -2143,12 +2139,12 @@ static int ME_GetTextRange(ME_TextEditor *editor, WCHAR *strText,
       return ME_GetTextW(editor, strText, INT_MAX, start, nLen, FALSE, FALSE);
     } else {
       int nChars;
-      WCHAR *p = ALLOC_N_OBJ(WCHAR, nLen+1);
+      WCHAR *p = heap_alloc((nLen+1) * sizeof(*p));
       if (!p) return 0;
       nChars = ME_GetTextW(editor, p, nLen, start, nLen, FALSE, FALSE);
       WideCharToMultiByte(CP_ACP, 0, p, nChars+1, (char *)strText,
                           nLen+1, NULL, NULL);
-      FREE_OBJ(p);
+      heap_free(p);
       return nChars;
     }
 }
@@ -2210,31 +2206,130 @@ static DWORD CALLBACK ME_ReadFromHGLOBALRTF(DWORD_PTR dwCookie, LPBYTE lpBuff, L
   return 0;
 }
 
-static BOOL ME_Paste(ME_TextEditor *editor)
+static const WCHAR rtfW[] = {'R','i','c','h',' ','T','e','x','t',' ','F','o','r','m','a','t',0};
+
+static HRESULT paste_rtf(ME_TextEditor *editor, FORMATETC *fmt, STGMEDIUM *med)
 {
-  DWORD dwFormat = 0;
-  EDITSTREAM es;
-  ME_GlobalDestStruct gds;
-  UINT nRTFFormat = RegisterClipboardFormatA("Rich Text Format");
-  UINT cf = 0;
+    EDITSTREAM es;
+    ME_GlobalDestStruct gds;
+    HRESULT hr;
 
-  if (IsClipboardFormatAvailable(nRTFFormat))
-    cf = nRTFFormat, dwFormat = SF_RTF;
-  else if (IsClipboardFormatAvailable(CF_UNICODETEXT))
-    cf = CF_UNICODETEXT, dwFormat = SF_TEXT|SF_UNICODE;
-  else
-    return FALSE;
+    gds.hData = med->u.hGlobal;
+    gds.nLength = 0;
+    es.dwCookie = (DWORD_PTR)&gds;
+    es.pfnCallback = ME_ReadFromHGLOBALRTF;
+    hr = ME_StreamIn( editor, SF_RTF | SFF_SELECTION, &es, FALSE ) == 0 ? E_FAIL : S_OK;
+    ReleaseStgMedium( med );
+    return hr;
+}
 
-  if (!OpenClipboard(editor->hWnd))
-    return FALSE;
-  gds.hData = GetClipboardData(cf);
-  gds.nLength = 0;
-  es.dwCookie = (DWORD_PTR)&gds;
-  es.pfnCallback = dwFormat == SF_RTF ? ME_ReadFromHGLOBALRTF : ME_ReadFromHGLOBALUnicode;
-  ME_StreamIn(editor, dwFormat|SFF_SELECTION, &es, FALSE);
+static HRESULT paste_text(ME_TextEditor *editor, FORMATETC *fmt, STGMEDIUM *med)
+{
+    EDITSTREAM es;
+    ME_GlobalDestStruct gds;
+    HRESULT hr;
 
-  CloseClipboard();
-  return TRUE;
+    gds.hData = med->u.hGlobal;
+    gds.nLength = 0;
+    es.dwCookie = (DWORD_PTR)&gds;
+    es.pfnCallback = ME_ReadFromHGLOBALUnicode;
+    hr = ME_StreamIn( editor, SF_TEXT | SF_UNICODE | SFF_SELECTION, &es, FALSE ) == 0 ? E_FAIL : S_OK;
+    ReleaseStgMedium( med );
+    return hr;
+}
+
+static HRESULT paste_emf(ME_TextEditor *editor, FORMATETC *fmt, STGMEDIUM *med)
+{
+    HRESULT hr;
+    SIZEL sz = {0, 0};
+
+    hr = insert_static_object( editor, med->u.hEnhMetaFile, NULL, &sz );
+    if (SUCCEEDED(hr))
+    {
+        ME_CommitUndo( editor );
+        ME_UpdateRepaint( editor, FALSE );
+    }
+    else
+        ReleaseStgMedium( med );
+
+    return hr;
+}
+
+static struct paste_format
+{
+    FORMATETC fmt;
+    HRESULT (*paste)(ME_TextEditor *, FORMATETC *, STGMEDIUM *);
+    const WCHAR *name;
+} paste_formats[] =
+{
+    {{ -1,             NULL, DVASPECT_CONTENT, -1, TYMED_HGLOBAL }, paste_rtf, rtfW },
+    {{ CF_UNICODETEXT, NULL, DVASPECT_CONTENT, -1, TYMED_HGLOBAL }, paste_text },
+    {{ CF_ENHMETAFILE, NULL, DVASPECT_CONTENT, -1, TYMED_ENHMF },   paste_emf },
+    {{ 0 }}
+};
+
+static void init_paste_formats(void)
+{
+    struct paste_format *format;
+    static int done;
+
+    if (!done)
+    {
+        for (format = paste_formats; format->fmt.cfFormat; format++)
+        {
+            if (format->name)
+                format->fmt.cfFormat = RegisterClipboardFormatW( format->name );
+        }
+        done = 1;
+    }
+}
+
+static BOOL paste_special(ME_TextEditor *editor, UINT cf, REPASTESPECIAL *ps, BOOL check_only)
+{
+    HRESULT hr;
+    STGMEDIUM med;
+    struct paste_format *format;
+    IDataObject *data;
+
+    /* Protect read-only edit control from modification */
+    if (editor->styleFlags & ES_READONLY)
+    {
+        if (!check_only)
+            MessageBeep(MB_ICONERROR);
+        return FALSE;
+    }
+
+    init_paste_formats();
+
+    if (ps && ps->dwAspect != DVASPECT_CONTENT)
+        FIXME("Ignoring aspect %x\n", ps->dwAspect);
+
+    hr = OleGetClipboard( &data );
+    if (hr != S_OK) return FALSE;
+
+    if (cf == CF_TEXT) cf = CF_UNICODETEXT;
+
+    hr = S_FALSE;
+    for (format = paste_formats; format->fmt.cfFormat; format++)
+    {
+        if (cf && cf != format->fmt.cfFormat) continue;
+        hr = IDataObject_QueryGetData( data, &format->fmt );
+        if (hr == S_OK)
+        {
+            if (!check_only)
+            {
+                hr = IDataObject_GetData( data, &format->fmt, &med );
+                if (hr != S_OK) goto done;
+                hr = format->paste( editor, &format->fmt, &med );
+            }
+            break;
+        }
+    }
+
+done:
+    IDataObject_Release( data );
+
+    return hr == S_OK;
 }
 
 static BOOL ME_Copy(ME_TextEditor *editor, const ME_Cursor *start, int nChars)
@@ -2259,6 +2354,30 @@ static BOOL ME_Copy(ME_TextEditor *editor, const ME_Cursor *start, int nChars)
     IDataObject_Release(dataObj);
   }
   return SUCCEEDED(hr);
+}
+
+static BOOL copy_or_cut(ME_TextEditor *editor, BOOL cut)
+{
+    BOOL result;
+    int offs, num_chars;
+    int start_cursor = ME_GetSelectionOfs(editor, &offs, &num_chars);
+    ME_Cursor *sel_start = &editor->pCursors[start_cursor];
+
+    if (cut && (editor->styleFlags & ES_READONLY))
+    {
+        MessageBeep(MB_ICONERROR);
+        return FALSE;
+    }
+
+    num_chars -= offs;
+    result = ME_Copy(editor, sel_start, num_chars);
+    if (result && cut)
+    {
+        ME_InternalDeleteText(editor, sel_start, num_chars, FALSE);
+        ME_CommitUndo(editor);
+        ME_UpdateRepaint(editor, TRUE);
+    }
+    return result;
 }
 
 /* helper to send a msg filter notification */
@@ -2309,6 +2428,181 @@ static void ME_UpdateSelectionLinkAttribute(ME_TextEditor *editor)
   nChars = endPara->member.para.nCharOfs - startPara->member.para.nCharOfs;
 
   ME_UpdateLinkAttribute(editor, &start, nChars);
+}
+
+static BOOL handle_enter(ME_TextEditor *editor)
+{
+    BOOL ctrl_is_down = GetKeyState(VK_CONTROL) & 0x8000;
+    BOOL shift_is_down = GetKeyState(VK_SHIFT) & 0x8000;
+
+    if (editor->bDialogMode)
+    {
+        if (ctrl_is_down)
+            return TRUE;
+
+        if (!(editor->styleFlags & ES_WANTRETURN))
+        {
+            if (editor->hwndParent)
+            {
+                DWORD dw;
+                dw = SendMessageW(editor->hwndParent, DM_GETDEFID, 0, 0);
+                if (HIWORD(dw) == DC_HASDEFID)
+                {
+                    HWND hwDefCtrl = GetDlgItem(editor->hwndParent, LOWORD(dw));
+                    if (hwDefCtrl)
+                    {
+                        SendMessageW(editor->hwndParent, WM_NEXTDLGCTL, (WPARAM)hwDefCtrl, TRUE);
+                        PostMessageW(hwDefCtrl, WM_KEYDOWN, VK_RETURN, 0);
+                    }
+                }
+            }
+            return TRUE;
+        }
+    }
+
+    if (editor->styleFlags & ES_MULTILINE)
+    {
+        static const WCHAR endl = '\r';
+        static const WCHAR endlv10[] = {'\r','\n'};
+        ME_Cursor cursor = editor->pCursors[0];
+        ME_DisplayItem *para = cursor.pPara;
+        int from, to;
+        ME_Style *style, *eop_style;
+
+        if (editor->styleFlags & ES_READONLY)
+        {
+            MessageBeep(MB_ICONERROR);
+            return TRUE;
+        }
+
+        ME_GetSelectionOfs(editor, &from, &to);
+        if (editor->nTextLimit > ME_GetTextLength(editor) - (to-from))
+        {
+            if (!editor->bEmulateVersion10) /* v4.1 */
+            {
+                if (para->member.para.nFlags & MEPF_ROWEND)
+                {
+                    /* Add a new table row after this row. */
+                    para = ME_AppendTableRow(editor, para);
+                    para = para->member.para.next_para;
+                    editor->pCursors[0].pPara = para;
+                    editor->pCursors[0].pRun = ME_FindItemFwd(para, diRun);
+                    editor->pCursors[0].nOffset = 0;
+                    editor->pCursors[1] = editor->pCursors[0];
+                    ME_CommitUndo(editor);
+                    ME_CheckTablesForCorruption(editor);
+                    ME_UpdateRepaint(editor, FALSE);
+                    return TRUE;
+                }
+                else if (para == editor->pCursors[1].pPara &&
+                    cursor.nOffset + cursor.pRun->member.run.nCharOfs == 0 &&
+                    para->member.para.prev_para->member.para.nFlags & MEPF_ROWSTART &&
+                    !para->member.para.prev_para->member.para.nCharOfs)
+                {
+                    /* Insert a newline before the table. */
+                    para = para->member.para.prev_para;
+                    para->member.para.nFlags &= ~MEPF_ROWSTART;
+                    editor->pCursors[0].pPara = para;
+                    editor->pCursors[0].pRun = ME_FindItemFwd(para, diRun);
+                    editor->pCursors[1] = editor->pCursors[0];
+                    ME_InsertTextFromCursor(editor, 0, &endl, 1,
+                    editor->pCursors[0].pRun->member.run.style);
+                    para = editor->pBuffer->pFirst->member.para.next_para;
+                    ME_SetDefaultParaFormat(editor, &para->member.para.fmt);
+                    para->member.para.nFlags = 0;
+                    mark_para_rewrap(editor, para);
+                    editor->pCursors[0].pPara = para;
+                    editor->pCursors[0].pRun = ME_FindItemFwd(para, diRun);
+                    editor->pCursors[1] = editor->pCursors[0];
+                    para->member.para.next_para->member.para.nFlags |= MEPF_ROWSTART;
+                    ME_CommitCoalescingUndo(editor);
+                    ME_CheckTablesForCorruption(editor);
+                    ME_UpdateRepaint(editor, FALSE);
+                    return TRUE;
+                }
+            }
+            else /* v1.0 - 3.0 */
+            {
+                ME_DisplayItem *para = cursor.pPara;
+                if (ME_IsInTable(para))
+                {
+                    if (cursor.pRun->member.run.nFlags & MERF_ENDPARA)
+                    {
+                        if (from == to)
+                        {
+                            ME_ContinueCoalescingTransaction(editor);
+                            para = ME_AppendTableRow(editor, para);
+                            editor->pCursors[0].pPara = para;
+                            editor->pCursors[0].pRun = ME_FindItemFwd(para, diRun);
+                            editor->pCursors[0].nOffset = 0;
+                            editor->pCursors[1] = editor->pCursors[0];
+                            ME_CommitCoalescingUndo(editor);
+                            ME_UpdateRepaint(editor, FALSE);
+                            return TRUE;
+                        }
+                    }
+                    else
+                    {
+                        ME_ContinueCoalescingTransaction(editor);
+                        if (cursor.pRun->member.run.nCharOfs + cursor.nOffset == 0 &&
+                                !ME_IsInTable(para->member.para.prev_para))
+                        {
+                            /* Insert newline before table */
+                            cursor.pRun = ME_FindItemBack(para, diRun);
+                            if (cursor.pRun)
+                            {
+                                editor->pCursors[0].pRun = cursor.pRun;
+                                editor->pCursors[0].pPara = para->member.para.prev_para;
+                            }
+                            editor->pCursors[0].nOffset = 0;
+                            editor->pCursors[1] = editor->pCursors[0];
+                            ME_InsertTextFromCursor(editor, 0, &endl, 1,
+                            editor->pCursors[0].pRun->member.run.style);
+                        }
+                        else
+                        {
+                            editor->pCursors[1] = editor->pCursors[0];
+                            para = ME_AppendTableRow(editor, para);
+                            editor->pCursors[0].pPara = para;
+                            editor->pCursors[0].pRun = ME_FindItemFwd(para, diRun);
+                            editor->pCursors[0].nOffset = 0;
+                            editor->pCursors[1] = editor->pCursors[0];
+                        }
+                        ME_CommitCoalescingUndo(editor);
+                        ME_UpdateRepaint(editor, FALSE);
+                        return TRUE;
+                    }
+                }
+            }
+
+            style = ME_GetInsertStyle(editor, 0);
+
+            /* Normally the new eop style is the insert style, however in a list it is copied from the existing
+            eop style (this prevents the list label style changing when the new eop is inserted).
+            No extra ref is taken here on eop_style. */
+            if (para->member.para.fmt.wNumbering)
+                eop_style = para->member.para.eop_run->style;
+            else
+                eop_style = style;
+            ME_ContinueCoalescingTransaction(editor);
+            if (shift_is_down)
+                ME_InsertEndRowFromCursor(editor, 0);
+            else
+                if (!editor->bEmulateVersion10)
+                    ME_InsertTextFromCursor(editor, 0, &endl, 1, eop_style);
+                else
+                    ME_InsertTextFromCursor(editor, 0, endlv10, 2, eop_style);
+            ME_CommitCoalescingUndo(editor);
+            SetCursor(NULL);
+
+            ME_UpdateSelectionLinkAttribute(editor);
+            ME_UpdateRepaint(editor, FALSE);
+            ME_SaveTempStyle(editor, style); /* set the temp insert style for the new para */
+            ME_ReleaseStyle(style);
+        }
+        return TRUE;
+    }
+    return FALSE;
 }
 
 static BOOL
@@ -2377,161 +2671,8 @@ ME_KeyDown(ME_TextEditor *editor, WORD nKey)
       ME_SendRequestResize(editor, FALSE);
       return TRUE;
     case VK_RETURN:
-      if (editor->bDialogMode)
-      {
-        if (ctrl_is_down)
-          return TRUE;
-
-        if (!(editor->styleFlags & ES_WANTRETURN))
-        {
-          if (editor->hwndParent)
-          {
-            DWORD dw;
-            dw = SendMessageW(editor->hwndParent, DM_GETDEFID, 0, 0);
-            if (HIWORD(dw) == DC_HASDEFID)
-            {
-                HWND hwDefCtrl = GetDlgItem(editor->hwndParent, LOWORD(dw));
-                if (hwDefCtrl)
-                {
-                    SendMessageW(editor->hwndParent, WM_NEXTDLGCTL, (WPARAM)hwDefCtrl, TRUE);
-                    PostMessageW(hwDefCtrl, WM_KEYDOWN, VK_RETURN, 0);
-                }
-            }
-          }
-          return TRUE;
-        }
-      }
-
-      if (editor->styleFlags & ES_MULTILINE)
-      {
-        ME_Cursor cursor = editor->pCursors[0];
-        ME_DisplayItem *para = cursor.pPara;
-        int from, to;
-        const WCHAR endl = '\r';
-        const WCHAR endlv10[] = {'\r','\n'};
-        ME_Style *style, *eop_style;
-
-        if (editor->styleFlags & ES_READONLY) {
-          MessageBeep(MB_ICONERROR);
-          return TRUE;
-        }
-
-        ME_GetSelectionOfs(editor, &from, &to);
-        if (editor->nTextLimit > ME_GetTextLength(editor) - (to-from))
-        {
-          if (!editor->bEmulateVersion10) { /* v4.1 */
-            if (para->member.para.nFlags & MEPF_ROWEND) {
-              /* Add a new table row after this row. */
-              para = ME_AppendTableRow(editor, para);
-              para = para->member.para.next_para;
-              editor->pCursors[0].pPara = para;
-              editor->pCursors[0].pRun = ME_FindItemFwd(para, diRun);
-              editor->pCursors[0].nOffset = 0;
-              editor->pCursors[1] = editor->pCursors[0];
-              ME_CommitUndo(editor);
-              ME_CheckTablesForCorruption(editor);
-              ME_UpdateRepaint(editor, FALSE);
-              return TRUE;
-            }
-            else if (para == editor->pCursors[1].pPara &&
-                     cursor.nOffset + cursor.pRun->member.run.nCharOfs == 0 &&
-                     para->member.para.prev_para->member.para.nFlags & MEPF_ROWSTART &&
-                     !para->member.para.prev_para->member.para.nCharOfs)
-            {
-              /* Insert a newline before the table. */
-              para = para->member.para.prev_para;
-              para->member.para.nFlags &= ~MEPF_ROWSTART;
-              editor->pCursors[0].pPara = para;
-              editor->pCursors[0].pRun = ME_FindItemFwd(para, diRun);
-              editor->pCursors[1] = editor->pCursors[0];
-              ME_InsertTextFromCursor(editor, 0, &endl, 1,
-                                      editor->pCursors[0].pRun->member.run.style);
-              para = editor->pBuffer->pFirst->member.para.next_para;
-              ME_SetDefaultParaFormat(editor, &para->member.para.fmt);
-              para->member.para.nFlags = MEPF_REWRAP;
-              editor->pCursors[0].pPara = para;
-              editor->pCursors[0].pRun = ME_FindItemFwd(para, diRun);
-              editor->pCursors[1] = editor->pCursors[0];
-              para->member.para.next_para->member.para.nFlags |= MEPF_ROWSTART;
-              ME_CommitCoalescingUndo(editor);
-              ME_CheckTablesForCorruption(editor);
-              ME_UpdateRepaint(editor, FALSE);
-              return TRUE;
-            }
-          } else { /* v1.0 - 3.0 */
-            ME_DisplayItem *para = cursor.pPara;
-            if (ME_IsInTable(para))
-            {
-              if (cursor.pRun->member.run.nFlags & MERF_ENDPARA)
-              {
-                if (from == to) {
-                  ME_ContinueCoalescingTransaction(editor);
-                  para = ME_AppendTableRow(editor, para);
-                  editor->pCursors[0].pPara = para;
-                  editor->pCursors[0].pRun = ME_FindItemFwd(para, diRun);
-                  editor->pCursors[0].nOffset = 0;
-                  editor->pCursors[1] = editor->pCursors[0];
-                  ME_CommitCoalescingUndo(editor);
-                  ME_UpdateRepaint(editor, FALSE);
-                  return TRUE;
-                }
-              } else {
-                ME_ContinueCoalescingTransaction(editor);
-                if (cursor.pRun->member.run.nCharOfs + cursor.nOffset == 0 &&
-                    !ME_IsInTable(para->member.para.prev_para))
-                {
-                  /* Insert newline before table */
-                  cursor.pRun = ME_FindItemBack(para, diRun);
-                  if (cursor.pRun) {
-                    editor->pCursors[0].pRun = cursor.pRun;
-                    editor->pCursors[0].pPara = para->member.para.prev_para;
-                  }
-                  editor->pCursors[0].nOffset = 0;
-                  editor->pCursors[1] = editor->pCursors[0];
-                  ME_InsertTextFromCursor(editor, 0, &endl, 1,
-                                          editor->pCursors[0].pRun->member.run.style);
-                } else {
-                  editor->pCursors[1] = editor->pCursors[0];
-                  para = ME_AppendTableRow(editor, para);
-                  editor->pCursors[0].pPara = para;
-                  editor->pCursors[0].pRun = ME_FindItemFwd(para, diRun);
-                  editor->pCursors[0].nOffset = 0;
-                  editor->pCursors[1] = editor->pCursors[0];
-                }
-                ME_CommitCoalescingUndo(editor);
-                ME_UpdateRepaint(editor, FALSE);
-                return TRUE;
-              }
-            }
-          }
-
-          style = ME_GetInsertStyle(editor, 0);
-
-          /* Normally the new eop style is the insert style, however in a list it is copied from the existing
-             eop style (this prevents the list label style changing when the new eop is inserted).
-             No extra ref is taken here on eop_style. */
-          if (para->member.para.fmt.wNumbering)
-              eop_style = para->member.para.eop_run->style;
-          else
-              eop_style = style;
-          ME_ContinueCoalescingTransaction(editor);
-          if (shift_is_down)
-            ME_InsertEndRowFromCursor(editor, 0);
-          else
-            if (!editor->bEmulateVersion10)
-              ME_InsertTextFromCursor(editor, 0, &endl, 1, eop_style);
-            else
-              ME_InsertTextFromCursor(editor, 0, endlv10, 2, eop_style);
-          ME_CommitCoalescingUndo(editor);
-          SetCursor(NULL);
-
-          ME_UpdateSelectionLinkAttribute(editor);
-          ME_UpdateRepaint(editor, FALSE);
-          ME_SaveTempStyle(editor, style); /* set the temp insert style for the new para */
-          ME_ReleaseStyle(style);
-        }
-        return TRUE;
-      }
+      if (!editor->bEmulateVersion10)
+          return handle_enter(editor);
       break;
     case VK_ESCAPE:
       if (editor->bDialogMode && editor->hwndParent)
@@ -2550,27 +2691,12 @@ ME_KeyDown(ME_TextEditor *editor, WORD nKey)
       break;
     case 'V':
       if (ctrl_is_down)
-        return ME_Paste(editor);
+        return paste_special( editor, 0, NULL, FALSE );
       break;
     case 'C':
     case 'X':
       if (ctrl_is_down)
-      {
-        BOOL result;
-        int nOfs, nChars;
-        int nStartCur = ME_GetSelectionOfs(editor, &nOfs, &nChars);
-        ME_Cursor *selStart = &editor->pCursors[nStartCur];
-
-        nChars -= nOfs;
-        result = ME_Copy(editor, selStart, nChars);
-        if (result && nKey == 'X')
-        {
-          ME_InternalDeleteText(editor, selStart, nChars, FALSE);
-          ME_CommitUndo(editor);
-          ME_UpdateRepaint(editor, TRUE);
-        }
-        return result;
-      }
+        return copy_or_cut(editor, nKey == 'X');
       break;
     case 'Z':
       if (ctrl_is_down)
@@ -2619,6 +2745,12 @@ static LRESULT ME_Char(ME_TextEditor *editor, WPARAM charCode,
   if (editor->bMouseCaptured)
     return 0;
 
+  if (editor->styleFlags & ES_READONLY)
+  {
+    MessageBeep(MB_ICONERROR);
+    return 0; /* FIXME really 0 ? */
+  }
+
   if (unicode)
       wstr = (WCHAR)charCode;
   else
@@ -2627,10 +2759,8 @@ static LRESULT ME_Char(ME_TextEditor *editor, WPARAM charCode,
       MultiByteToWideChar(CP_ACP, 0, &charA, 1, &wstr, 1);
   }
 
-  if (editor->styleFlags & ES_READONLY) {
-    MessageBeep(MB_ICONERROR);
-    return 0; /* FIXME really 0 ? */
-  }
+  if (editor->bEmulateVersion10 && wstr == '\r')
+      handle_enter(editor);
 
   if ((unsigned)wstr >= ' ' || wstr == '\t')
   {
@@ -2859,23 +2989,57 @@ static void ME_SetDefaultFormatRect(ME_TextEditor *editor)
   editor->rcFormat.right -= 1;
 }
 
+static LONG ME_GetSelectionType(ME_TextEditor *editor)
+{
+    LONG sel_type = SEL_EMPTY;
+    LONG start, end;
+
+    ME_GetSelectionOfs(editor, &start, &end);
+    if (start == end)
+        sel_type = SEL_EMPTY;
+    else
+    {
+        LONG object_count = 0, character_count = 0;
+        int i;
+
+        for (i = 0; i < end - start; i++)
+        {
+            ME_Cursor cursor;
+
+            ME_CursorFromCharOfs(editor, start + i, &cursor);
+            if (cursor.pRun->member.run.reobj)
+                object_count++;
+            else
+                character_count++;
+            if (character_count >= 2 && object_count >= 2)
+                return (SEL_TEXT | SEL_MULTICHAR | SEL_OBJECT | SEL_MULTIOBJECT);
+        }
+        if (character_count)
+        {
+            sel_type |= SEL_TEXT;
+            if (character_count >= 2)
+                sel_type |= SEL_MULTICHAR;
+        }
+        if (object_count)
+        {
+            sel_type |= SEL_OBJECT;
+            if (object_count >= 2)
+                sel_type |= SEL_MULTIOBJECT;
+        }
+    }
+    return sel_type;
+}
+
 static BOOL ME_ShowContextMenu(ME_TextEditor *editor, int x, int y)
 {
   CHARRANGE selrange;
   HMENU menu;
-  int seltype = 0;
+  int seltype;
+
   if(!editor->lpOleCallback || !editor->hWnd)
     return FALSE;
   ME_GetSelectionOfs(editor, &selrange.cpMin, &selrange.cpMax);
-  if(selrange.cpMin == selrange.cpMax)
-    seltype |= SEL_EMPTY;
-  else
-  {
-    /* FIXME: Handle objects */
-    seltype |= SEL_TEXT;
-    if(selrange.cpMax-selrange.cpMin > 1)
-      seltype |= SEL_MULTICHAR;
-  }
+  seltype = ME_GetSelectionType(editor);
   if(SUCCEEDED(IRichEditOleCallback_GetContextMenu(editor->lpOleCallback, seltype, NULL, &selrange, &menu)))
   {
     TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_RIGHTBUTTON, x, y, 0, editor->hwndParent, NULL);
@@ -2884,9 +3048,9 @@ static BOOL ME_ShowContextMenu(ME_TextEditor *editor, int x, int y)
   return TRUE;
 }
 
-ME_TextEditor *ME_MakeEditor(ITextHost *texthost, BOOL bEmulateVersion10, DWORD csStyle)
+ME_TextEditor *ME_MakeEditor(ITextHost *texthost, BOOL bEmulateVersion10)
 {
-  ME_TextEditor *ed = ALLOC_OBJ(ME_TextEditor);
+  ME_TextEditor *ed = heap_alloc(sizeof(*ed));
   int i;
   DWORD props;
   LONG selbarwidth;
@@ -2898,11 +3062,9 @@ ME_TextEditor *ME_MakeEditor(ITextHost *texthost, BOOL bEmulateVersion10, DWORD 
   ed->reOle = NULL;
   ed->bEmulateVersion10 = bEmulateVersion10;
   ed->styleFlags = 0;
-  ed->alignStyle = PFA_LEFT;
-  if (csStyle & ES_RIGHT)
-      ed->alignStyle = PFA_RIGHT;
-  if (csStyle & ES_CENTER)
-      ed->alignStyle = PFA_CENTER;
+  ed->exStyleFlags = 0;
+  ed->first_marked_para = NULL;
+  ed->total_rows = 0;
   ITextHost_TxGetPropertyBits(texthost,
                               (TXTBIT_RICHTEXT|TXTBIT_MULTILINE|
                                TXTBIT_READONLY|TXTBIT_USEPASSWORD|
@@ -2916,6 +3078,7 @@ ME_TextEditor *ME_MakeEditor(ITextHost *texthost, BOOL bEmulateVersion10, DWORD 
   ed->pBuffer = ME_MakeText();
   ed->nZoomNumerator = ed->nZoomDenominator = 0;
   ed->nAvailWidth = 0; /* wrap to client area */
+  list_init( &ed->style_list );
   ME_MakeFirstParagraph(ed);
   /* The four cursors are for:
    * 0 - The position where the caret is shown
@@ -2924,7 +3087,7 @@ ME_TextEditor *ME_MakeEditor(ITextHost *texthost, BOOL bEmulateVersion10, DWORD 
    * or paragraph selection.
    */
   ed->nCursors = 4;
-  ed->pCursors = ALLOC_N_OBJ(ME_Cursor, ed->nCursors);
+  ed->pCursors = heap_alloc(ed->nCursors * sizeof(*ed->pCursors));
   ME_SetCursorToStart(ed, &ed->pCursors[0]);
   ed->pCursors[1] = ed->pCursors[0];
   ed->pCursors[2] = ed->pCursors[0];
@@ -2963,6 +3126,7 @@ ME_TextEditor *ME_MakeEditor(ITextHost *texthost, BOOL bEmulateVersion10, DWORD 
   }
 
   ME_CheckCharOffsets(ed);
+  SetRectEmpty(&ed->rcFormat);
   ed->bDefaultFormatRect = TRUE;
   ITextHost_TxGetSelectionBarWidth(ed->texthost, &selbarwidth);
   if (selbarwidth) {
@@ -3014,7 +3178,7 @@ ME_TextEditor *ME_MakeEditor(ITextHost *texthost, BOOL bEmulateVersion10, DWORD 
 
   ed->wheel_remain = 0;
 
-  list_init( &ed->style_list );
+  list_init( &ed->reobj_list );
   OleInitialize(NULL);
 
   return ed;
@@ -3022,16 +3186,19 @@ ME_TextEditor *ME_MakeEditor(ITextHost *texthost, BOOL bEmulateVersion10, DWORD 
 
 void ME_DestroyEditor(ME_TextEditor *editor)
 {
-  ME_DisplayItem *pFirst = editor->pBuffer->pFirst;
-  ME_DisplayItem *p = pFirst, *pNext = NULL;
+  ME_DisplayItem *p = editor->pBuffer->pFirst, *pNext = NULL;
   ME_Style *s, *cursor2;
   int i;
 
   ME_ClearTempStyle(editor);
   ME_EmptyUndoStack(editor);
+  editor->pBuffer->pFirst = NULL;
   while(p) {
     pNext = p->next;
-    ME_DestroyDisplayItem(p);
+    if (p->type == diParagraph)
+      destroy_para(editor, p);
+    else
+      ME_DestroyDisplayItem(p);
     p = pNext;
   }
 
@@ -3051,15 +3218,14 @@ void ME_DestroyEditor(ME_TextEditor *editor)
   ITextHost_Release(editor->texthost);
   if (editor->reOle)
   {
-    IRichEditOle_Release(editor->reOle);
+    IUnknown_Release(editor->reOle);
     editor->reOle = NULL;
   }
   OleUninitialize();
 
-  FREE_OBJ(editor->pBuffer);
-  FREE_OBJ(editor->pCursors);
-
-  FREE_OBJ(editor);
+  heap_free(editor->pBuffer);
+  heap_free(editor->pCursors);
+  heap_free(editor);
 }
 
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
@@ -3317,21 +3483,7 @@ static void ME_SetText(ME_TextEditor *editor, void *text, BOOL unicode)
   int textLen;
 
   LPWSTR wszText = ME_ToUnicode(codepage, text, &textLen);
-
-  if (textLen > 0)
-  {
-    int len = -1;
-
-    /* uses default style! */
-    if (!(editor->styleFlags & ES_MULTILINE))
-    {
-      WCHAR *p = wszText;
-
-      while (*p != '\0' && *p != '\r' && *p != '\n') p++;
-      len = p - wszText;
-    }
-    ME_InsertTextFromCursor(editor, 0, wszText, len, editor->pBuffer->pDefaultStyle);
-  }
+  ME_InsertTextFromCursor(editor, 0, wszText, textLen, editor->pBuffer->pDefaultStyle);
   ME_EndToUnicode(codepage, wszText);
 }
 
@@ -3414,8 +3566,6 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
   UNSUPPORTED_MSG(EM_GETTYPOGRAPHYOPTIONS)
   UNSUPPORTED_MSG(EM_GETUNDONAME)
   UNSUPPORTED_MSG(EM_GETWORDBREAKPROCEX)
-  UNSUPPORTED_MSG(EM_PASTESPECIAL)
-  UNSUPPORTED_MSG(EM_SELECTIONTYPE)
   UNSUPPORTED_MSG(EM_SETBIDIOPTIONS)
   UNSUPPORTED_MSG(EM_SETEDITSTYLE)
   UNSUPPORTED_MSG(EM_SETLANGOPTIONS)
@@ -3731,6 +3881,8 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
     ME_UpdateRepaint(editor, FALSE);
     return len;
   }
+  case EM_SELECTIONTYPE:
+    return ME_GetSelectionType(editor);
   case EM_SETBKGNDCOLOR:
   {
     LRESULT lColor;
@@ -3783,17 +3935,17 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
     return editor->nEventMask;
   case EM_SETCHARFORMAT:
   {
-    CHARFORMAT2W buf, *p;
+    CHARFORMAT2W p;
     BOOL bRepaint = TRUE;
-    p = ME_ToCF2W(&buf, (CHARFORMAT2W *)lParam);
-    if (p == NULL) return 0;
+    if (!cfany_to_cf2w(&p, (CHARFORMAT2W *)lParam))
+      return 0;
     if (wParam & SCF_ALL) {
       if (editor->mode & TM_PLAINTEXT) {
-        ME_SetDefaultCharFormat(editor, p);
+        ME_SetDefaultCharFormat(editor, &p);
       } else {
         ME_Cursor start;
         ME_SetCursorToStart(editor, &start);
-        ME_SetCharFormat(editor, &start, NULL, p);
+        ME_SetCharFormat(editor, &start, NULL, &p);
         editor->nModifyStep = 1;
       }
     } else if (wParam & SCF_SELECTION) {
@@ -3805,13 +3957,13 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
         ME_MoveCursorWords(editor, &end, +1);
         start = end;
         ME_MoveCursorWords(editor, &start, -1);
-        ME_SetCharFormat(editor, &start, &end, p);
+        ME_SetCharFormat(editor, &start, &end, &p);
       }
       bRepaint = ME_IsSelection(editor);
-      ME_SetSelectionCharFormat(editor, p);
+      ME_SetSelectionCharFormat(editor, &p);
       if (bRepaint) editor->nModifyStep = 1;
     } else { /* SCF_DEFAULT */
-      ME_SetDefaultCharFormat(editor, p);
+      ME_SetDefaultCharFormat(editor, &p);
     }
     ME_CommitUndo(editor);
     if (bRepaint)
@@ -3835,7 +3987,7 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
       ME_GetDefaultCharFormat(editor, &tmp);
     else
       ME_GetSelectionCharFormat(editor, &tmp);
-    ME_CopyToCFAny(dst, &tmp);
+    cf2w_to_cfany(dst, &tmp);
     return tmp.dwMask;
   }
   case EM_SETPARAFORMAT:
@@ -3971,33 +4123,19 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
     return 1;
   }
   case EM_CANPASTE:
-  {
-    UINT nRTFFormat = RegisterClipboardFormatA("Rich Text Format");
-    if (IsClipboardFormatAvailable(nRTFFormat))
-      return TRUE;
-    if (IsClipboardFormatAvailable(CF_UNICODETEXT))
-      return TRUE;
-    return FALSE;
-  }
+    return paste_special( editor, 0, NULL, TRUE );
   case WM_PASTE:
   case WM_MBUTTONDOWN:
-    ME_Paste(editor);
+    wParam = 0;
+    lParam = 0;
+    /* fall through */
+  case EM_PASTESPECIAL:
+    paste_special( editor, wParam, (REPASTESPECIAL *)lParam, FALSE );
     return 0;
   case WM_CUT:
   case WM_COPY:
-  {
-    int nFrom, nTo, nStartCur = ME_GetSelectionOfs(editor, &nFrom, &nTo);
-    int nChars = nTo - nFrom;
-    ME_Cursor *selStart = &editor->pCursors[nStartCur];
-
-    if (ME_Copy(editor, selStart, nChars) && msg == WM_CUT)
-    {
-      ME_InternalDeleteText(editor, selStart, nChars, FALSE);
-      ME_CommitUndo(editor);
-      ME_UpdateRepaint(editor, TRUE);
-    }
+    copy_or_cut(editor, msg == WM_CUT);
     return 0;
-  }
   case WM_GETTEXTLENGTH:
   {
     GETTEXTLENGTHEX how;
@@ -4106,22 +4244,12 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
   }
   case EM_GETLINECOUNT:
   {
-    ME_DisplayItem *item = editor->pBuffer->pFirst->next;
-    int nRows = 0;
-
+    ME_DisplayItem *item = editor->pBuffer->pLast;
+    int nRows = editor->total_rows;
     ME_DisplayItem *prev_para = NULL, *last_para = NULL;
 
-    while (item != editor->pBuffer->pLast)
-    {
-      assert(item->type == diParagraph);
-      prev_para = ME_FindItemBack(item, diRun);
-      if (prev_para) {
-        assert(prev_para->member.run.nFlags & MERF_ENDPARA);
-      }
-      nRows += item->member.para.nRows;
-      item = item->member.para.next_para;
-    }
     last_para = ME_FindItemBack(item, diRun);
+    prev_para = ME_FindItemBack(last_para, diRun);
     assert(last_para);
     assert(last_para->member.run.nFlags & MERF_ENDPARA);
     if (editor->bEmulateVersion10 && prev_para &&
@@ -4227,10 +4355,10 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
       int nChars = MultiByteToWideChar(CP_ACP, 0, ft->lpstrText, -1, NULL, 0);
       WCHAR *tmp;
 
-      if ((tmp = ALLOC_N_OBJ(WCHAR, nChars)) != NULL)
+      if ((tmp = heap_alloc(nChars * sizeof(*tmp))) != NULL)
         MultiByteToWideChar(CP_ACP, 0, ft->lpstrText, -1, tmp, nChars);
       r = ME_FindText(editor, wParam, &ft->chrg, tmp, NULL);
-      FREE_OBJ( tmp );
+      heap_free(tmp);
     }else{
       FINDTEXTW *ft = (FINDTEXTW *)lParam;
       r = ME_FindText(editor, wParam, &ft->chrg, ft->lpstrText, NULL);
@@ -4245,10 +4373,10 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
       int nChars = MultiByteToWideChar(CP_ACP, 0, ex->lpstrText, -1, NULL, 0);
       WCHAR *tmp;
 
-      if ((tmp = ALLOC_N_OBJ(WCHAR, nChars)) != NULL)
+      if ((tmp = heap_alloc(nChars * sizeof(*tmp))) != NULL)
         MultiByteToWideChar(CP_ACP, 0, ex->lpstrText, -1, tmp, nChars);
       r = ME_FindText(editor, wParam, &ex->chrg, tmp, &ex->chrgText);
-      FREE_OBJ( tmp );
+      heap_free(tmp);
     }else{
       FINDTEXTEXW *ex = (FINDTEXTEXW *)lParam;
       r = ME_FindText(editor, wParam, &ex->chrg, ex->lpstrText, &ex->chrgText);
@@ -4695,9 +4823,9 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
     if (!editor->reOle)
       if (!CreateIRichEditOle(NULL, editor, (LPVOID *)&editor->reOle))
         return 0;
-    *(LPVOID *)lParam = editor->reOle;
-    IRichEditOle_AddRef(editor->reOle);
-    return 1;
+    if (IUnknown_QueryInterface(editor->reOle, &IID_IRichEditOle, (LPVOID *)lParam) == S_OK)
+      return 1;
+    return 0;
   }
   case EM_GETPASSWORDCHAR:
   {
@@ -4792,6 +4920,30 @@ LRESULT ME_HandleMessage(ME_TextEditor *editor, UINT msg, WPARAM wParam,
   return 0L;
 }
 
+static BOOL create_windowed_editor(HWND hwnd, CREATESTRUCTW *create, BOOL emulate_10)
+{
+    ITextHost *host = ME_CreateTextHost( hwnd, create, emulate_10 );
+    ME_TextEditor *editor;
+
+    if (!host) return FALSE;
+
+    editor = ME_MakeEditor( host, emulate_10 );
+    if (!editor)
+    {
+        ITextHost_Release( host );
+        return FALSE;
+    }
+
+    editor->exStyleFlags = GetWindowLongW( hwnd, GWL_EXSTYLE );
+    editor->styleFlags |= GetWindowLongW( hwnd, GWL_STYLE ) & ES_WANTRETURN;
+    editor->hWnd = hwnd; /* FIXME: Remove editor's dependence on hWnd */
+    editor->hwndParent = create->hwndParent;
+
+    SetWindowLongPtrW( hwnd, 0, (LONG_PTR)editor );
+
+    return TRUE;
+}
+
 static LRESULT RichEditWndProc_common(HWND hWnd, UINT msg, WPARAM wParam,
                                       LPARAM lParam, BOOL unicode)
 {
@@ -4808,11 +4960,9 @@ static LRESULT RichEditWndProc_common(HWND hWnd, UINT msg, WPARAM wParam,
     if (msg == WM_NCCREATE)
     {
       CREATESTRUCTW *pcs = (CREATESTRUCTW *)lParam;
-      ITextHost *texthost;
 
       TRACE("WM_NCCREATE: hWnd %p style 0x%08x\n", hWnd, pcs->style);
-      texthost = ME_CreateTextHost(hWnd, pcs, FALSE);
-      return texthost != NULL;
+      return create_windowed_editor( hWnd, pcs, FALSE );
     }
     else
     {
@@ -4938,12 +5088,10 @@ LRESULT WINAPI RichEdit10ANSIWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM 
 {
   if (msg == WM_NCCREATE && !GetWindowLongPtrW(hWnd, 0))
   {
-    ITextHost *texthost;
     CREATESTRUCTW *pcs = (CREATESTRUCTW *)lParam;
 
     TRACE("WM_NCCREATE: hWnd %p style 0x%08x\n", hWnd, pcs->style);
-    texthost = ME_CreateTextHost(hWnd, pcs, TRUE);
-    return texthost != NULL;
+    return create_windowed_editor( hWnd, pcs, TRUE );
   }
   return RichEditANSIWndProc(hWnd, msg, wParam, lParam);
 }
@@ -5148,10 +5296,9 @@ static BOOL isurlneutral( WCHAR c )
 
     /* Some shortcuts */
     if (isalnum( c )) return FALSE;
-    if (c > neutral_chars[sizeof(neutral_chars) / sizeof(neutral_chars[0]) - 1]) return FALSE;
+    if (c > neutral_chars[ARRAY_SIZE( neutral_chars ) - 1]) return FALSE;
 
-    return !!bsearch( &c, neutral_chars, sizeof(neutral_chars) / sizeof(neutral_chars[0]),
-                      sizeof(c), wchar_comp );
+    return !!bsearch( &c, neutral_chars, ARRAY_SIZE( neutral_chars ), sizeof(c), wchar_comp );
 }
 
 /**
@@ -5284,7 +5431,7 @@ static BOOL ME_IsCandidateAnURL(ME_TextEditor *editor, const ME_Cursor *start, i
   unsigned int i;
 
   ME_GetTextW(editor, bufferW, MAX_PREFIX_LEN, start, nChars, FALSE, FALSE);
-  for (i = 0; i < sizeof(prefixes) / sizeof(*prefixes); i++)
+  for (i = 0; i < ARRAY_SIZE(prefixes); i++)
   {
     if (nChars < prefixes[i].length) continue;
     if (!memcmp(prefixes[i].text, bufferW, prefixes[i].length * sizeof(WCHAR)))

@@ -405,13 +405,13 @@ static BOOL modify_icon( struct icon *icon, NOTIFYICONDATAW *nid )
     }
     if (nid->uFlags & NIF_TIP)
     {
-        lstrcpynW(icon->tiptext, nid->szTip, sizeof(icon->tiptext)/sizeof(WCHAR));
+        lstrcpynW( icon->tiptext, nid->szTip, ARRAY_SIZE( icon->tiptext ));
         if (icon->display != -1) update_tooltip_text(icon);
     }
     if (nid->uFlags & NIF_INFO && nid->cbSize >= NOTIFYICONDATAA_V2_SIZE)
     {
-        lstrcpynW( icon->info_text, nid->szInfo, sizeof(icon->info_text)/sizeof(WCHAR) );
-        lstrcpynW( icon->info_title, nid->szInfoTitle, sizeof(icon->info_title)/sizeof(WCHAR) );
+        lstrcpynW( icon->info_text, nid->szInfo, ARRAY_SIZE( icon->info_text ));
+        lstrcpynW( icon->info_title, nid->szInfoTitle, ARRAY_SIZE( icon->info_title ));
         icon->info_flags = nid->dwInfoFlags;
         icon->info_timeout = max(min(nid->u.uTimeout, BALLOON_SHOW_MAX_TIMEOUT), BALLOON_SHOW_MIN_TIMEOUT);
         icon->info_icon = nid->hBalloonIcon;
@@ -565,7 +565,7 @@ static BOOL handle_incoming(HWND hwndSource, COPYDATASTRUCT *cds)
                                buffer, buffer + cbMaskBits);
     }
 
-    /* try forward to x11drv first */
+    /* try forwarding to the display driver first */
     if (cds->dwData == NIM_ADD || !(icon = get_icon( nid.hWnd, nid.uID )))
     {
         if (wine_notify_icon && ((ret = wine_notify_icon( cds->dwData, &nid )) != -1))
@@ -766,8 +766,8 @@ static void do_show_systray(void)
     tray_width = GetSystemMetrics( SM_CXSCREEN );
     tray_height = max( icon_cy, size.cy );
     start_button_width = size.cx;
-    SetWindowPos( tray_window, HWND_TOPMOST, 0, GetSystemMetrics( SM_CYSCREEN ) - tray_height,
-                  tray_width, tray_height, SWP_NOACTIVATE | SWP_SHOWWINDOW );
+    SetWindowPos( tray_window, 0, 0, GetSystemMetrics( SM_CYSCREEN ) - tray_height,
+                  tray_width, tray_height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW );
     sync_taskbar_buttons();
 }
 
@@ -901,7 +901,7 @@ void initialize_systray( HMODULE graphics_driver, BOOL using_root, BOOL arg_enab
     WNDCLASSEXW class;
     static const WCHAR classname[] = {'S','h','e','l','l','_','T','r','a','y','W','n','d',0};
 
-    wine_notify_icon = (void *)GetProcAddress( graphics_driver, "wine_notify_icon" );
+    if (using_root) wine_notify_icon = (void *)GetProcAddress( graphics_driver, "wine_notify_icon" );
 
     icon_cx = GetSystemMetrics( SM_CXSMICON ) + 2*ICON_BORDER;
     icon_cy = GetSystemMetrics( SM_CYSMICON ) + 2*ICON_BORDER;
@@ -933,7 +933,7 @@ void initialize_systray( HMODULE graphics_driver, BOOL using_root, BOOL arg_enab
         return;
     }
 
-    LoadStringW( NULL, IDS_START_LABEL, start_label, sizeof(start_label)/sizeof(WCHAR) );
+    LoadStringW( NULL, IDS_START_LABEL, start_label, ARRAY_SIZE( start_label ));
 
     add_taskbar_button( 0 );
 

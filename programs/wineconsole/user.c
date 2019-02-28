@@ -56,8 +56,7 @@ static void WCUSER_FillMemDC(const struct inner_data* data, int upd_tp, int upd_
     /* FIXME: could set up a mechanism to reuse the line between different
      * calls to this function
      */
-    if (!(line = HeapAlloc(GetProcessHeap(), 0, data->curcfg.sb_width * sizeof(WCHAR))))
-        WINECON_Fatal("OOM\n");
+    if (!(line = HeapAlloc(GetProcessHeap(), 0, data->curcfg.sb_width * sizeof(WCHAR)))) return;
     dx = HeapAlloc( GetProcessHeap(), 0, data->curcfg.sb_width * sizeof(*dx) );
 
     hOldFont = SelectObject(PRIVATE(data)->hMemDC, PRIVATE(data)->hFont);
@@ -169,7 +168,7 @@ static void	WCUSER_ShapeCursor(struct inner_data* data, int size, int vis, BOOL 
 
 	    w16b = ((data->curcfg.cell_width + 15) & ~15) / 8;
 	    ptr = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, w16b * data->curcfg.cell_height);
-	    if (!ptr) WINECON_Fatal("OOM");
+	    if (!ptr) return;
 	    nbl = max((data->curcfg.cell_height * size) / 100, 1);
 	    for (j = data->curcfg.cell_height - nbl; j < data->curcfg.cell_height; j++)
 	    {
@@ -339,6 +338,9 @@ BOOL WCUSER_ValidateFontMetric(const struct inner_data* data, const TEXTMETRICW*
     switch (pass)  /* we get increasingly lenient in later passes */
     {
     case 0:
+        if (type & RASTER_FONTTYPE) return FALSE;
+        /* fall through */
+    case 1:
         if (type & RASTER_FONTTYPE)
         {
             if (tm->tmMaxCharWidth * data->curcfg.win_width >= GetSystemMetrics(SM_CXSCREEN) ||
@@ -346,10 +348,10 @@ BOOL WCUSER_ValidateFontMetric(const struct inner_data* data, const TEXTMETRICW*
                 return FALSE;
         }
         /* fall through */
-    case 1:
+    case 2:
         if (tm->tmCharSet != DEFAULT_CHARSET && tm->tmCharSet != g_uiDefaultCharset) return FALSE;
         /* fall through */
-    case 2:
+    case 3:
         if (tm->tmItalic || tm->tmUnderlined || tm->tmStruckOut) return FALSE;
         break;
     }
@@ -367,12 +369,13 @@ BOOL WCUSER_ValidateFont(const struct inner_data* data, const LOGFONTW* lf, int 
     {
     case 0:
     case 1:
+    case 2:
         if (lf->lfCharSet != DEFAULT_CHARSET && lf->lfCharSet != g_uiDefaultCharset) return FALSE;
         /* fall through */
-    case 2:
+    case 3:
         if ((lf->lfPitchAndFamily & 3) != FIXED_PITCH) return FALSE;
         /* fall through */
-    case 3:
+    case 4:
         if (lf->lfFaceName[0] == '@') return FALSE;
         break;
     }
@@ -400,6 +403,7 @@ static int CALLBACK get_first_font_enum_2(const LOGFONTW* lf, const TEXTMETRICW*
          */
         mlf.lfWidth  = fc->data->curcfg.cell_width;
         mlf.lfHeight = fc->data->curcfg.cell_height;
+        if (!mlf.lfHeight) mlf.lfHeight = MulDiv( 16, GetDpiForSystem(), USER_DEFAULT_SCREEN_DPI );
         if (WCUSER_SetFont(fc->data, &mlf))
         {
             struct      config_data     defcfg;
@@ -555,12 +559,12 @@ static void     WCUSER_SetFontPmt(struct inner_data* data, const WCHAR* font,
     WINE_WARN("Couldn't match the font from registry... trying to find one\n");
     fc.data = data;
     fc.done = FALSE;
-    for (fc.pass = 0; fc.pass <= 4; fc.pass++)
+    for (fc.pass = 0; fc.pass <= 5; fc.pass++)
     {
         EnumFontFamiliesW(PRIVATE(data)->hMemDC, NULL, get_first_font_enum, (LPARAM)&fc);
         if (fc.done) return;
     }
-    WINECON_Fatal("Couldn't find a decent font, aborting\n");
+    WINECON_Fatal("Couldn't find a decent font, aborting");
 }
 
 /******************************************************************
@@ -824,25 +828,25 @@ static BOOL WCUSER_FillMenu(HMENU hMenu, BOOL sep)
     hSubMenu = CreateMenu();
     if (!hSubMenu) return FALSE;
 
-    LoadStringW(hInstance, IDS_MARK, buff, sizeof(buff) / sizeof(buff[0]));
+    LoadStringW(hInstance, IDS_MARK, buff, ARRAY_SIZE(buff));
     InsertMenuW(hSubMenu, -1, MF_BYPOSITION|MF_STRING, IDS_MARK, buff);
-    LoadStringW(hInstance, IDS_COPY, buff, sizeof(buff) / sizeof(buff[0]));
+    LoadStringW(hInstance, IDS_COPY, buff, ARRAY_SIZE(buff));
     InsertMenuW(hSubMenu, -1, MF_BYPOSITION|MF_STRING, IDS_COPY, buff);
-    LoadStringW(hInstance, IDS_PASTE, buff, sizeof(buff) / sizeof(buff[0]));
+    LoadStringW(hInstance, IDS_PASTE, buff, ARRAY_SIZE(buff));
     InsertMenuW(hSubMenu, -1, MF_BYPOSITION|MF_STRING, IDS_PASTE, buff);
-    LoadStringW(hInstance, IDS_SELECTALL, buff, sizeof(buff) / sizeof(buff[0]));
+    LoadStringW(hInstance, IDS_SELECTALL, buff, ARRAY_SIZE(buff));
     InsertMenuW(hSubMenu, -1, MF_BYPOSITION|MF_STRING, IDS_SELECTALL, buff);
-    LoadStringW(hInstance, IDS_SCROLL, buff, sizeof(buff) / sizeof(buff[0]));
+    LoadStringW(hInstance, IDS_SCROLL, buff, ARRAY_SIZE(buff));
     InsertMenuW(hSubMenu, -1, MF_BYPOSITION|MF_STRING, IDS_SCROLL, buff);
-    LoadStringW(hInstance, IDS_SEARCH, buff, sizeof(buff) / sizeof(buff[0]));
+    LoadStringW(hInstance, IDS_SEARCH, buff, ARRAY_SIZE(buff));
     InsertMenuW(hSubMenu, -1, MF_BYPOSITION|MF_STRING, IDS_SEARCH, buff);
 
     if (sep) InsertMenuW(hMenu, -1, MF_BYPOSITION|MF_SEPARATOR, 0, NULL);
-    LoadStringW(hInstance, IDS_EDIT, buff, sizeof(buff) / sizeof(buff[0]));
+    LoadStringW(hInstance, IDS_EDIT, buff, ARRAY_SIZE(buff));
     InsertMenuW(hMenu, -1, MF_BYPOSITION|MF_STRING|MF_POPUP, (UINT_PTR)hSubMenu, buff);
-    LoadStringW(hInstance, IDS_DEFAULT, buff, sizeof(buff) / sizeof(buff[0]));
+    LoadStringW(hInstance, IDS_DEFAULT, buff, ARRAY_SIZE(buff));
     InsertMenuW(hMenu, -1, MF_BYPOSITION|MF_STRING, IDS_DEFAULT, buff);
-    LoadStringW(hInstance, IDS_PROPERTIES, buff, sizeof(buff) / sizeof(buff[0]));
+    LoadStringW(hInstance, IDS_PROPERTIES, buff, ARRAY_SIZE(buff));
     InsertMenuW(hMenu, -1, MF_BYPOSITION|MF_STRING, IDS_PROPERTIES, buff);
 
     return TRUE;

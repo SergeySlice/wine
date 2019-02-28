@@ -28,6 +28,9 @@
 #include <string.h>
 #include <unistd.h>
 #include <stdarg.h>
+#ifdef HAVE_VALGRIND_MEMCHECK_H
+#include <valgrind/memcheck.h>
+#endif
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -92,11 +95,22 @@ void close_objects(void)
 
 /*****************************************************************/
 
+/* mark a block of memory as uninitialized for debugging purposes */
+static inline void mark_block_uninitialized( void *ptr, size_t size )
+{
+    memset( ptr, 0x55, size );
+#if defined(VALGRIND_MAKE_MEM_UNDEFINED)
+    VALGRIND_DISCARD( VALGRIND_MAKE_MEM_UNDEFINED( ptr, size ));
+#elif defined(VALGRIND_MAKE_WRITABLE)
+    VALGRIND_DISCARD( VALGRIND_MAKE_WRITABLE( ptr, size ));
+#endif
+}
+
 /* malloc replacement */
 void *mem_alloc( size_t size )
 {
     void *ptr = malloc( size );
-    if (ptr) memset( ptr, 0x55, size );
+    if (ptr) mark_block_uninitialized( ptr, size );
     else set_error( STATUS_NO_MEMORY );
     return ptr;
 }
@@ -528,6 +542,7 @@ int set_sd_defaults_from_token( struct object *obj, const struct security_descri
     int present;
     const SID *owner = NULL, *group = NULL;
     const ACL *sacl, *dacl;
+    ACL *replaced_sacl = NULL;
     char *ptr;
 
     if (!set_info) return 1;
@@ -568,33 +583,53 @@ int set_sd_defaults_from_token( struct object *obj, const struct security_descri
     }
     else new_sd.group_len = 0;
 
-    new_sd.control |= SE_SACL_PRESENT;
     sacl = sd_get_sacl( sd, &present );
     if (set_info & SACL_SECURITY_INFORMATION && present)
+    {
+        new_sd.control |= SE_SACL_PRESENT;
         new_sd.sacl_len = sd->sacl_len;
+    }
+    else if (set_info & LABEL_SECURITY_INFORMATION && present)
+    {
+        const ACL *old_sacl = NULL;
+        if (obj->sd && obj->sd->control & SE_SACL_PRESENT) old_sacl = sd_get_sacl( obj->sd, &present );
+        if (!(replaced_sacl = replace_security_labels( old_sacl, sacl ))) return 0;
+        new_sd.control |= SE_SACL_PRESENT;
+        new_sd.sacl_len = replaced_sacl->AclSize;
+        sacl = replaced_sacl;
+    }
     else
     {
         if (obj->sd) sacl = sd_get_sacl( obj->sd, &present );
 
         if (obj->sd && present)
+        {
+            new_sd.control |= SE_SACL_PRESENT;
             new_sd.sacl_len = obj->sd->sacl_len;
+        }
         else
             new_sd.sacl_len = 0;
     }
 
-    new_sd.control |= SE_DACL_PRESENT;
     dacl = sd_get_dacl( sd, &present );
     if (set_info & DACL_SECURITY_INFORMATION && present)
+    {
+        new_sd.control |= SE_DACL_PRESENT;
         new_sd.dacl_len = sd->dacl_len;
+    }
     else
     {
         if (obj->sd) dacl = sd_get_dacl( obj->sd, &present );
 
         if (obj->sd && present)
+        {
+            new_sd.control |= SE_DACL_PRESENT;
             new_sd.dacl_len = obj->sd->dacl_len;
+        }
         else if (token)
         {
             dacl = token_get_default_dacl( token );
+            new_sd.control |= SE_DACL_PRESENT;
             new_sd.dacl_len = dacl->AclSize;
         }
         else new_sd.dacl_len = 0;
@@ -602,7 +637,11 @@ int set_sd_defaults_from_token( struct object *obj, const struct security_descri
 
     ptr = mem_alloc( sizeof(new_sd) + new_sd.owner_len + new_sd.group_len +
                      new_sd.sacl_len + new_sd.dacl_len );
-    if (!ptr) return 0;
+    if (!ptr)
+    {
+        free( replaced_sacl );
+        return 0;
+    }
     new_sd_ptr = (struct security_descriptor*)ptr;
 
     memcpy( ptr, &new_sd, sizeof(new_sd) );
@@ -615,6 +654,7 @@ int set_sd_defaults_from_token( struct object *obj, const struct security_descri
     ptr += new_sd.sacl_len;
     memcpy( ptr, dacl, new_sd.dacl_len );
 
+    free( replaced_sacl );
     free( obj->sd );
     obj->sd = new_sd_ptr;
     return 1;

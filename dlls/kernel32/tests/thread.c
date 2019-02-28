@@ -76,6 +76,7 @@
 #define ARCH "none"
 #endif
 
+static void (WINAPI *pGetCurrentThreadStackLimits)(PULONG_PTR,PULONG_PTR);
 static BOOL (WINAPI *pGetThreadPriorityBoost)(HANDLE,PBOOL);
 static HANDLE (WINAPI *pOpenThread)(DWORD,BOOL,DWORD);
 static BOOL (WINAPI *pQueueUserWorkItem)(LPTHREAD_START_ROUTINE,PVOID,ULONG);
@@ -992,6 +993,29 @@ static VOID test_thread_processor(void)
         win_skip("Get/SetThreadGroupAffinity not available\n");
 }
 
+static VOID test_GetCurrentThreadStackLimits(void)
+{
+    ULONG_PTR low = 0, high = 0;
+
+    if (!pGetCurrentThreadStackLimits)
+    {
+        win_skip("GetCurrentThreadStackLimits not available.\n");
+        return;
+    }
+
+    if (0)
+    {
+        /* crashes on native */
+        pGetCurrentThreadStackLimits(NULL, NULL);
+        pGetCurrentThreadStackLimits(NULL, &high);
+        pGetCurrentThreadStackLimits(&low, NULL);
+    }
+
+    pGetCurrentThreadStackLimits(&low, &high);
+    ok(low == (ULONG_PTR)NtCurrentTeb()->DeallocationStack, "expected %p, got %lx\n", NtCurrentTeb()->DeallocationStack, low);
+    ok(high == (ULONG_PTR)NtCurrentTeb()->Tib.StackBase, "expected %p, got %lx\n", NtCurrentTeb()->Tib.StackBase, high);
+}
+
 static VOID test_GetThreadExitCode(void)
 {
     DWORD exitCode, threadid;
@@ -1325,10 +1349,12 @@ static DWORD WINAPI LS_ThreadProc(LPVOID p)
     ok(LS_index0 != LS_index1, "%s failed\n", LS_AllocFuncName);
 
     /* Both slots should be initialized to NULL */
+    SetLastError(0xdeadbeef);
     val = LS_GetValueFunc(LS_index0);
     ok(GetLastError() == ERROR_SUCCESS, "%s failed\n", LS_GetValueFuncName);
     ok(val == NULL, "Slot not initialized correctly\n");
 
+    SetLastError(0xdeadbeef);
     val = LS_GetValueFunc(LS_index1);
     ok(GetLastError() == ERROR_SUCCESS, "%s failed\n", LS_GetValueFuncName);
     ok(val == NULL, "Slot not initialized correctly\n");
@@ -1337,10 +1363,12 @@ static DWORD WINAPI LS_ThreadProc(LPVOID p)
 
   if (sync_threads_and_run_one(0, id))
   {
+    SetLastError(0xdeadbeef);
     val = LS_GetValueFunc(LS_index0);
     ok(GetLastError() == ERROR_SUCCESS, "%s failed\n", LS_GetValueFuncName);
     ok(val == NULL, "Slot not initialized correctly\n");
 
+    SetLastError(0xdeadbeef);
     val = LS_GetValueFunc(LS_index1);
     ok(GetLastError() == ERROR_SUCCESS, "%s failed\n", LS_GetValueFuncName);
     ok(val == NULL, "Slot not initialized correctly\n");
@@ -1351,10 +1379,12 @@ static DWORD WINAPI LS_ThreadProc(LPVOID p)
     ret = LS_SetValueFunc(LS_index1, (LPVOID) 2);
     ok(ret, "%s failed\n", LS_SetValueFuncName);
 
+    SetLastError(0xdeadbeef);
     val = LS_GetValueFunc(LS_index0);
     ok(GetLastError() == ERROR_SUCCESS, "%s failed\n", LS_GetValueFuncName);
     ok(val == (LPVOID) 1, "Slot not initialized correctly\n");
 
+    SetLastError(0xdeadbeef);
     val = LS_GetValueFunc(LS_index1);
     ok(GetLastError() == ERROR_SUCCESS, "%s failed\n", LS_GetValueFuncName);
     ok(val == (LPVOID) 2, "Slot not initialized correctly\n");
@@ -1647,6 +1677,7 @@ static WORD get_thread_fpu_cw(void)
     res = CloseHandle(ctx.finished);
     ok(!!res, "Failed to close event handle, last error %#x.\n", GetLastError());
 
+    CloseHandle(thread);
     return ctx.cw;
 }
 
@@ -1926,7 +1957,7 @@ static void test_thread_info(void)
         return;
     }
 
-    for (i = 0; i < sizeof(info_size)/sizeof(info_size[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(info_size); i++)
     {
         memset(buf, 0, sizeof(buf));
 
@@ -1969,6 +2000,7 @@ todo_wine
 
         case ThreadAffinityMask:
         case ThreadQuerySetWin32StartAddress:
+        case ThreadIsIoPending:
 todo_wine
             ok(status == STATUS_ACCESS_DENIED, "for info %u expected STATUS_ACCESS_DENIED, got %08x (ret_len %u)\n", i, status, ret_len);
             break;
@@ -1991,6 +2023,7 @@ static void init_funcs(void)
    so that the compile passes */
 
 #define X(f) p##f = (void*)GetProcAddress(hKernel32, #f)
+    X(GetCurrentThreadStackLimits);
     X(GetThreadPriorityBoost);
     X(OpenThread);
     X(QueueUserWorkItem);
@@ -2076,6 +2109,7 @@ START_TEST(thread)
    test_TerminateThread();
    test_CreateThread_stack();
    test_thread_priority();
+   test_GetCurrentThreadStackLimits();
    test_GetThreadTimes();
    test_thread_processor();
    test_GetThreadExitCode();

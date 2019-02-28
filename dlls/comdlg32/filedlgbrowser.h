@@ -93,6 +93,7 @@ typedef struct
     } HookMsg;
 
     BOOL ole_initialized;
+    LPITEMIDLIST places[5];
 } FileOpenDlgInfos;
 
 /***********************************************************************
@@ -131,6 +132,7 @@ typedef struct
 #define IDC_FILENAME                    edt1
 
 #define IDC_TOOLBAR			1
+#define IDC_TOOLBARPLACES               ctl1
 
 /***********************************************************************
  * Prototypes for the methods of the IShellBrowserImpl class
@@ -147,7 +149,7 @@ void FILEDLG95_FILENAME_FillFromSelection (HWND hwnd) DECLSPEC_HIDDEN;
 /**************************************************************************
 *   External Prototypes
 */
-extern const char FileOpenDlgInfosStr[] DECLSPEC_HIDDEN;
+extern FileOpenDlgInfos *get_filedlg_infoptr(HWND hwnd) DECLSPEC_HIDDEN;
 
 extern IShellFolder*    GetShellFolderFromPidl(LPITEMIDLIST pidlAbs) DECLSPEC_HIDDEN;
 extern LPITEMIDLIST     GetParentPidl(LPITEMIDLIST pidl) DECLSPEC_HIDDEN;

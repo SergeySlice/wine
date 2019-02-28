@@ -28,9 +28,12 @@
 #include "winbase.h"
 #include "winuser.h"
 #include "shellapi.h"
+#include "commctrl.h"
+#include "commoncontrols.h"
 
 #include "wine/list.h"
 #include "wine/debug.h"
+#include "wine/heap.h"
 
 #include "explorerframe_main.h"
 
@@ -71,6 +74,8 @@ static const DWORD unsupported_styles =
 static const DWORD unsupported_styles2 =
     NSTCS2_INTERRUPTNOTIFICATIONS | NSTCS2_SHOWNULLSPACEMENU | NSTCS2_DISPLAYPADDING |
     NSTCS2_DISPLAYPINNEDONLY | NTSCS2_NOSINGLETONAUTOEXPAND | NTSCS2_NEVERINSERTNONENUMERATED;
+
+static const WCHAR thispropW[] = {'P','R','O','P','_','T','H','I','S',0};
 
 static inline NSTC2Impl *impl_from_INameSpaceTreeControl2(INameSpaceTreeControl2 *iface)
 {
@@ -316,7 +321,10 @@ static int get_icon(LPCITEMIDLIST lpi, UINT extra_flags)
 {
     SHFILEINFOW sfi;
     UINT flags = SHGFI_PIDL | SHGFI_SYSICONINDEX | SHGFI_SMALLICON;
-    SHGetFileInfoW((LPCWSTR)lpi, 0 ,&sfi, sizeof(SHFILEINFOW), flags | extra_flags);
+    IImageList *list;
+
+    list = (IImageList *)SHGetFileInfoW((LPCWSTR)lpi, 0 ,&sfi, sizeof(SHFILEINFOW), flags | extra_flags);
+    if (list) IImageList_Release(list);
     return sfi.iIcon;
 }
 
@@ -502,7 +510,7 @@ static LRESULT create_namespacetree(HWND hWnd, CREATESTRUCTW *crs)
     This->tv_oldwndproc = (WNDPROC)SetWindowLongPtrW(This->hwnd_tv, GWLP_WNDPROC,
                                                      (ULONG_PTR)tv_wndproc);
     if(This->tv_oldwndproc)
-        SetPropA(This->hwnd_tv, "PROP_THIS", This);
+        SetPropW(This->hwnd_tv, thispropW, This);
 
     return TRUE;
 }
@@ -526,7 +534,7 @@ static LRESULT destroy_namespacetree(NSTC2Impl *This)
     if(This->tv_oldwndproc)
     {
         SetWindowLongPtrW(This->hwnd_tv, GWLP_WNDPROC, (ULONG_PTR)This->tv_oldwndproc);
-        RemovePropA(This->hwnd_tv, "PROP_THIS");
+        RemovePropW(This->hwnd_tv, thispropW);
     }
 
     INameSpaceTreeControl2_RemoveAllRoots(&This->INameSpaceTreeControl2_iface);
@@ -754,7 +762,7 @@ static LRESULT on_kbd_event(NSTC2Impl *This, UINT uMsg, WPARAM wParam, LPARAM lP
 
 static LRESULT CALLBACK tv_wndproc(HWND hWnd, UINT uMessage, WPARAM wParam, LPARAM lParam)
 {
-    NSTC2Impl *This = (NSTC2Impl*)GetPropA(hWnd, "PROP_THIS");
+    NSTC2Impl *This = (NSTC2Impl*)GetPropW(hWnd, thispropW);
 
     switch(uMessage) {
     case WM_KEYDOWN:
@@ -854,9 +862,8 @@ static ULONG WINAPI NSTC2_fnRelease(INameSpaceTreeControl2* iface)
     if(!ref)
     {
         TRACE("Freeing.\n");
-        HeapFree(GetProcessHeap(), 0, This);
+        heap_free(This);
         EFRAME_UnlockModule();
-        return 0;
     }
 
     return ref;
@@ -994,7 +1001,7 @@ static HRESULT WINAPI NSTC2_fnInsertRoot(INameSpaceTreeControl2* iface,
 
     TRACE("%p, %d, %p, %x, %x, %p\n", This, iIndex, psiRoot, grfEnumFlags, grfRootStyle, pif);
 
-    new_root = HeapAlloc(GetProcessHeap(), 0, sizeof(nstc_root));
+    new_root = heap_alloc(sizeof(*new_root));
     if(!new_root)
         return E_OUTOFMEMORY;
 
@@ -1018,7 +1025,7 @@ static HRESULT WINAPI NSTC2_fnInsertRoot(INameSpaceTreeControl2* iface,
     if(!new_root->htreeitem)
     {
         WARN("Failed to add the root.\n");
-        HeapFree(GetProcessHeap(), 0, new_root);
+        heap_free(new_root);
         return E_FAIL;
     }
 
@@ -1086,7 +1093,7 @@ static HRESULT WINAPI NSTC2_fnRemoveRoot(INameSpaceTreeControl2* iface,
         events_OnItemDeleted(This, root->psi, TRUE);
         SendMessageW(This->hwnd_tv, TVM_DELETEITEM, 0, (LPARAM)root->htreeitem);
         list_remove(&root->entry);
-        HeapFree(GetProcessHeap(), 0, root);
+        heap_free(root);
         return S_OK;
     }
     else
@@ -1128,7 +1135,7 @@ static HRESULT WINAPI NSTC2_fnGetRootItems(INameSpaceTreeControl2* iface,
     if(!count)
         return E_INVALIDARG;
 
-    array = HeapAlloc(GetProcessHeap(), 0, sizeof(LPITEMIDLIST)*count);
+    array = heap_alloc(sizeof(LPITEMIDLIST)*count);
 
     i = 0;
     LIST_FOR_EACH_ENTRY(root, &This->roots, nstc_root, entry)
@@ -1142,7 +1149,7 @@ static HRESULT WINAPI NSTC2_fnGetRootItems(INameSpaceTreeControl2* iface,
     for(i = 0; i < count; i++)
         ILFree(array[i]);
 
-    HeapFree(GetProcessHeap(), 0, array);
+    heap_free(array);
 
     return hr;
 }
@@ -1603,7 +1610,7 @@ HRESULT NamespaceTreeControl_Constructor(IUnknown *pUnkOuter, REFIID riid, void 
 
     EFRAME_LockModule();
 
-    nstc = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(NSTC2Impl));
+    nstc = heap_alloc_zero(sizeof(*nstc));
     if (!nstc)
         return E_OUTOFMEMORY;
 

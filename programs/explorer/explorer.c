@@ -24,6 +24,7 @@
 
 #include "wine/unicode.h"
 #include "wine/debug.h"
+#include "wine/heap.h"
 #include "explorer_private.h"
 #include "resource.h"
 
@@ -42,12 +43,16 @@ WINE_DEFAULT_DEBUG_CHANNEL(explorer);
 
 #define NAV_TOOLBAR_HEIGHT 30
 #define PATHBOX_HEIGHT 24
+static int nav_toolbar_height;
+static int pathbox_height;
 
 #define DEFAULT_WIDTH 640
 #define DEFAULT_HEIGHT 480
+static int default_width;
+static int default_height;
 
 
-static const WCHAR EXPLORER_CLASS[] = {'W','I','N','E','_','E','X','P','L','O','R','E','R','\0'};
+static const WCHAR EXPLORER_CLASS[] = {'E','x','p','l','o','r','e','r','W','C','l','a','s','s',0};
 static const WCHAR PATH_BOX_NAME[] = {'\0'};
 
 HINSTANCE explorer_hInstance;
@@ -105,42 +110,43 @@ static ULONG WINAPI IExplorerBrowserEventsImpl_fnRelease(IExplorerBrowserEvents 
     return ref;
 }
 
-static BOOL create_combobox_item(IShellFolder *folder, LPCITEMIDLIST pidl, IImageList *icon_list, COMBOBOXEXITEMW *item)
+static BOOL create_combobox_item(IShellFolder *folder, LPCITEMIDLIST child_pidl, IImageList *icon_list, COMBOBOXEXITEMW *item)
 {
     STRRET strret;
     HRESULT hres;
-    IExtractIconW *extract_icon;
-    UINT reserved;
-    WCHAR icon_file[MAX_PATH];
-    INT icon_index;
-    UINT icon_flags;
-    HICON icon;
+    PIDLIST_ABSOLUTE parent_pidl, pidl;
+    SHFILEINFOW info;
+    IImageList *list;
+
     strret.uType=STRRET_WSTR;
-    hres = IShellFolder_GetDisplayNameOf(folder,pidl,SHGDN_FORADDRESSBAR,&strret);
+    hres = IShellFolder_GetDisplayNameOf( folder, child_pidl, SHGDN_FORADDRESSBAR, &strret );
     if(SUCCEEDED(hres))
-        hres = StrRetToStrW(&strret, pidl, &item->pszText);
+        hres = StrRetToStrW(&strret, child_pidl, &item->pszText);
     if(FAILED(hres))
     {
         WINE_WARN("Could not get name for pidl\n");
         return FALSE;
     }
-    hres = IShellFolder_GetUIObjectOf(folder,NULL,1,&pidl,&IID_IExtractIconW,
-                                      &reserved,(void**)&extract_icon);
-    if(SUCCEEDED(hres))
+
+    item->mask &= ~CBEIF_IMAGE;
+    hres = SHGetIDListFromObject( (IUnknown *)folder, &parent_pidl );
+    if (FAILED(hres)) return FALSE;
+
+    pidl = ILCombine( parent_pidl, child_pidl );
+    if (pidl)
     {
-        item->mask |= CBEIF_IMAGE;
-        IExtractIconW_GetIconLocation(extract_icon,GIL_FORSHELL,icon_file,
-                                      sizeof(icon_file)/sizeof(WCHAR),
-                                      &icon_index,&icon_flags);
-        IExtractIconW_Extract(extract_icon,icon_file,icon_index,NULL,&icon,20);
-        item->iImage = ImageList_AddIcon((HIMAGELIST)icon_list,icon);
-        IExtractIconW_Release(extract_icon);
+        list = (IImageList *)SHGetFileInfoW( (WCHAR *)pidl, 0, &info, sizeof(info),
+                                             SHGFI_PIDL | SHGFI_SMALLICON | SHGFI_SYSICONINDEX );
+        if (list)
+        {
+            IImageList_Release( list );
+            item->iImage = info.iIcon;
+            item->mask |= CBEIF_IMAGE;
+        }
+        ILFree( pidl );
     }
-    else
-    {
-        item->mask &= ~CBEIF_IMAGE;
-        WINE_WARN("Could not get an icon for %s\n",wine_dbgstr_w(item->pszText));
-    }
+    ILFree( parent_pidl );
+
     return TRUE;
 }
 
@@ -153,7 +159,6 @@ static void update_path_box(explorer_info *info)
     LPITEMIDLIST desktop_pidl;
     IEnumIDList *ids;
 
-    ImageList_Remove((HIMAGELIST)info->icon_list,-1);
     SendMessageW(info->path_box,CB_RESETCONTENT,0,0);
     SHGetDesktopFolder(&desktop);
     IShellFolder_QueryInterface(desktop,&IID_IPersistFolder2,(void**)&persist);
@@ -255,10 +260,32 @@ static void update_path_box(explorer_info *info)
 static HRESULT WINAPI IExplorerBrowserEventsImpl_fnOnNavigationComplete(IExplorerBrowserEvents *iface, PCIDLIST_ABSOLUTE pidl)
 {
     IExplorerBrowserEventsImpl *This = impl_from_IExplorerBrowserEvents(iface);
+    IShellFolder *parent;
+    PCUITEMID_CHILD child_pidl;
+    HRESULT hres;
+    STRRET strret;
+    WCHAR *name;
+
     ILFree(This->info->pidl);
     This->info->pidl = ILClone(pidl);
     update_path_box(This->info);
-    return S_OK;
+
+    hres = SHBindToParent(pidl, &IID_IShellFolder, (void **)&parent, &child_pidl);
+    if (SUCCEEDED(hres))
+    {
+        hres = IShellFolder_GetDisplayNameOf(parent, child_pidl, SHGDN_FORADDRESSBAR, &strret);
+        if (SUCCEEDED(hres))
+            hres = StrRetToStrW(&strret, child_pidl, &name);
+        if (SUCCEEDED(hres))
+        {
+            SetWindowTextW(This->info->main_window, name);
+            CoTaskMemFree(name);
+        }
+
+        IShellFolder_Release(parent);
+    }
+
+    return hres;
 }
 
 static HRESULT WINAPI IExplorerBrowserEventsImpl_fnOnNavigationFailed(IExplorerBrowserEvents *iface, PCIDLIST_ABSOLUTE pidl)
@@ -301,7 +328,7 @@ static IExplorerBrowserEvents *make_explorer_events(explorer_info *info)
 
 static void make_explorer_window(IShellFolder* startFolder)
 {
-    RECT explorerRect;
+    RECT rect;
     HWND rebar,nav_toolbar;
     FOLDERSETTINGS fs;
     IExplorerBrowserEvents *events;
@@ -313,11 +340,23 @@ static void make_explorer_window(IShellFolder* startFolder)
     TBBUTTON nav_buttons[3];
     int hist_offset,view_offset;
     REBARBANDINFOW band_info;
+    UINT dpix, dpiy;
+    HDC hdc;
+
     memset(nav_buttons,0,sizeof(nav_buttons));
-    LoadStringW(explorer_hInstance,IDS_EXPLORER_TITLE,explorer_title,
-                sizeof(explorer_title)/sizeof(WCHAR));
-    LoadStringW(explorer_hInstance,IDS_PATHBOX_LABEL,pathbox_label,
-                sizeof(pathbox_label)/sizeof(WCHAR));
+
+    LoadStringW(explorer_hInstance,IDS_EXPLORER_TITLE,explorer_title, ARRAY_SIZE( explorer_title ));
+    LoadStringW(explorer_hInstance,IDS_PATHBOX_LABEL,pathbox_label, ARRAY_SIZE( pathbox_label ));
+
+    hdc = GetDC(0);
+    dpix = GetDeviceCaps(hdc, LOGPIXELSX);
+    dpiy = GetDeviceCaps(hdc, LOGPIXELSY);
+    ReleaseDC(0, hdc);
+    nav_toolbar_height = MulDiv(NAV_TOOLBAR_HEIGHT, dpiy, USER_DEFAULT_SCREEN_DPI);
+    pathbox_height = MulDiv(PATHBOX_HEIGHT, dpiy, USER_DEFAULT_SCREEN_DPI);
+    default_width = MulDiv(DEFAULT_WIDTH, dpix, USER_DEFAULT_SCREEN_DPI);
+    default_height = MulDiv(DEFAULT_HEIGHT, dpiy, USER_DEFAULT_SCREEN_DPI);
+
     info = HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,sizeof(explorer_info));
     if(!info)
     {
@@ -335,17 +374,14 @@ static void make_explorer_window(IShellFolder* startFolder)
     info->rebar_height=0;
     info->main_window
         = CreateWindowW(EXPLORER_CLASS,explorer_title,WS_OVERLAPPEDWINDOW,
-                        CW_USEDEFAULT,CW_USEDEFAULT,DEFAULT_WIDTH,
-                        DEFAULT_HEIGHT,NULL,NULL,explorer_hInstance,NULL);
+                        CW_USEDEFAULT,CW_USEDEFAULT,default_width,
+                        default_height,NULL,NULL,explorer_hInstance,NULL);
 
     fs.ViewMode = FVM_DETAILS;
     fs.fFlags = FWF_AUTOARRANGE;
-    explorerRect.left = 0;
-    explorerRect.top = 0;
-    explorerRect.right = DEFAULT_WIDTH;
-    explorerRect.bottom = DEFAULT_HEIGHT;
 
-    IExplorerBrowser_Initialize(info->browser,info->main_window,&explorerRect,&fs);
+    SetRect(&rect, 0, 0, default_width, default_height);
+    IExplorerBrowser_Initialize(info->browser,info->main_window,&rect,&fs);
     IExplorerBrowser_SetOptions(info->browser,EBO_SHOWFRAMES);
     SetWindowLongPtrW(info->main_window,EXPLORER_INFO_INDEX,(LONG_PTR)info);
 
@@ -377,24 +413,25 @@ static void make_explorer_window(IShellFolder* startFolder)
     nav_buttons[2].fsState=TBSTATE_ENABLED;
     nav_buttons[2].fsStyle=BTNS_BUTTON|BTNS_AUTOSIZE;
     SendMessageW(nav_toolbar,TB_BUTTONSTRUCTSIZE,sizeof(TBBUTTON),0);
-    SendMessageW(nav_toolbar,TB_ADDBUTTONSW,sizeof(nav_buttons)/sizeof(TBBUTTON),(LPARAM)nav_buttons);
+    SendMessageW(nav_toolbar,TB_ADDBUTTONSW,ARRAY_SIZE( nav_buttons ),(LPARAM)nav_buttons);
 
     band_info.cbSize = sizeof(band_info);
     band_info.fMask = RBBIM_STYLE|RBBIM_CHILD|RBBIM_CHILDSIZE|RBBIM_SIZE;
     band_info.hwndChild = nav_toolbar;
     band_info.fStyle=RBBS_GRIPPERALWAYS|RBBS_CHILDEDGE;
-    band_info.cyChild=NAV_TOOLBAR_HEIGHT;
+    band_info.cyChild=nav_toolbar_height;
     band_info.cx=0;
-    band_info.cyMinChild=NAV_TOOLBAR_HEIGHT;
+    band_info.cyMinChild=nav_toolbar_height;
     band_info.cxMinChild=0;
     SendMessageW(rebar,RB_INSERTBANDW,-1,(LPARAM)&band_info);
     info->path_box = CreateWindowW(WC_COMBOBOXEXW,PATH_BOX_NAME,
                                    WS_CHILD | WS_VISIBLE | CBS_DROPDOWN,
-                                   0,0,DEFAULT_WIDTH,PATHBOX_HEIGHT,rebar,NULL,
+                                   0,0,default_width,pathbox_height,rebar,NULL,
                                    explorer_hInstance,NULL);
-    band_info.cyChild=PATHBOX_HEIGHT;
+    GetWindowRect(info->path_box, &rect);
+    band_info.cyChild = rect.bottom - rect.top;
     band_info.cx=0;
-    band_info.cyMinChild=PATHBOX_HEIGHT;
+    band_info.cyMinChild = rect.bottom - rect.top;
     band_info.cxMinChild=0;
     band_info.fMask|=RBBIM_TEXT;
     band_info.lpText=pathbox_label;
@@ -593,16 +630,26 @@ static IShellFolder* get_starting_shell_folder(parameters_struct* params)
 {
     IShellFolder* desktop,*folder;
     LPITEMIDLIST root_pidl;
+    WCHAR *fullpath = NULL;
     HRESULT hres;
+    DWORD size;
 
     SHGetDesktopFolder(&desktop);
     if (!params->root[0])
     {
         return desktop;
     }
+
+    size = GetFullPathNameW(params->root, 0, fullpath, NULL);
+    if (!size)
+        return desktop;
+    fullpath = heap_alloc(size * sizeof(WCHAR));
+    GetFullPathNameW(params->root, size, fullpath, NULL);
+
     hres = IShellFolder_ParseDisplayName(desktop,NULL,NULL,
-                                         params->root,NULL,
+                                         fullpath,NULL,
                                          &root_pidl,NULL);
+    heap_free(fullpath);
 
     if(FAILED(hres))
     {
@@ -611,6 +658,7 @@ static IShellFolder* get_starting_shell_folder(parameters_struct* params)
     hres = IShellFolder_BindToObject(desktop,root_pidl,NULL,
                                      &IID_IShellFolder,
                                      (void**)&folder);
+    ILFree(root_pidl);
     if(FAILED(hres))
     {
         return desktop;
@@ -619,7 +667,7 @@ static IShellFolder* get_starting_shell_folder(parameters_struct* params)
     return folder;
 }
 
-static int copy_path_string(LPWSTR target, LPWSTR source)
+static WCHAR *copy_path_string(WCHAR *target, WCHAR *source)
 {
     INT i = 0;
 
@@ -628,10 +676,9 @@ static int copy_path_string(LPWSTR target, LPWSTR source)
     if (*source == '\"')
     {
         source ++;
-        while (*source != '\"') target[i++] = *source++;
+        while (*source && *source != '\"') target[i++] = *source++;
         target[i] = 0;
-        source ++;
-        i+=2;
+        if (*source) source++;
     }
     else
     {
@@ -639,7 +686,7 @@ static int copy_path_string(LPWSTR target, LPWSTR source)
         target[i] = 0;
     }
     PathRemoveBackslashW(target);
-    return i;
+    return source;
 }
 
 
@@ -689,38 +736,38 @@ static void parse_command_line(LPWSTR commandline,parameters_struct *parameters)
     while (*p)
     {
         while (isspaceW(*p)) p++;
-        if (strncmpW(p, arg_n, sizeof(arg_n)/sizeof(WCHAR))==0)
+        if (strncmpW(p, arg_n, ARRAY_SIZE( arg_n ))==0)
         {
             parameters->explorer_mode = FALSE;
-            p += sizeof(arg_n)/sizeof(WCHAR);
+            p += ARRAY_SIZE( arg_n );
         }
-        else if (strncmpW(p, arg_e, sizeof(arg_e)/sizeof(WCHAR))==0)
+        else if (strncmpW(p, arg_e, ARRAY_SIZE( arg_e ))==0)
         {
             parameters->explorer_mode = TRUE;
-            p += sizeof(arg_e)/sizeof(WCHAR);
+            p += ARRAY_SIZE( arg_e );
         }
-        else if (strncmpW(p, arg_root, sizeof(arg_root)/sizeof(WCHAR))==0)
+        else if (strncmpW(p, arg_root, ARRAY_SIZE( arg_root ))==0)
         {
-            p += sizeof(arg_root)/sizeof(WCHAR);
-            p+=copy_path_string(parameters->root,p);
+            p += ARRAY_SIZE( arg_root );
+            p = copy_path_string(parameters->root,p);
         }
-        else if (strncmpW(p, arg_select, sizeof(arg_select)/sizeof(WCHAR))==0)
+        else if (strncmpW(p, arg_select, ARRAY_SIZE( arg_select ))==0)
         {
-            p += sizeof(arg_select)/sizeof(WCHAR);
-            p+=copy_path_string(parameters->selection,p);
+            p += ARRAY_SIZE( arg_select );
+            p = copy_path_string(parameters->selection,p);
             if (!parameters->root[0])
                 copy_path_root(parameters->root,
                                parameters->selection);
         }
-        else if (strncmpW(p, arg_desktop, sizeof(arg_desktop)/sizeof(WCHAR))==0)
+        else if (strncmpW(p, arg_desktop, ARRAY_SIZE( arg_desktop ))==0)
         {
-            p += sizeof(arg_desktop)/sizeof(WCHAR);
+            p += ARRAY_SIZE( arg_desktop );
             manage_desktop( p );  /* the rest of the command line is handled by desktop mode */
         }
         /* workaround for Worms Armageddon that hardcodes a /desktop option with quotes */
-        else if (strncmpW(p, arg_desktop_quotes, sizeof(arg_desktop_quotes)/sizeof(WCHAR))==0)
+        else if (strncmpW(p, arg_desktop_quotes, ARRAY_SIZE( arg_desktop_quotes ))==0)
         {
-            p += sizeof(arg_desktop_quotes)/sizeof(WCHAR);
+            p += ARRAY_SIZE( arg_desktop_quotes );
             manage_desktop( p );  /* the rest of the command line is handled by desktop mode */
         }
         else

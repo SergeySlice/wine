@@ -297,10 +297,6 @@ static HRESULT WINAPI InPlaceSite_OnInPlaceActivateEx(IOleInPlaceSiteEx *iface,
     TRACE("(%p)->(%p, %x)\n", This, pfNoRedraw, dwFlags);
 
     /* FIXME: Avoid redraw, when possible */
-    if (!pfNoRedraw) {
-        return S_OK;
-    }
-
     *pfNoRedraw = FALSE;
 
     if (dwFlags) {

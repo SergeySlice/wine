@@ -551,7 +551,7 @@ static	UINT	MCI_GetDevTypeFromResource(LPCWSTR lpstrName)
     WCHAR	buf[32];
     UINT	uDevType;
     for (uDevType = MCI_DEVTYPE_FIRST; uDevType <= MCI_DEVTYPE_LAST; uDevType++) {
-	if (LoadStringW(hWinMM32Instance, uDevType, buf, sizeof(buf) / sizeof(WCHAR))) {
+	if (LoadStringW(hWinMM32Instance, uDevType, buf, ARRAY_SIZE(buf))) {
 	    /* FIXME: ignore digits suffix */
 	    if (!strcmpiW(buf, lpstrName))
 		return uDevType;
@@ -668,7 +668,7 @@ static	UINT		MCI_GetCommandTable(UINT uDevType)
 
     /* well try to load id */
     if (uDevType >= MCI_DEVTYPE_FIRST && uDevType <= MCI_DEVTYPE_LAST) {
-	if (LoadStringW(hWinMM32Instance, uDevType, buf, sizeof(buf) / sizeof(WCHAR))) {
+	if (LoadStringW(hWinMM32Instance, uDevType, buf, ARRAY_SIZE(buf))) {
 	    str = buf;
 	}
     } else if (uDevType == 0) {
@@ -1343,6 +1343,9 @@ DWORD WINAPI mciSendStringW(LPCWSTR lpstrCommand, LPWSTR lpstrRet,
           debugstr_w(lpstrCommand), lpstrRet, uRetLen, hwndCallback);
     if (lpstrRet && uRetLen) *lpstrRet = '\0';
 
+    if (!lpstrCommand[0])
+        return MCIERR_MISSING_COMMAND_STRING;
+
     /* format is <command> <device> <optargs> */
     if (!(verb = HeapAlloc(GetProcessHeap(), 0, (strlenW(lpstrCommand)+1) * sizeof(WCHAR))))
 	return MCIERR_OUT_OF_MEMORY;
@@ -1447,9 +1450,9 @@ DWORD WINAPI mciSendStringW(LPCWSTR lpstrCommand, LPWSTR lpstrRet,
 	    {
 		static const WCHAR wszOpenWait[] = {'o','p','e','n',' ','%','s',' ','w','a','i','t',0};
 		WCHAR   buf[138], retbuf[6];
-		snprintfW(buf, sizeof(buf)/sizeof(WCHAR), wszOpenWait, dev);
+		snprintfW(buf, ARRAY_SIZE(buf), wszOpenWait, dev);
 		/* open via mciSendString handles quoting, dev!file syntax and alias creation */
-		if ((dwRet = mciSendStringW(buf, retbuf, sizeof(retbuf)/sizeof(WCHAR), 0)) != 0)
+		if ((dwRet = mciSendStringW(buf, retbuf, ARRAY_SIZE(retbuf), 0)) != 0)
 		    goto errCleanUp;
 		auto_open = strtoulW(retbuf, NULL, 10);
 		TRACE("auto-opened %u for %s\n", auto_open, debugstr_w(dev));
@@ -1743,10 +1746,8 @@ static	DWORD MCI_Open(DWORD dwParam, LPMCI_OPEN_PARMSW lpParms)
 	if (dwParam & MCI_OPEN_TYPE_ID) {
 	    WORD uDevType = LOWORD(lpParms->lpstrDeviceType);
 
-	    if (uDevType < MCI_DEVTYPE_FIRST ||
-		uDevType > MCI_DEVTYPE_LAST ||
-		!LoadStringW(hWinMM32Instance, uDevType,
-                             strDevTyp, sizeof(strDevTyp) / sizeof(WCHAR))) {
+	    if (uDevType < MCI_DEVTYPE_FIRST || uDevType > MCI_DEVTYPE_LAST ||
+		!LoadStringW(hWinMM32Instance, uDevType, strDevTyp, ARRAY_SIZE(strDevTyp))) {
 		dwRet = MCIERR_BAD_INTEGER;
 		goto errCleanUp;
 	    }
@@ -1943,7 +1944,7 @@ static	DWORD MCI_SysInfo(UINT uDevID, DWORD dwFlags, LPMCI_SYSINFO_PARMSW lpParm
 		    RegQueryInfoKeyW( hKey, 0, 0, 0, &cnt, 0, 0, 0, 0, 0, 0, 0);
 		    RegCloseKey( hKey );
 		}
-		if (GetPrivateProfileStringW(wszMci, 0, wszNull, buf, sizeof(buf) / sizeof(buf[0]), wszSystemIni))
+		if (GetPrivateProfileStringW(wszMci, 0, wszNull, buf, ARRAY_SIZE(buf), wszSystemIni))
 		    for (s = buf; *s; s += strlenW(s) + 1) cnt++;
 	    }
 	} else {
@@ -2013,7 +2014,7 @@ static	DWORD MCI_SysInfo(UINT uDevID, DWORD dwFlags, LPMCI_SYSINFO_PARMSW lpParm
 		if (RegQueryInfoKeyW( hKey, 0, 0, 0, &cnt, 
                                       0, 0, 0, 0, 0, 0, 0) == ERROR_SUCCESS && 
                     lpParms->dwNumber <= cnt) {
-		    DWORD bufLen = sizeof(buf)/sizeof(buf[0]);
+		    DWORD bufLen = ARRAY_SIZE(buf);
 		    if (RegEnumKeyExW(hKey, lpParms->dwNumber - 1, 
                                       buf, &bufLen, 0, 0, 0, 0) == ERROR_SUCCESS)
                         s = buf;
@@ -2021,7 +2022,7 @@ static	DWORD MCI_SysInfo(UINT uDevID, DWORD dwFlags, LPMCI_SYSINFO_PARMSW lpParm
 	        RegCloseKey( hKey );
 	    }
 	    if (!s) {
-		if (GetPrivateProfileStringW(wszMci, 0, wszNull, buf, sizeof(buf) / sizeof(buf[0]), wszSystemIni)) {
+		if (GetPrivateProfileStringW(wszMci, 0, wszNull, buf, ARRAY_SIZE(buf), wszSystemIni)) {
 		    for (p = buf; *p; p += strlenW(p) + 1, cnt++) {
                         TRACE("%d: %s\n", cnt, debugstr_w(p));
 			if (cnt == lpParms->dwNumber - 1) {
@@ -2060,13 +2061,18 @@ static	DWORD MCI_SysInfo(UINT uDevID, DWORD dwFlags, LPMCI_SYSINFO_PARMSW lpParm
  */
 static	DWORD MCI_Break(UINT wDevID, DWORD dwFlags, LPMCI_BREAK_PARMS lpParms)
 {
+    DWORD dwRet;
+
     if (lpParms == NULL)
         return MCIERR_NULL_PARAMETER_BLOCK;
-    FIXME("(%04x) vkey %04X stub\n", dwFlags, lpParms->nVirtKey);
 
-    if (dwFlags & MCI_NOTIFY)
+    TRACE("(%08x, %08X, vkey %04X, hwnd %p)\n", wDevID, dwFlags,
+          lpParms->nVirtKey, lpParms->hwndBreak);
+
+    dwRet = MCI_SendCommandFrom32(wDevID, MCI_BREAK, dwFlags, (DWORD_PTR)lpParms);
+    if (!dwRet && (dwFlags & MCI_NOTIFY))
         mciDriverNotify((HWND)lpParms->dwCallback, wDevID, MCI_NOTIFY_SUCCESSFUL);
-    return MMSYSERR_NOERROR;
+    return dwRet;
 }
 
 /**************************************************************************

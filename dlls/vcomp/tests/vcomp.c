@@ -149,6 +149,8 @@ static void  (CDECL   *pomp_unset_nest_lock)(omp_nest_lock_t *lock);
 #define VCOMP_REDUCTION_FLAGS_BOOL_AND  0x600
 #define VCOMP_REDUCTION_FLAGS_BOOL_OR   0x700
 
+#define ULL(a,b) (((ULONG64)(a) << 32) | (b))
+
 #ifdef __i386__
 #define ARCH "x86"
 #elif defined(__x86_64__)
@@ -185,16 +187,6 @@ static const char vcomp_manifest[] =
     "</assembly>\n";
 
 #undef ARCH
-
-static const char *debugstr_longlong(ULONGLONG ll)
-{
-    static char str[17];
-    if (sizeof(ll) > sizeof(unsigned long) && ll >> 32)
-        sprintf(str, "%lx%08lx", (unsigned long)(ll >> 32), (unsigned long)ll);
-    else
-        sprintf(str, "%lx", (unsigned long)ll);
-    return str;
-}
 
 static void create_vcomp_manifest(void)
 {
@@ -547,13 +539,21 @@ static void CDECL fork_ptr_cb(LONG *a, LONG *b, LONG *c, LONG *d, LONG *e)
     InterlockedIncrement(e);
 }
 
-static void CDECL fork_uintptr_cb(UINT_PTR a, UINT_PTR b, UINT_PTR c, UINT_PTR d, UINT_PTR e)
+static void CDECL fork_uintptr_cb(UINT_PTR a, UINT_PTR b, UINT_PTR c, UINT_PTR d,
+                                  UINT_PTR e, UINT_PTR f, UINT_PTR g, UINT_PTR h,
+                                  UINT_PTR i, UINT_PTR j, UINT_PTR k)
 {
     ok(a == 1, "expected a == 1, got %p\n", (void *)a);
     ok(b == MAXUINT_PTR - 2, "expected b == MAXUINT_PTR - 2, got %p\n", (void *)b);
     ok(c == 3, "expected c == 3, got %p\n", (void *)c);
     ok(d == MAXUINT_PTR - 4, "expected d == MAXUINT_PTR - 4, got %p\n", (void *)d);
     ok(e == 5, "expected e == 5, got %p\n", (void *)e);
+    ok(f == 6, "expected f == 6, got %p\n", (void *)f);
+    ok(g == 7, "expected g == 7, got %p\n", (void *)g);
+    ok(h == 8, "expected h == 8, got %p\n", (void *)h);
+    ok(i == 9, "expected i == 9, got %p\n", (void *)i);
+    ok(j == 10, "expected j == 10, got %p\n", (void *)j);
+    ok(k == 11, "expected k == 11, got %p\n", (void *)k);
 }
 
 #ifdef __i386__
@@ -589,8 +589,10 @@ static void test_vcomp_fork(void)
     ok(d == 7, "expected d == 7, got %d\n", d);
     ok(e == 8, "expected e == 8, got %d\n", e);
 
-    p_vcomp_fork(TRUE, 5, fork_uintptr_cb, (UINT_PTR)1, (UINT_PTR)(MAXUINT_PTR - 2),
-        (UINT_PTR)3, (UINT_PTR)(MAXUINT_PTR - 4), (UINT_PTR)5);
+    p_vcomp_fork(TRUE, 11, fork_uintptr_cb, (UINT_PTR)1, (UINT_PTR)(MAXUINT_PTR - 2),
+        (UINT_PTR)3, (UINT_PTR)(MAXUINT_PTR - 4), (UINT_PTR)5,
+        (UINT_PTR)6, (UINT_PTR)7, (UINT_PTR)8, (UINT_PTR)9,
+        (UINT_PTR)10, (UINT_PTR)11);
 
 #ifdef __i386__
     {
@@ -764,7 +766,7 @@ static void CDECL for_static_simple_cb(void)
     int thread_num = pomp_get_thread_num();
     int i;
 
-    for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests); i++)
     {
         unsigned int my_begin, my_end, begin, end;
 
@@ -964,7 +966,7 @@ static void CDECL for_static_cb(void)
     int thread_num = pomp_get_thread_num();
     int i;
 
-    for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests); i++)
     {
         int my_begin, my_end, my_next, my_lastchunk;
         int begin, end, next, lastchunk;
@@ -1000,6 +1002,30 @@ static void CDECL for_static_cb(void)
         p_vcomp_for_static_end();
         p_vcomp_barrier();
 
+        loops = end = next = lastchunk = 0xdeadbeef;
+        p_vcomp_for_static_init(tests[i].first, tests[i].last, tests[i].step, tests[i].chunksize,
+                                &loops, NULL, &end, &next, &lastchunk);
+
+        if (broken_flags & VCOMP_FOR_STATIC_BROKEN_LOOP)
+        {
+            ok(loops == 0 || loops == 1, "test %d, thread %d/%d: expected loops == 0 or 1, got %u\n",
+               i, thread_num, num_threads, loops);
+        }
+        else
+        {
+            ok(loops == my_loops, "test %d, thread %d/%d: expected loops == %u, got %u\n",
+               i, thread_num, num_threads, my_loops, loops);
+            ok(end == my_end, "test %d, thread %d/%d: expected end == %d, got %d\n",
+               i, thread_num, num_threads, my_end, end);
+            ok(next == my_next || broken(broken_flags & VCOMP_FOR_STATIC_BROKEN_NEXT),
+               "test %d, thread %d/%d: expected next == %d, got %d\n", i, thread_num, num_threads, my_next, next);
+            ok(lastchunk == 0xdeadbeef, "test %d, thread %d/%d: expected lastchunk == 0xdeadbeef, got %d\n",
+               i, thread_num, num_threads, lastchunk);
+        }
+
+        p_vcomp_for_static_end();
+        p_vcomp_barrier();
+
         if (tests[i].first == tests[i].last) continue;
 
         my_loops = my_begin = my_end = my_next = my_lastchunk = 0xdeadbeef;
@@ -1026,6 +1052,30 @@ static void CDECL for_static_cb(void)
                "test %d, thread %d/%d: expected next == %d, got %d\n", i, thread_num, num_threads, my_next, next);
             ok(lastchunk == my_lastchunk, "test %d, thread %d/%d: expected lastchunk == %d, got %d\n",
                i, thread_num, num_threads, my_lastchunk, lastchunk);
+        }
+
+        p_vcomp_for_static_end();
+        p_vcomp_barrier();
+
+        loops = end = next = lastchunk = 0xdeadbeef;
+        p_vcomp_for_static_init(tests[i].last, tests[i].first, tests[i].step, tests[i].chunksize,
+                                &loops, NULL, &end, &next, &lastchunk);
+
+        if (broken_flags & VCOMP_FOR_STATIC_BROKEN_LOOP)
+        {
+            ok(loops == 0 || loops == 1, "test %d, thread %d/%d: expected loops == 0 or 1, got %u\n",
+               i, thread_num, num_threads, loops);
+        }
+        else
+        {
+            ok(loops == my_loops, "test %d, thread %d/%d: expected loops == %u, got %u\n",
+               i, thread_num, num_threads, my_loops, loops);
+            ok(end == my_end, "test %d, thread %d/%d: expected end == %d, got %d\n",
+               i, thread_num, num_threads, my_end, end);
+            ok(next == my_next || broken(broken_flags & VCOMP_FOR_STATIC_BROKEN_NEXT),
+               "test %d, thread %d/%d: expected next == %d, got %d\n", i, thread_num, num_threads, my_next, next);
+            ok(lastchunk == 0xdeadbeef, "test %d, thread %d/%d: expected lastchunk == 0xdeadbeef, got %d\n",
+               i, thread_num, num_threads, lastchunk);
         }
 
         p_vcomp_for_static_end();
@@ -1564,25 +1614,25 @@ static void test_atomic_integer8(void)
     };
     int i;
 
-    for (i = 0; i < sizeof(tests1)/sizeof(tests1[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests1); i++)
     {
         char val = tests1[i].v1;
         tests1[i].func(&val, tests1[i].v2);
         ok(val == tests1[i].expected, "test %d: expected val == %d, got %d\n", i, tests1[i].expected, val);
     }
-    for (i = 0; i < sizeof(tests2)/sizeof(tests2[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests2); i++)
     {
         char val = tests2[i].v1;
         tests2[i].func(&val, tests2[i].v2);
         ok(val == tests2[i].expected, "test %d: expected val == %d, got %d\n", i, tests2[i].expected, val);
     }
-    for (i = 0; i < sizeof(tests3)/sizeof(tests3[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests3); i++)
     {
         unsigned char val = tests3[i].v1;
         tests3[i].func(&val, tests3[i].v2);
         ok(val == tests3[i].expected, "test %d: expected val == %u, got %u\n", i, tests3[i].expected, val);
     }
-    for (i = 0; i < sizeof(tests4)/sizeof(tests4[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests4); i++)
     {
         unsigned char val = tests4[i].v1;
         tests4[i].func(&val, tests4[i].v2);
@@ -1657,25 +1707,25 @@ static void test_atomic_integer16(void)
     };
     int i;
 
-    for (i = 0; i < sizeof(tests1)/sizeof(tests1[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests1); i++)
     {
         short val = tests1[i].v1;
         tests1[i].func(&val, tests1[i].v2);
         ok(val == tests1[i].expected, "test %d: expected val == %d, got %d\n", i, tests1[i].expected, val);
     }
-    for (i = 0; i < sizeof(tests2)/sizeof(tests2[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests2); i++)
     {
         short val = tests2[i].v1;
         tests2[i].func(&val, tests2[i].v2);
         ok(val == tests2[i].expected, "test %d: expected val == %d, got %d\n", i, tests2[i].expected, val);
     }
-    for (i = 0; i < sizeof(tests3)/sizeof(tests3[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests3); i++)
     {
         unsigned short val = tests3[i].v1;
         tests3[i].func(&val, tests3[i].v2);
         ok(val == tests3[i].expected, "test %d: expected val == %u, got %u\n", i, tests3[i].expected, val);
     }
-    for (i = 0; i < sizeof(tests4)/sizeof(tests4[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests4); i++)
     {
         unsigned short val = tests4[i].v1;
         tests4[i].func(&val, tests4[i].v2);
@@ -1727,13 +1777,13 @@ static void test_atomic_integer32(void)
     };
     int i;
 
-    for (i = 0; i < sizeof(tests1)/sizeof(tests1[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests1); i++)
     {
         int val = tests1[i].v1;
         tests1[i].func(&val, tests1[i].v2);
         ok(val == tests1[i].expected, "test %d: expected val == %d, got %d\n", i, tests1[i].expected, val);
     }
-    for (i = 0; i < sizeof(tests2)/sizeof(tests2[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests2); i++)
     {
         unsigned int val = tests2[i].v1;
         tests2[i].func(&val, tests2[i].v2);
@@ -1750,15 +1800,15 @@ static void test_atomic_integer64(void)
     }
     tests1[] =
     {
-        { p_vcomp_atomic_add_i8,  0x1122334455667788,  0x7766554433221100, -0x7777777777777778 },
-        { p_vcomp_atomic_and_i8,  0x1122334455667788,  0x7766554433221100,  0x1122114411221100 },
-        { p_vcomp_atomic_div_i8,  0x7766554433221100,  0x1122334455667788,                   6 },
-        { p_vcomp_atomic_div_i8,  0x7766554433221100, -0x1122334455667788,                  -6 },
-        { p_vcomp_atomic_mul_i8,  0x1122334455667788,  0x7766554433221100,  0x3e963337c6000800 },
-        { p_vcomp_atomic_mul_i8,  0x1122334455667788, -0x7766554433221100,  0xc169ccc839fff800 },
-        { p_vcomp_atomic_or_i8,   0x1122334455667788,  0x7766554433221100,  0x7766774477667788 },
-        { p_vcomp_atomic_sub_i8,  0x1122334455667788,  0x7766554433221100, -0x664421ffddbb9978 },
-        { p_vcomp_atomic_xor_i8,  0x1122334455667788,  0x7766554433221100,  0x6644660066446688 },
+        { p_vcomp_atomic_add_i8,  ULL(0x11223344,0x55667788),  ULL(0x77665544,0x33221100), -ULL(0x77777777,0x77777778) },
+        { p_vcomp_atomic_and_i8,  ULL(0x11223344,0x55667788),  ULL(0x77665544,0x33221100),  ULL(0x11221144,0x11221100) },
+        { p_vcomp_atomic_div_i8,  ULL(0x77665544,0x33221100),  ULL(0x11223344,0x55667788),                           6 },
+        { p_vcomp_atomic_div_i8,  ULL(0x77665544,0x33221100), -ULL(0x11223344,0x55667788),                          -6 },
+        { p_vcomp_atomic_mul_i8,  ULL(0x11223344,0x55667788),  ULL(0x77665544,0x33221100),  ULL(0x3e963337,0xc6000800) },
+        { p_vcomp_atomic_mul_i8,  ULL(0x11223344,0x55667788), -ULL(0x77665544,0x33221100),  ULL(0xc169ccc8,0x39fff800) },
+        { p_vcomp_atomic_or_i8,   ULL(0x11223344,0x55667788),  ULL(0x77665544,0x33221100),  ULL(0x77667744,0x77667788) },
+        { p_vcomp_atomic_sub_i8,  ULL(0x11223344,0x55667788),  ULL(0x77665544,0x33221100), -ULL(0x664421ff,0xddbb9978) },
+        { p_vcomp_atomic_xor_i8,  ULL(0x11223344,0x55667788),  ULL(0x77665544,0x33221100),  ULL(0x66446600,0x66446688) },
     };
     struct
     {
@@ -1770,22 +1820,22 @@ static void test_atomic_integer64(void)
     }
     tests2[] =
     {
-        { p_vcomp_atomic_shl_i8,  0x1122334455667788,  3, -0x76ee65dd54cc43c0 },
-        { p_vcomp_atomic_shl_i8,  0x1122334455667788, 60,  0x8000000000000000 },
-        { p_vcomp_atomic_shl_i8, -0x1122334455667788,  3,  0x76ee65dd54cc43c0 },
-        { p_vcomp_atomic_shr_i8,  0x1122334455667788,  3,   0x22446688aaccef1 },
-        { p_vcomp_atomic_shr_i8,  0x1122334455667788, 60,                   1 },
-        { p_vcomp_atomic_shr_i8, -0x1122334455667788,  3,  -0x22446688aaccef1 },
+        { p_vcomp_atomic_shl_i8,  ULL(0x11223344,0x55667788),  3, -ULL(0x76ee65dd,0x54cc43c0) },
+        { p_vcomp_atomic_shl_i8,  ULL(0x11223344,0x55667788), 60,  ULL(0x80000000,0x00000000) },
+        { p_vcomp_atomic_shl_i8, -ULL(0x11223344,0x55667788),  3,  ULL(0x76ee65dd,0x54cc43c0) },
+        { p_vcomp_atomic_shr_i8,  ULL(0x11223344,0x55667788),  3,  ULL(0x02244668,0x8aaccef1) },
+        { p_vcomp_atomic_shr_i8,  ULL(0x11223344,0x55667788), 60,                           1 },
+        { p_vcomp_atomic_shr_i8, -ULL(0x11223344,0x55667788),  3, -ULL(0x02244668,0x8aaccef1) },
 #if defined(__i386__)
-        { p_vcomp_atomic_shl_i8,  0x1122334455667788, 64,                   0, TRUE },
-        { p_vcomp_atomic_shl_i8,  0x1122334455667788, 67,                   0, TRUE },
-        { p_vcomp_atomic_shr_i8,  0x1122334455667788, 64,                   0, TRUE },
-        { p_vcomp_atomic_shr_i8,  0x1122334455667788, 67,                   0, TRUE },
+        { p_vcomp_atomic_shl_i8,  ULL(0x11223344,0x55667788), 64,                           0, TRUE },
+        { p_vcomp_atomic_shl_i8,  ULL(0x11223344,0x55667788), 67,                           0, TRUE },
+        { p_vcomp_atomic_shr_i8,  ULL(0x11223344,0x55667788), 64,                           0, TRUE },
+        { p_vcomp_atomic_shr_i8,  ULL(0x11223344,0x55667788), 67,                           0, TRUE },
 #elif defined(__x86_64__)
-        { p_vcomp_atomic_shl_i8,  0x1122334455667788, 64,  0x1122334455667788 },
-        { p_vcomp_atomic_shl_i8,  0x1122334455667788, 67, -0x76ee65dd54cc43c0 },
-        { p_vcomp_atomic_shr_i8,  0x1122334455667788, 64,  0x1122334455667788 },
-        { p_vcomp_atomic_shr_i8,  0x1122334455667788, 67,   0x22446688aaccef1 },
+        { p_vcomp_atomic_shl_i8,  ULL(0x11223344,0x55667788), 64,  ULL(0x11223344,0x55667788) },
+        { p_vcomp_atomic_shl_i8,  ULL(0x11223344,0x55667788), 67, -ULL(0x76ee65dd,0x54cc43c0) },
+        { p_vcomp_atomic_shr_i8,  ULL(0x11223344,0x55667788), 64,  ULL(0x11223344,0x55667788) },
+        { p_vcomp_atomic_shr_i8,  ULL(0x11223344,0x55667788), 67,  ULL(0x02244668,0x8aaccef1) },
 #endif
     };
     struct
@@ -1795,8 +1845,8 @@ static void test_atomic_integer64(void)
     }
     tests3[] =
     {
-        { p_vcomp_atomic_div_ui8, 0x7766554455667788, 0x1122334433221100, 6 },
-        { p_vcomp_atomic_div_ui8, 0x7766554455667788, 0xeeddccbbaa998878, 0 },
+        { p_vcomp_atomic_div_ui8, ULL(0x77665544,0x55667788), ULL(0x11223344,0x33221100), 6 },
+        { p_vcomp_atomic_div_ui8, ULL(0x77665544,0x55667788), ULL(0xeeddccbb,0xaa998878), 0 },
     };
     struct
     {
@@ -1808,44 +1858,44 @@ static void test_atomic_integer64(void)
     }
     tests4[] =
     {
-        { p_vcomp_atomic_shr_ui8, 0x1122334455667788,  3,  0x22446688aaccef1 },
-        { p_vcomp_atomic_shr_ui8, 0x1122334455667788, 60,                  1 },
-        { p_vcomp_atomic_shr_ui8, 0xeeddccbbaa998878,  3, 0x1ddbb9977553310f },
+        { p_vcomp_atomic_shr_ui8, ULL(0x11223344,0x55667788),  3, ULL(0x02244668,0x8aaccef1) },
+        { p_vcomp_atomic_shr_ui8, ULL(0x11223344,0x55667788), 60,                          1 },
+        { p_vcomp_atomic_shr_ui8, ULL(0xeeddccbb,0xaa998878),  3, ULL(0x1ddbb997,0x7553310f) },
 #if defined(__i386__)
-        { p_vcomp_atomic_shr_ui8, 0x1122334455667788, 64,                  0, TRUE },
-        { p_vcomp_atomic_shr_ui8, 0x1122334455667788, 67,                  0, TRUE },
+        { p_vcomp_atomic_shr_ui8, ULL(0x11223344,0x55667788), 64,                          0, TRUE },
+        { p_vcomp_atomic_shr_ui8, ULL(0x11223344,0x55667788), 67,                          0, TRUE },
 #elif defined(__x86_64__)
-        { p_vcomp_atomic_shr_ui8, 0x1122334455667788, 64, 0x1122334455667788 },
-        { p_vcomp_atomic_shr_ui8, 0x1122334455667788, 67,  0x22446688aaccef1 },
+        { p_vcomp_atomic_shr_ui8, ULL(0x11223344,0x55667788), 64, ULL(0x11223344,0x55667788) },
+        { p_vcomp_atomic_shr_ui8, ULL(0x11223344,0x55667788), 67, ULL(0x02244668,0x8aaccef1) },
 #endif
     };
     int i;
 
-    for (i = 0; i < sizeof(tests1)/sizeof(tests1[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests1); i++)
     {
         LONG64 val = tests1[i].v1;
         tests1[i].func(&val, tests1[i].v2);
-        ok(val == tests1[i].expected, "test %d: unexpectedly got %s\n", i, debugstr_longlong(val));
+        ok(val == tests1[i].expected, "test %d: unexpectedly got %s\n", i, wine_dbgstr_longlong(val));
     }
-    for (i = 0; i < sizeof(tests2)/sizeof(tests2[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests2); i++)
     {
         LONG64 val = tests2[i].v1;
         tests2[i].func(&val, tests2[i].v2);
         todo_wine_if(tests2[i].todo)
-        ok(val == tests2[i].expected, "test %d: unexpectedly got %s\n", i, debugstr_longlong(val));
+        ok(val == tests2[i].expected, "test %d: unexpectedly got %s\n", i, wine_dbgstr_longlong(val));
     }
-    for (i = 0; i < sizeof(tests3)/sizeof(tests3[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests3); i++)
     {
         ULONG64 val = tests3[i].v1;
         tests3[i].func(&val, tests3[i].v2);
-        ok(val == tests3[i].expected, "test %d: unexpectedly got %s\n", i, debugstr_longlong(val));
+        ok(val == tests3[i].expected, "test %d: unexpectedly got %s\n", i, wine_dbgstr_longlong(val));
     }
-    for (i = 0; i < sizeof(tests4)/sizeof(tests4[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests4); i++)
     {
         ULONG64 val = tests4[i].v1;
         tests4[i].func(&val, tests4[i].v2);
         todo_wine_if(tests4[i].todo)
-        ok(val == tests4[i].expected, "test %d: unexpectedly got %s\n", i, debugstr_longlong(val));
+        ok(val == tests4[i].expected, "test %d: unexpectedly got %s\n", i, wine_dbgstr_longlong(val));
     }
 }
 
@@ -1865,7 +1915,7 @@ static void test_atomic_float(void)
     };
     int i;
 
-    for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests); i++)
     {
         float val = tests[i].v1;
         tests[i].func(&val, tests[i].v2);
@@ -1890,7 +1940,7 @@ static void test_atomic_double(void)
     };
     int i;
 
-    for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests); i++)
     {
         double val = tests[i].v1;
         tests[i].func(&val, tests[i].v2);
@@ -1928,13 +1978,13 @@ static void test_reduction_integer8(void)
     };
     int i;
 
-    for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests); i++)
     {
         char val = tests[i].v1;
         p_vcomp_reduction_i1(tests[i].flags, &val, tests[i].v2);
         ok(val == tests[i].expected, "test %d: expected val == %d, got %d\n", i, tests[i].expected, val);
     }
-    for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests); i++)
     {
         unsigned char val = tests[i].v1;
         p_vcomp_reduction_u1(tests[i].flags, &val, tests[i].v2);
@@ -1972,13 +2022,13 @@ static void test_reduction_integer16(void)
     };
     int i;
 
-    for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests); i++)
     {
         short val = tests[i].v1;
         p_vcomp_reduction_i2(tests[i].flags, &val, tests[i].v2);
         ok(val == tests[i].expected, "test %d: expected val == %d, got %d\n", i, tests[i].expected, val);
     }
-    for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests); i++)
     {
         unsigned short val = tests[i].v1;
         p_vcomp_reduction_u2(tests[i].flags, &val, tests[i].v2);
@@ -2055,13 +2105,13 @@ static void test_reduction_integer32(void)
 
     pomp_set_num_threads(max_threads);
 
-    for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests); i++)
     {
         int val = tests[i].v1;
         p_vcomp_reduction_i4(tests[i].flags, &val, tests[i].v2);
         ok(val == tests[i].expected, "test %d: expected val == %d, got %d\n", i, tests[i].expected, val);
     }
-    for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests); i++)
     {
         unsigned int val = tests[i].v1;
         p_vcomp_reduction_u4(tests[i].flags, &val, tests[i].v2);
@@ -2078,37 +2128,37 @@ static void test_reduction_integer64(void)
     }
     tests[] =
     {
-        { 0x000,                            0x1122334455667788,  0x7766554433221100, -0x7777777777777778 },
-        { VCOMP_REDUCTION_FLAGS_ADD,        0x1122334455667788,  0x7766554433221100, -0x7777777777777778 },
-        { VCOMP_REDUCTION_FLAGS_MUL,        0x1122334455667788,  0x7766554433221100,  0x3e963337c6000800 },
-        { VCOMP_REDUCTION_FLAGS_MUL,        0x1122334455667788, -0x7766554433221100,  0xc169ccc839fff800 },
-        { VCOMP_REDUCTION_FLAGS_AND,        0x1122334455667788,  0x7766554433221100,  0x1122114411221100 },
-        { VCOMP_REDUCTION_FLAGS_OR,         0x1122334455667788,  0x7766554433221100,  0x7766774477667788 },
-        { VCOMP_REDUCTION_FLAGS_XOR,        0x1122334455667788,  0x7766554433221100,  0x6644660066446688 },
-        { VCOMP_REDUCTION_FLAGS_BOOL_AND,                    1,                   2,                   1 },
-        { VCOMP_REDUCTION_FLAGS_BOOL_OR,                     0,                   2,                   1 },
-        { 0x800,                                             0,                   2,                   1 },
-        { 0x900,                                             0,                   2,                   1 },
-        { 0xa00,                                             0,                   2,                   1 },
-        { 0xb00,                                             0,                   2,                   1 },
-        { 0xc00,                                             0,                   2,                   1 },
-        { 0xd00,                                             0,                   2,                   1 },
-        { 0xe00,                                             0,                   2,                   1 },
-        { 0xf00,                                             0,                   2,                   1 },
+        { 0x000,                            ULL(0x11223344,0x55667788),  ULL(0x77665544,0x33221100), -ULL(0x77777777,0x77777778) },
+        { VCOMP_REDUCTION_FLAGS_ADD,        ULL(0x11223344,0x55667788),  ULL(0x77665544,0x33221100), -ULL(0x77777777,0x77777778) },
+        { VCOMP_REDUCTION_FLAGS_MUL,        ULL(0x11223344,0x55667788),  ULL(0x77665544,0x33221100),  ULL(0x3e963337,0xc6000800) },
+        { VCOMP_REDUCTION_FLAGS_MUL,        ULL(0x11223344,0x55667788), -ULL(0x77665544,0x33221100),  ULL(0xc169ccc8,0x39fff800) },
+        { VCOMP_REDUCTION_FLAGS_AND,        ULL(0x11223344,0x55667788),  ULL(0x77665544,0x33221100),  ULL(0x11221144,0x11221100) },
+        { VCOMP_REDUCTION_FLAGS_OR,         ULL(0x11223344,0x55667788),  ULL(0x77665544,0x33221100),  ULL(0x77667744,0x77667788) },
+        { VCOMP_REDUCTION_FLAGS_XOR,        ULL(0x11223344,0x55667788),  ULL(0x77665544,0x33221100),  ULL(0x66446600,0x66446688) },
+        { VCOMP_REDUCTION_FLAGS_BOOL_AND,   1, 2, 1 },
+        { VCOMP_REDUCTION_FLAGS_BOOL_OR,    0, 2, 1 },
+        { 0x800,                            0, 2, 1 },
+        { 0x900,                            0, 2, 1 },
+        { 0xa00,                            0, 2, 1 },
+        { 0xb00,                            0, 2, 1 },
+        { 0xc00,                            0, 2, 1 },
+        { 0xd00,                            0, 2, 1 },
+        { 0xe00,                            0, 2, 1 },
+        { 0xf00,                            0, 2, 1 },
     };
     int i;
 
-    for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests); i++)
     {
         LONG64 val = tests[i].v1;
         p_vcomp_reduction_i8(tests[i].flags, &val, tests[i].v2);
-        ok(val == tests[i].expected, "test %d: unexpectedly got %s\n", i, debugstr_longlong(val));
+        ok(val == tests[i].expected, "test %d: unexpectedly got %s\n", i, wine_dbgstr_longlong(val));
     }
-    for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests); i++)
     {
         ULONG64 val = tests[i].v1;
         p_vcomp_reduction_u8(tests[i].flags, &val, tests[i].v2);
-        ok(val == tests[i].expected, "test %d: unexpectedly got %s\n", i, debugstr_longlong(val));
+        ok(val == tests[i].expected, "test %d: unexpectedly got %s\n", i, wine_dbgstr_longlong(val));
     }
 }
 
@@ -2156,14 +2206,14 @@ static void test_reduction_float_double(void)
     };
     int i;
 
-    for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests); i++)
     {
         float val = tests[i].v1;
         p_vcomp_reduction_r4(tests[i].flags, &val, tests[i].v2);
         ok(tests[i].expected - 0.001 < val && val < tests[i].expected + 0.001,
            "test %d: expected val == %f, got %f\n", i, tests[i].expected, val);
     }
-    for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests); i++)
     {
         double val = tests[i].v1;
         p_vcomp_reduction_r8(tests[i].flags, &val, tests[i].v2);

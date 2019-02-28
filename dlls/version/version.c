@@ -127,22 +127,30 @@ static inline int push_language( WORD *list, int pos, WORD lang )
  *  find_entry_language
  */
 static const IMAGE_RESOURCE_DIRECTORY *find_entry_language( const IMAGE_RESOURCE_DIRECTORY *dir,
-                                                            const void *root )
+                                                            const void *root, DWORD flags )
 {
     const IMAGE_RESOURCE_DIRECTORY *ret;
     WORD list[9];
     int i, pos = 0;
 
-    /* cf. LdrFindResource_U */
-    pos = push_language( list, pos, MAKELANGID( LANG_NEUTRAL, SUBLANG_NEUTRAL ) );
-    pos = push_language( list, pos, LANGIDFROMLCID( NtCurrentTeb()->CurrentLocale ) );
-    pos = push_language( list, pos, GetUserDefaultLangID() );
-    pos = push_language( list, pos, MAKELANGID( PRIMARYLANGID(GetUserDefaultLangID()), SUBLANG_NEUTRAL ));
-    pos = push_language( list, pos, MAKELANGID( PRIMARYLANGID(GetUserDefaultLangID()), SUBLANG_DEFAULT ));
-    pos = push_language( list, pos, GetSystemDefaultLangID() );
-    pos = push_language( list, pos, MAKELANGID( PRIMARYLANGID(GetSystemDefaultLangID()), SUBLANG_NEUTRAL ));
-    pos = push_language( list, pos, MAKELANGID( PRIMARYLANGID(GetSystemDefaultLangID()), SUBLANG_DEFAULT ));
-    pos = push_language( list, pos, MAKELANGID( LANG_ENGLISH, SUBLANG_DEFAULT ) );
+    if (flags & FILE_VER_GET_LOCALISED)
+    {
+        /* cf. LdrFindResource_U */
+        pos = push_language( list, pos, MAKELANGID( LANG_NEUTRAL, SUBLANG_NEUTRAL ) );
+        pos = push_language( list, pos, LANGIDFROMLCID( NtCurrentTeb()->CurrentLocale ) );
+        pos = push_language( list, pos, GetUserDefaultLangID() );
+        pos = push_language( list, pos, MAKELANGID( PRIMARYLANGID(GetUserDefaultLangID()), SUBLANG_NEUTRAL ));
+        pos = push_language( list, pos, MAKELANGID( PRIMARYLANGID(GetUserDefaultLangID()), SUBLANG_DEFAULT ));
+        pos = push_language( list, pos, GetSystemDefaultLangID() );
+        pos = push_language( list, pos, MAKELANGID( PRIMARYLANGID(GetSystemDefaultLangID()), SUBLANG_NEUTRAL ));
+        pos = push_language( list, pos, MAKELANGID( PRIMARYLANGID(GetSystemDefaultLangID()), SUBLANG_DEFAULT ));
+        pos = push_language( list, pos, MAKELANGID( LANG_ENGLISH, SUBLANG_DEFAULT ) );
+    }
+    else
+    {
+        /* FIXME: resolve LN file here */
+        pos = push_language( list, pos, MAKELANGID( LANG_ENGLISH, SUBLANG_DEFAULT ) );
+    }
 
     for (i = 0; i < pos; i++) if ((ret = find_entry_by_id( dir, list[i], root ))) return ret;
     return find_entry_default( dir, root );
@@ -254,7 +262,7 @@ static BOOL find_ne_resource( HFILE lzfd, DWORD *resLen, DWORD *resOff )
 /***********************************************************************
  *           find_pe_resource         [internal]
  */
-static BOOL find_pe_resource( HFILE lzfd, DWORD *resLen, DWORD *resOff )
+static BOOL find_pe_resource( HFILE lzfd, DWORD *resLen, DWORD *resOff, DWORD flags )
 {
     union
     {
@@ -356,7 +364,7 @@ static BOOL find_pe_resource( HFILE lzfd, DWORD *resLen, DWORD *resOff )
         TRACE("No resid entry found\n" );
         goto done;
     }
-    resPtr = find_entry_language( resPtr, resDir );
+    resPtr = find_entry_language( resPtr, resDir, flags );
     if ( !resPtr )
     {
         TRACE("No default language entry found\n" );
@@ -393,7 +401,7 @@ static BOOL find_pe_resource( HFILE lzfd, DWORD *resLen, DWORD *resOff )
 /***********************************************************************
  *           find_version_resource         [internal]
  */
-static DWORD find_version_resource( HFILE lzfd, DWORD *reslen, DWORD *offset )
+static DWORD find_version_resource( HFILE lzfd, DWORD *reslen, DWORD *offset, DWORD flags )
 {
     DWORD magic = read_xx_header( lzfd );
 
@@ -403,7 +411,7 @@ static DWORD find_version_resource( HFILE lzfd, DWORD *reslen, DWORD *offset )
         if (!find_ne_resource( lzfd, reslen, offset )) magic = 0;
         break;
     case IMAGE_NT_SIGNATURE:
-        if (!find_pe_resource( lzfd, reslen, offset )) magic = 0;
+        if (!find_pe_resource( lzfd, reslen, offset, flags )) magic = 0;
         break;
     }
     return magic;
@@ -607,7 +615,7 @@ typedef struct
  */
 DWORD WINAPI GetFileVersionInfoSizeW( LPCWSTR filename, LPDWORD handle )
 {
-    return GetFileVersionInfoSizeExW( 0, filename, handle );
+    return GetFileVersionInfoSizeExW( FILE_VER_GET_LOCALISED, filename, handle );
 }
 
 /***********************************************************************
@@ -615,7 +623,7 @@ DWORD WINAPI GetFileVersionInfoSizeW( LPCWSTR filename, LPDWORD handle )
  */
 DWORD WINAPI GetFileVersionInfoSizeA( LPCSTR filename, LPDWORD handle )
 {
-    return GetFileVersionInfoSizeExA( 0, filename, handle );
+    return GetFileVersionInfoSizeExA( FILE_VER_GET_LOCALISED, filename, handle );
 }
 
 /******************************************************************************
@@ -628,14 +636,7 @@ DWORD WINAPI GetFileVersionInfoSizeExW( DWORD flags, LPCWSTR filename, LPDWORD h
     HMODULE hModule;
     OFSTRUCT ofs;
 
-    if (flags)
-    {
-        FIXME("stub: %x %s %p\n", flags, wine_dbgstr_w(filename), handle);
-        SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-        return 0;
-    }
-
-    TRACE("(%s,%p)\n", debugstr_w(filename), handle );
+    TRACE("(0x%x,%s,%p)\n", flags, debugstr_w(filename), handle );
 
     if (handle) *handle = 0;
 
@@ -649,17 +650,27 @@ DWORD WINAPI GetFileVersionInfoSizeExW( DWORD flags, LPCWSTR filename, LPDWORD h
         SetLastError(ERROR_BAD_PATHNAME);
         return 0;
     }
+    if (flags & ~FILE_VER_GET_LOCALISED)
+        FIXME("flags 0x%x ignored\n", flags & ~FILE_VER_GET_LOCALISED);
 
     if ((lzfd = LZOpenFileW( (LPWSTR)filename, &ofs, OF_READ )) != HFILE_ERROR)
     {
-        magic = find_version_resource( lzfd, &len, &offset );
+        magic = find_version_resource( lzfd, &len, &offset, flags );
         LZClose( lzfd );
     }
 
     if ((magic == 1) && (hModule = LoadLibraryExW( filename, 0, LOAD_LIBRARY_AS_DATAFILE )))
     {
-        HRSRC hRsrc = FindResourceW( hModule, MAKEINTRESOURCEW(VS_VERSION_INFO),
-                                     (LPWSTR)VS_FILE_INFO );
+        HRSRC hRsrc = NULL;
+        if (!(flags & FILE_VER_GET_LOCALISED))
+        {
+            LANGID english = MAKELANGID( LANG_ENGLISH, SUBLANG_DEFAULT );
+            hRsrc = FindResourceExW( hModule, MAKEINTRESOURCEW(VS_VERSION_INFO),
+                                     (LPWSTR)VS_FILE_INFO, english );
+        }
+        if (!hRsrc)
+            hRsrc = FindResourceW( hModule, MAKEINTRESOURCEW(VS_VERSION_INFO),
+                                   (LPWSTR)VS_FILE_INFO );
         if (hRsrc)
         {
             magic = IMAGE_NT_SIGNATURE;
@@ -694,7 +705,12 @@ DWORD WINAPI GetFileVersionInfoSizeExW( DWORD flags, LPCWSTR filename, LPDWORD h
         return (len * 2) + 4;
 
     default:
-        SetLastError( lzfd == HFILE_ERROR ? ofs.nErrCode : ERROR_RESOURCE_DATA_NOT_FOUND );
+        if (lzfd == HFILE_ERROR)
+            SetLastError(ofs.nErrCode);
+        else if (GetVersion() & 0x80000000) /* Windows 95/98 */
+            SetLastError(ERROR_FILE_NOT_FOUND);
+        else
+            SetLastError(ERROR_RESOURCE_DATA_NOT_FOUND);
         return 0;
     }
 }
@@ -707,14 +723,14 @@ DWORD WINAPI GetFileVersionInfoSizeExA( DWORD flags, LPCSTR filename, LPDWORD ha
     UNICODE_STRING filenameW;
     DWORD retval;
 
-    TRACE("(%s,%p)\n", debugstr_a(filename), handle );
+    TRACE("(0x%x,%s,%p)\n", flags, debugstr_a(filename), handle );
 
     if(filename)
         RtlCreateUnicodeStringFromAsciiz(&filenameW, filename);
     else
         filenameW.Buffer = NULL;
 
-    retval = GetFileVersionInfoSizeExW(0, filenameW.Buffer, handle);
+    retval = GetFileVersionInfoSizeExW(flags, filenameW.Buffer, handle);
 
     RtlFreeUnicodeString(&filenameW);
 
@@ -733,25 +749,20 @@ BOOL WINAPI GetFileVersionInfoExW( DWORD flags, LPCWSTR filename, DWORD handle, 
     HMODULE hModule;
     VS_VERSION_INFO_STRUCT32* vvis = data;
 
-    if (flags)
-    {
-        FIXME("stub: %x %s %u %u %p\n", flags, wine_dbgstr_w(filename), handle, datasize, data);
-        SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-        return 0;
-    }
-
-    TRACE("(%s,%d,size=%d,data=%p)\n",
-                debugstr_w(filename), handle, datasize, data );
+    TRACE("(0x%x,%s,%d,size=%d,data=%p)\n",
+          flags, debugstr_w(filename), handle, datasize, data );
 
     if (!data)
     {
         SetLastError(ERROR_INVALID_DATA);
         return FALSE;
     }
+    if (flags & ~FILE_VER_GET_LOCALISED)
+        FIXME("flags 0x%x ignored\n", flags & ~FILE_VER_GET_LOCALISED);
 
     if ((lzfd = LZOpenFileW( (LPWSTR)filename, &ofs, OF_READ )) != HFILE_ERROR)
     {
-        if ((magic = find_version_resource( lzfd, &len, &offset )) > 1)
+        if ((magic = find_version_resource( lzfd, &len, &offset, flags )) > 1)
         {
             LZSeek( lzfd, offset, 0 /* SEEK_SET */ );
             len = LZRead( lzfd, data, min( len, datasize ) );
@@ -761,8 +772,16 @@ BOOL WINAPI GetFileVersionInfoExW( DWORD flags, LPCWSTR filename, DWORD handle, 
 
     if ((magic == 1) && (hModule = LoadLibraryExW( filename, 0, LOAD_LIBRARY_AS_DATAFILE )))
     {
-        HRSRC hRsrc = FindResourceW( hModule, MAKEINTRESOURCEW(VS_VERSION_INFO),
-                                     (LPWSTR)VS_FILE_INFO );
+        HRSRC hRsrc = NULL;
+        if (!(flags & FILE_VER_GET_LOCALISED))
+        {
+            LANGID english = MAKELANGID( LANG_ENGLISH, SUBLANG_DEFAULT );
+            hRsrc = FindResourceExW( hModule, MAKEINTRESOURCEW(VS_VERSION_INFO),
+                                     (LPWSTR)VS_FILE_INFO, english );
+        }
+        if (!hRsrc)
+            hRsrc = FindResourceW( hModule, MAKEINTRESOURCEW(VS_VERSION_INFO),
+                                   (LPWSTR)VS_FILE_INFO );
         if (hRsrc)
         {
             HGLOBAL hMem = LoadResource( hModule, hRsrc );
@@ -810,8 +829,8 @@ BOOL WINAPI GetFileVersionInfoExA( DWORD flags, LPCSTR filename, DWORD handle, D
     UNICODE_STRING filenameW;
     BOOL retval;
 
-    TRACE("(%s,%d,size=%d,data=%p)\n",
-                debugstr_a(filename), handle, datasize, data );
+    TRACE("(0x%x,%s,%d,size=%d,data=%p)\n",
+          flags, debugstr_a(filename), handle, datasize, data );
 
     if(filename)
         RtlCreateUnicodeStringFromAsciiz(&filenameW, filename);
@@ -830,7 +849,7 @@ BOOL WINAPI GetFileVersionInfoExA( DWORD flags, LPCSTR filename, DWORD handle, D
  */
 BOOL WINAPI GetFileVersionInfoW( LPCWSTR filename, DWORD handle, DWORD datasize, LPVOID data )
 {
-    return GetFileVersionInfoExW(0, filename, handle, datasize, data);
+    return GetFileVersionInfoExW(FILE_VER_GET_LOCALISED, filename, handle, datasize, data);
 }
 
 /***********************************************************************
@@ -838,7 +857,7 @@ BOOL WINAPI GetFileVersionInfoW( LPCWSTR filename, DWORD handle, DWORD datasize,
  */
 BOOL WINAPI GetFileVersionInfoA( LPCSTR filename, DWORD handle, DWORD datasize, LPVOID data )
 {
-    return GetFileVersionInfoExA(0, filename, handle, datasize, data);
+    return GetFileVersionInfoExA(FILE_VER_GET_LOCALISED, filename, handle, datasize, data);
 }
 
 /***********************************************************************
@@ -996,6 +1015,7 @@ BOOL WINAPI VerQueryValueA( LPCVOID pBlock, LPCSTR lpSubBlock,
         BOOL ret, isText;
         INT len;
         LPWSTR lpSubBlockW;
+        UINT value_len;
 
         len  = MultiByteToWideChar(CP_ACP, 0, lpSubBlock, -1, NULL, 0);
         lpSubBlockW = HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR));
@@ -1005,7 +1025,8 @@ BOOL WINAPI VerQueryValueA( LPCVOID pBlock, LPCSTR lpSubBlock,
 
         MultiByteToWideChar(CP_ACP, 0, lpSubBlock, -1, lpSubBlockW, len);
 
-        ret = VersionInfo32_QueryValue(pBlock, lpSubBlockW, lplpBuffer, puLen, &isText);
+        ret = VersionInfo32_QueryValue(pBlock, lpSubBlockW, lplpBuffer, &value_len, &isText);
+        if (puLen) *puLen = value_len;
 
         HeapFree(GetProcessHeap(), 0, lpSubBlockW);
 
@@ -1016,8 +1037,7 @@ BOOL WINAPI VerQueryValueA( LPCVOID pBlock, LPCSTR lpSubBlock,
              */
             LPSTR lpBufferA = (LPSTR)pBlock + info->wLength + 4;
             DWORD pos = (LPCSTR)*lplpBuffer - (LPCSTR)pBlock;
-
-            len = WideCharToMultiByte(CP_ACP, 0, *lplpBuffer, -1,
+            len = WideCharToMultiByte(CP_ACP, 0, *lplpBuffer, value_len,
                                       lpBufferA + pos, info->wLength - pos, NULL, NULL);
             *lplpBuffer = lpBufferA + pos;
             if (puLen) *puLen = len;
@@ -1034,7 +1054,6 @@ BOOL WINAPI VerQueryValueA( LPCVOID pBlock, LPCSTR lpSubBlock,
 BOOL WINAPI VerQueryValueW( LPCVOID pBlock, LPCWSTR lpSubBlock,
                                LPVOID *lplpBuffer, PUINT puLen )
 {
-    static const WCHAR nullW[] = { 0 };
     static const WCHAR rootW[] = { '\\', 0 };
     static const WCHAR varfileinfoW[] = { '\\','V','a','r','F','i','l','e','I','n','f','o',
                                           '\\','T','r','a','n','s','l','a','t','i','o','n', 0 };
@@ -1047,7 +1066,7 @@ BOOL WINAPI VerQueryValueW( LPCVOID pBlock, LPCWSTR lpSubBlock,
     if (!pBlock)
         return FALSE;
 
-    if (lpSubBlock == NULL || lpSubBlock[0] == nullW[0])
+    if (!lpSubBlock || !lpSubBlock[0])
         lpSubBlock = rootW;
 
     if ( VersionInfoIs16( info ) )
@@ -1293,7 +1312,7 @@ DWORD WINAPI VerFindFileW( DWORD flags,LPCWSTR lpszFilename,LPCWSTR lpszWinDir,
     /* Figure out where the file should go; shared files default to the
        system directory */
 
-    GetSystemDirectoryW(systemDir, sizeof(systemDir)/sizeof(WCHAR));
+    GetSystemDirectoryW(systemDir, ARRAY_SIZE(systemDir));
     curDir = &emptyW;
 
     if(flags & VFFF_ISSHAREDFILE)

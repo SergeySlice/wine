@@ -322,7 +322,7 @@ static ULONG WINAPI d3d_device_inner_Release(IUnknown *iface)
             This->ddraw->d3ddevice = NULL;
 
         /* Now free the structure */
-        HeapFree(GetProcessHeap(), 0, This);
+        heap_free(This);
         wined3d_mutex_unlock();
     }
 
@@ -663,8 +663,7 @@ static HRESULT WINAPI d3d_device1_CreateExecuteBuffer(IDirect3DDevice *iface,
         return CLASS_E_NOAGGREGATION;
 
     /* Allocate the new Execute Buffer */
-    object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*object));
-    if(!object)
+    if (!(object = heap_alloc_zero(sizeof(*object))))
     {
         ERR("Failed to allocate execute buffer memory.\n");
         return DDERR_OUTOFMEMORY;
@@ -674,7 +673,7 @@ static HRESULT WINAPI d3d_device1_CreateExecuteBuffer(IDirect3DDevice *iface,
     if (FAILED(hr))
     {
         WARN("Failed to initialize execute buffer, hr %#x.\n", hr);
-        HeapFree(GetProcessHeap(), 0, object);
+        heap_free(object);
         return hr;
     }
 
@@ -1008,20 +1007,28 @@ static HRESULT WINAPI d3d_device1_Pick(IDirect3DDevice *iface, IDirect3DExecuteB
  *  D3D_OK, because it's a stub
  *
  *****************************************************************************/
+static D3DPICKRECORD FakeRecord = { 0x2, 0, 0x1, 0};
+
 static HRESULT WINAPI d3d_device1_GetPickRecords(IDirect3DDevice *iface,
-        DWORD *count, D3DPICKRECORD *records)
+                                                 DWORD *count, D3DPICKRECORD *records)
 {
     FIXME("iface %p, count %p, records %p stub!\n", iface, count, records);
+    *count = 1;
+
+    if (!records) {
+        return DDERR_INVALIDPARAMS;
+    }
+    *records = FakeRecord;
 
     return D3D_OK;
 }
 
+
 /*****************************************************************************
  * IDirect3DDevice7::EnumTextureformats
  *
- * Enumerates the supported texture formats. It has a list of all possible
- * formats and calls IWineD3D::CheckDeviceFormat for each format to see if
- * WineD3D supports it. If so, then it is passed to the app.
+ * Enumerates the supported texture formats. It checks against a list of all possible
+ * formats to see if WineD3D supports it. If so, then it is passed to the app.
  *
  * This is for Version 7 and 3, older versions have a different
  * callback function and their own implementation
@@ -1088,10 +1095,10 @@ static HRESULT d3d_device7_EnumTextureFormats(IDirect3DDevice7 *iface,
         return hr;
     }
 
-    for (i = 0; i < sizeof(FormatList) / sizeof(*FormatList); ++i)
+    for (i = 0; i < ARRAY_SIZE(FormatList); ++i)
     {
         if (wined3d_check_device_format(device->ddraw->wined3d, WINED3DADAPTER_DEFAULT, WINED3D_DEVICE_TYPE_HAL,
-                mode.format_id, WINED3DUSAGE_TEXTURE, WINED3D_RTYPE_TEXTURE_2D, FormatList[i]) == D3D_OK)
+                mode.format_id, 0, WINED3D_BIND_SHADER_RESOURCE, WINED3D_RTYPE_TEXTURE_2D, FormatList[i]) == D3D_OK)
         {
             DDPIXELFORMAT pformat;
 
@@ -1110,11 +1117,11 @@ static HRESULT d3d_device7_EnumTextureFormats(IDirect3DDevice7 *iface,
         }
     }
 
-    for (i = 0; i < sizeof(BumpFormatList) / sizeof(*BumpFormatList); ++i)
+    for (i = 0; i < ARRAY_SIZE(BumpFormatList); ++i)
     {
         if (wined3d_check_device_format(device->ddraw->wined3d, WINED3DADAPTER_DEFAULT,
-                WINED3D_DEVICE_TYPE_HAL, mode.format_id, WINED3DUSAGE_TEXTURE | WINED3DUSAGE_QUERY_LEGACYBUMPMAP,
-                WINED3D_RTYPE_TEXTURE_2D, BumpFormatList[i]) == D3D_OK)
+                WINED3D_DEVICE_TYPE_HAL, mode.format_id, WINED3DUSAGE_QUERY_LEGACYBUMPMAP,
+                WINED3D_BIND_SHADER_RESOURCE, WINED3D_RTYPE_TEXTURE_2D, BumpFormatList[i]) == D3D_OK)
         {
             DDPIXELFORMAT pformat;
 
@@ -1171,7 +1178,7 @@ static HRESULT WINAPI d3d_device3_EnumTextureFormats(IDirect3DDevice3 *iface,
  * IDirect3DDevice2::EnumTextureformats
  *
  * EnumTextureFormats for Version 1 and 2, see
- * IDirect3DDevice7::EnumTexureFormats for a more detailed description.
+ * IDirect3DDevice7::EnumTextureFormats for a more detailed description.
  *
  * This version has a different callback and does not enumerate FourCC
  * formats
@@ -1216,10 +1223,10 @@ static HRESULT WINAPI d3d_device2_EnumTextureFormats(IDirect3DDevice2 *iface,
         return hr;
     }
 
-    for (i = 0; i < sizeof(FormatList) / sizeof(*FormatList); ++i)
+    for (i = 0; i < ARRAY_SIZE(FormatList); ++i)
     {
-        if (wined3d_check_device_format(device->ddraw->wined3d, 0, WINED3D_DEVICE_TYPE_HAL,
-                mode.format_id, WINED3DUSAGE_TEXTURE, WINED3D_RTYPE_TEXTURE_2D, FormatList[i]) == D3D_OK)
+        if (wined3d_check_device_format(device->ddraw->wined3d, WINED3DADAPTER_DEFAULT, WINED3D_DEVICE_TYPE_HAL,
+                mode.format_id, 0, WINED3D_BIND_SHADER_RESOURCE, WINED3D_RTYPE_TEXTURE_2D, FormatList[i]) == D3D_OK)
         {
             DDSURFACEDESC sdesc;
 
@@ -1275,7 +1282,7 @@ static HRESULT WINAPI d3d_device1_EnumTextureFormats(IDirect3DDevice *iface,
 static HRESULT WINAPI d3d_device1_CreateMatrix(IDirect3DDevice *iface, D3DMATRIXHANDLE *D3DMatHandle)
 {
     struct d3d_device *device = impl_from_IDirect3DDevice(iface);
-    D3DMATRIX *Matrix;
+    D3DMATRIX *matrix;
     DWORD h;
 
     TRACE("iface %p, matrix_handle %p.\n", iface, D3DMatHandle);
@@ -1283,8 +1290,7 @@ static HRESULT WINAPI d3d_device1_CreateMatrix(IDirect3DDevice *iface, D3DMATRIX
     if(!D3DMatHandle)
         return DDERR_INVALIDPARAMS;
 
-    Matrix = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(D3DMATRIX));
-    if(!Matrix)
+    if (!(matrix = heap_alloc_zero(sizeof(*matrix))))
     {
         ERR("Out of memory when allocating a D3DMATRIX\n");
         return DDERR_OUTOFMEMORY;
@@ -1292,11 +1298,11 @@ static HRESULT WINAPI d3d_device1_CreateMatrix(IDirect3DDevice *iface, D3DMATRIX
 
     wined3d_mutex_lock();
 
-    h = ddraw_allocate_handle(&device->handle_table, Matrix, DDRAW_HANDLE_MATRIX);
+    h = ddraw_allocate_handle(&device->handle_table, matrix, DDRAW_HANDLE_MATRIX);
     if (h == DDRAW_INVALID_HANDLE)
     {
         ERR("Failed to allocate a matrix handle.\n");
-        HeapFree(GetProcessHeap(), 0, Matrix);
+        heap_free(matrix);
         wined3d_mutex_unlock();
         return DDERR_OUTOFMEMORY;
     }
@@ -1447,7 +1453,7 @@ static HRESULT WINAPI d3d_device1_DeleteMatrix(IDirect3DDevice *iface, D3DMATRIX
 
     wined3d_mutex_unlock();
 
-    HeapFree(GetProcessHeap(), 0, m);
+    heap_free(m);
 
     return D3D_OK;
 }
@@ -1461,7 +1467,7 @@ static HRESULT WINAPI d3d_device1_DeleteMatrix(IDirect3DDevice *iface, D3DMATRIX
  * Version 1, 2, 3 and 7
  *
  * Returns:
- *  D3D_OK on success, for details see IWineD3DDevice::BeginScene
+ *  D3D_OK on success,
  *  D3DERR_SCENE_IN_SCENE if WineD3D returns an error(Only in case of an already
  *  started scene).
  *
@@ -1534,7 +1540,7 @@ static HRESULT WINAPI d3d_device1_BeginScene(IDirect3DDevice *iface)
  * Version 1, 2, 3 and 7
  *
  * Returns:
- *  D3D_OK on success, for details see IWineD3DDevice::EndScene
+ *  D3D_OK on success,
  *  D3DERR_SCENE_NOT_IN_SCENE is returned if WineD3D returns an error. It does
  *  that only if the scene was already ended.
  *
@@ -2219,11 +2225,11 @@ static HRESULT WINAPI d3d_device3_Vertex(IDirect3DDevice3 *iface, void *vertex)
 
         device->buffer_size = device->buffer_size ? device->buffer_size * 2 : device->vertex_size * 3;
         old_buffer = device->sysmem_vertex_buffer;
-        device->sysmem_vertex_buffer = HeapAlloc(GetProcessHeap(), 0, device->buffer_size);
+        device->sysmem_vertex_buffer = heap_alloc(device->buffer_size);
         if (old_buffer)
         {
             memcpy(device->sysmem_vertex_buffer, old_buffer, device->nb_vertices * device->vertex_size);
-            HeapFree(GetProcessHeap(), 0, old_buffer);
+            heap_free(old_buffer);
         }
     }
 
@@ -2284,7 +2290,7 @@ static HRESULT WINAPI d3d_device2_Index(IDirect3DDevice2 *iface, WORD index)
  *  Value: Address to store the value at
  *
  * Returns:
- *  D3D_OK on success, for details see IWineD3DDevice::GetRenderState
+ *  D3D_OK on success,
  *  DDERR_INVALIDPARAMS if Value == NULL
  *
  *****************************************************************************/
@@ -2513,12 +2519,7 @@ static HRESULT WINAPI d3d_device3_GetRenderState(IDirect3DDevice3 *iface,
                         && colorarg1 == WINED3DTA_TEXTURE && colorarg2 == WINED3DTA_CURRENT
                         && alphaop == (tex_alpha ? WINED3D_TOP_SELECT_ARG1 : WINED3D_TOP_SELECT_ARG2)
                         && alphaarg1 == WINED3DTA_TEXTURE && alphaarg2 == WINED3DTA_CURRENT))
-                {
-                    static int once = 0;
-                    if (!once++) {
-                        ERR("Unexpected texture stage state setup, returning D3DTBLEND_MODULATE - likely erroneous.\n");
-                    }
-                }
+                    ERR("Unexpected texture stage state setup, returning D3DTBLEND_MODULATE - likely erroneous.\n");
 
                 *value = D3DTBLEND_MODULATE;
             }
@@ -2560,10 +2561,6 @@ static HRESULT WINAPI d3d_device2_GetRenderState(IDirect3DDevice2 *iface,
  * Params:
  *  RenderStateType: State to set
  *  Value: Value to assign to that state
- *
- * Returns:
- *  D3D_OK on success,
- *  for details see IWineD3DDevice::SetRenderState
  *
  *****************************************************************************/
 static HRESULT d3d_device7_SetRenderState(IDirect3DDevice7 *iface,
@@ -3142,7 +3139,6 @@ static HRESULT WINAPI d3d_device2_GetLightState(IDirect3DDevice2 *iface,
  * Returns:
  *  D3D_OK on success
  *  DDERR_INVALIDPARAMS if Matrix == NULL
- *  For details see IWineD3DDevice::SetTransform
  *
  *****************************************************************************/
 static HRESULT d3d_device7_SetTransform(IDirect3DDevice7 *iface,
@@ -3252,7 +3248,6 @@ static HRESULT WINAPI d3d_device2_SetTransform(IDirect3DDevice2 *iface,
  * Returns:
  *  D3D_OK on success
  *  DDERR_INVALIDPARAMS if Matrix == NULL
- *  For details, see IWineD3DDevice::GetTransform
  *
  *****************************************************************************/
 static HRESULT d3d_device7_GetTransform(IDirect3DDevice7 *iface,
@@ -3357,7 +3352,6 @@ static HRESULT WINAPI d3d_device2_GetTransform(IDirect3DDevice2 *iface,
  * Returns
  *  D3D_OK on success
  *  DDERR_INVALIDPARAMS if D3DMatrix is NULL
- *  For details, see IWineD3DDevice::MultiplyTransform
  *
  *****************************************************************************/
 static HRESULT d3d_device7_MultiplyTransform(IDirect3DDevice7 *iface,
@@ -3467,7 +3461,6 @@ static HRESULT WINAPI d3d_device2_MultiplyTransform(IDirect3DDevice2 *iface,
  * Returns:
  *  D3D_OK on success
  *  DDERR_INVALIDPARAMS if Vertices is NULL
- *  For details, see IWineD3DDevice::DrawPrimitiveUP
  *
  *****************************************************************************/
 
@@ -3479,15 +3472,22 @@ static HRESULT d3d_device_prepare_vertex_buffer(struct d3d_device *device, UINT 
     if (device->vertex_buffer_size < min_size || !device->vertex_buffer)
     {
         UINT size = max(device->vertex_buffer_size * 2, min_size);
+        struct wined3d_buffer_desc desc;
         struct wined3d_buffer *buffer;
 
         TRACE("Growing vertex buffer to %u bytes\n", size);
 
-        hr = wined3d_buffer_create_vb(device->wined3d_device, size, WINED3DUSAGE_DYNAMIC | WINED3DUSAGE_WRITEONLY,
-                WINED3D_POOL_DEFAULT, NULL, &ddraw_null_wined3d_parent_ops, &buffer);
-        if (FAILED(hr))
+        desc.byte_width = size;
+        desc.usage = WINED3DUSAGE_DYNAMIC;
+        desc.bind_flags = WINED3D_BIND_VERTEX_BUFFER;
+        desc.access = WINED3D_RESOURCE_ACCESS_GPU | WINED3D_RESOURCE_ACCESS_MAP_W;
+        desc.misc_flags = 0;
+        desc.structure_byte_stride = 0;
+
+        if (FAILED(hr = wined3d_buffer_create(device->wined3d_device, &desc,
+                NULL, NULL, &ddraw_null_wined3d_parent_ops, &buffer)))
         {
-            ERR("(%p) wined3d_buffer_create_vb failed with hr = %08x\n", device, hr);
+            ERR("Failed to create vertex buffer, hr %#x.\n", hr);
             return hr;
         }
 
@@ -3542,7 +3542,7 @@ static HRESULT d3d_device7_DrawPrimitive(IDirect3DDevice7 *iface,
     wined3d_box.right = vb_pos + size;
     vb = wined3d_buffer_get_resource(device->vertex_buffer);
     if (FAILED(hr = wined3d_resource_map(vb, 0, &wined3d_map_desc, &wined3d_box,
-            vb_pos ? WINED3D_MAP_NOOVERWRITE : WINED3D_MAP_DISCARD)))
+            WINED3D_MAP_WRITE | (vb_pos ? WINED3D_MAP_NOOVERWRITE : WINED3D_MAP_DISCARD))))
         goto done;
     memcpy(wined3d_map_desc.data, vertices, size);
     wined3d_resource_unmap(vb, 0);
@@ -3553,7 +3553,7 @@ static HRESULT d3d_device7_DrawPrimitive(IDirect3DDevice7 *iface,
         goto done;
 
     wined3d_device_set_vertex_declaration(device->wined3d_device, ddraw_find_decl(device->ddraw, fvf));
-    wined3d_device_set_primitive_type(device->wined3d_device, primitive_type);
+    wined3d_device_set_primitive_type(device->wined3d_device, primitive_type, 0);
     hr = wined3d_device_draw_primitive(device->wined3d_device, vb_pos / stride, vertex_count);
 
 done:
@@ -3654,7 +3654,6 @@ static HRESULT WINAPI d3d_device2_DrawPrimitive(IDirect3DDevice2 *iface,
  * Returns:
  *  D3D_OK on success
  *  DDERR_INVALIDPARAMS if Vertices or Indices is NULL
- *  For details, see IWineD3DDevice::DrawIndexedPrimitiveUP
  *
  *****************************************************************************/
 /* The caller is responsible for wined3d locking */
@@ -3665,15 +3664,22 @@ static HRESULT d3d_device_prepare_index_buffer(struct d3d_device *device, UINT m
     if (device->index_buffer_size < min_size || !device->index_buffer)
     {
         UINT size = max(device->index_buffer_size * 2, min_size);
+        struct wined3d_buffer_desc desc;
         struct wined3d_buffer *buffer;
 
         TRACE("Growing index buffer to %u bytes\n", size);
 
-        hr = wined3d_buffer_create_ib(device->wined3d_device, size, WINED3DUSAGE_DYNAMIC | WINED3DUSAGE_WRITEONLY,
-                WINED3D_POOL_DEFAULT, NULL, &ddraw_null_wined3d_parent_ops, &buffer);
-        if (FAILED(hr))
+        desc.byte_width = size;
+        desc.usage = WINED3DUSAGE_DYNAMIC | WINED3DUSAGE_STATICDECL;
+        desc.bind_flags = WINED3D_BIND_INDEX_BUFFER;
+        desc.access = WINED3D_RESOURCE_ACCESS_GPU | WINED3D_RESOURCE_ACCESS_MAP_W;
+        desc.misc_flags = 0;
+        desc.structure_byte_stride = 0;
+
+        if (FAILED(hr = wined3d_buffer_create(device->wined3d_device, &desc,
+                NULL, NULL, &ddraw_null_wined3d_parent_ops, &buffer)))
         {
-            ERR("(%p) wined3d_buffer_create_ib failed with hr = %08x\n", device, hr);
+            ERR("Failed to create index buffer, hr %#x.\n", hr);
             return hr;
         }
 
@@ -3728,7 +3734,7 @@ static HRESULT d3d_device7_DrawIndexedPrimitive(IDirect3DDevice7 *iface,
     wined3d_box.right = vb_pos + vtx_size;
     vb = wined3d_buffer_get_resource(device->vertex_buffer);
     if (FAILED(hr = wined3d_resource_map(vb, 0, &wined3d_map_desc, &wined3d_box,
-            vb_pos ? WINED3D_MAP_NOOVERWRITE : WINED3D_MAP_DISCARD)))
+            WINED3D_MAP_WRITE | (vb_pos ? WINED3D_MAP_NOOVERWRITE : WINED3D_MAP_DISCARD))))
         goto done;
     memcpy(wined3d_map_desc.data, vertices, vtx_size);
     wined3d_resource_unmap(vb, 0);
@@ -3745,7 +3751,7 @@ static HRESULT d3d_device7_DrawIndexedPrimitive(IDirect3DDevice7 *iface,
     wined3d_box.right = ib_pos + idx_size;
     ib = wined3d_buffer_get_resource(device->index_buffer);
     if (FAILED(hr = wined3d_resource_map(ib, 0, &wined3d_map_desc, &wined3d_box,
-            ib_pos ? WINED3D_MAP_NOOVERWRITE : WINED3D_MAP_DISCARD)))
+            WINED3D_MAP_WRITE | (ib_pos ? WINED3D_MAP_NOOVERWRITE : WINED3D_MAP_DISCARD))))
         goto done;
     memcpy(wined3d_map_desc.data, indices, idx_size);
     wined3d_resource_unmap(ib, 0);
@@ -3757,7 +3763,7 @@ static HRESULT d3d_device7_DrawIndexedPrimitive(IDirect3DDevice7 *iface,
     wined3d_device_set_index_buffer(device->wined3d_device, device->index_buffer, WINED3DFMT_R16_UINT, 0);
 
     wined3d_device_set_vertex_declaration(device->wined3d_device, ddraw_find_decl(device->ddraw, fvf));
-    wined3d_device_set_primitive_type(device->wined3d_device, primitive_type);
+    wined3d_device_set_primitive_type(device->wined3d_device, primitive_type, 0);
     wined3d_device_set_base_vertex_index(device->wined3d_device, vb_pos / stride);
     hr = wined3d_device_draw_indexed_primitive(device->wined3d_device, ib_pos / sizeof(*indices), index_count);
 
@@ -3887,10 +3893,6 @@ static HRESULT WINAPI d3d_device7_SetClipStatus(IDirect3DDevice7 *iface, D3DCLIP
 {
     FIXME("iface %p, clip_status %p stub!\n", iface, clip_status);
 
-    /* D3DCLIPSTATUS and WINED3DCLIPSTATUS are different. I don't know how to convert them
-     * Perhaps this needs a new data type and an additional IWineD3DDevice method
-     */
-    /* return IWineD3DDevice_SetClipStatus(This->wineD3DDevice, ClipStatus);*/
     return D3D_OK;
 }
 
@@ -3928,8 +3930,6 @@ static HRESULT WINAPI d3d_device7_GetClipStatus(IDirect3DDevice7 *iface, D3DCLIP
 {
     FIXME("iface %p, clip_status %p stub!\n", iface, clip_status);
 
-    /* D3DCLIPSTATUS and WINED3DCLIPSTATUS are different. I don't know how to convert them */
-    /* return IWineD3DDevice_GetClipStatus(This->wineD3DDevice, ClipStatus);*/
     return D3D_OK;
 }
 
@@ -3969,7 +3969,6 @@ static HRESULT WINAPI d3d_device2_GetClipStatus(IDirect3DDevice2 *iface, D3DCLIP
  * Returns:
  *  D3D_OK, because it's a stub
  *  (DDERR_INVALIDPARAMS if D3DDrawPrimStrideData is NULL)
- *  (For details, see IWineD3DDevice::DrawPrimitiveStrided)
  *
  *****************************************************************************/
 static void pack_strided_data(BYTE *dst, DWORD count, const D3DDRAWPRIMITIVESTRIDEDDATA *src, DWORD fvf)
@@ -4066,7 +4065,7 @@ static HRESULT d3d_device7_DrawPrimitiveStrided(IDirect3DDevice7 *iface, D3DPRIM
     wined3d_box.right = vb_pos + dst_size;
     vb = wined3d_buffer_get_resource(device->vertex_buffer);
     if (FAILED(hr = wined3d_resource_map(vb, 0, &wined3d_map_desc, &wined3d_box,
-            vb_pos ? WINED3D_MAP_NOOVERWRITE : WINED3D_MAP_DISCARD)))
+            WINED3D_MAP_WRITE | (vb_pos ? WINED3D_MAP_NOOVERWRITE : WINED3D_MAP_DISCARD))))
         goto done;
     pack_strided_data(wined3d_map_desc.data, vertex_count, strided_data, fvf);
     wined3d_resource_unmap(vb, 0);
@@ -4077,7 +4076,7 @@ static HRESULT d3d_device7_DrawPrimitiveStrided(IDirect3DDevice7 *iface, D3DPRIM
         goto done;
     wined3d_device_set_vertex_declaration(device->wined3d_device, ddraw_find_decl(device->ddraw, fvf));
 
-    wined3d_device_set_primitive_type(device->wined3d_device, primitive_type);
+    wined3d_device_set_primitive_type(device->wined3d_device, primitive_type, 0);
     hr = wined3d_device_draw_primitive(device->wined3d_device, vb_pos / dst_stride, vertex_count);
 
 done:
@@ -4137,7 +4136,6 @@ static HRESULT WINAPI d3d_device3_DrawPrimitiveStrided(IDirect3DDevice3 *iface,
  *  D3D_OK, because it's a stub
  *  (DDERR_INVALIDPARAMS if D3DDrawPrimStrideData is NULL)
  *  (DDERR_INVALIDPARAMS if Indices is NULL)
- *  (For more details, see IWineD3DDevice::DrawIndexedPrimitiveStrided)
  *
  *****************************************************************************/
 static HRESULT d3d_device7_DrawIndexedPrimitiveStrided(IDirect3DDevice7 *iface,
@@ -4183,7 +4181,7 @@ static HRESULT d3d_device7_DrawIndexedPrimitiveStrided(IDirect3DDevice7 *iface,
     wined3d_box.right = vb_pos + vtx_dst_size;
     vb = wined3d_buffer_get_resource(device->vertex_buffer);
     if (FAILED(hr = wined3d_resource_map(vb, 0, &wined3d_map_desc, &wined3d_box,
-            vb_pos ? WINED3D_MAP_NOOVERWRITE : WINED3D_MAP_DISCARD)))
+            WINED3D_MAP_WRITE | (vb_pos ? WINED3D_MAP_NOOVERWRITE : WINED3D_MAP_DISCARD))))
         goto done;
     pack_strided_data(wined3d_map_desc.data, vertex_count, strided_data, fvf);
     wined3d_resource_unmap(vb, 0);
@@ -4200,7 +4198,7 @@ static HRESULT d3d_device7_DrawIndexedPrimitiveStrided(IDirect3DDevice7 *iface,
     wined3d_box.right = ib_pos + idx_size;
     ib = wined3d_buffer_get_resource(device->index_buffer);
     if (FAILED(hr = wined3d_resource_map(ib, 0, &wined3d_map_desc, &wined3d_box,
-            ib_pos ? WINED3D_MAP_NOOVERWRITE : WINED3D_MAP_DISCARD)))
+            WINED3D_MAP_WRITE | (ib_pos ? WINED3D_MAP_NOOVERWRITE : WINED3D_MAP_DISCARD))))
         goto done;
     memcpy(wined3d_map_desc.data, indices, idx_size);
     wined3d_resource_unmap(ib, 0);
@@ -4213,7 +4211,7 @@ static HRESULT d3d_device7_DrawIndexedPrimitiveStrided(IDirect3DDevice7 *iface,
     wined3d_device_set_base_vertex_index(device->wined3d_device, vb_pos / vtx_dst_stride);
 
     wined3d_device_set_vertex_declaration(device->wined3d_device, ddraw_find_decl(device->ddraw, fvf));
-    wined3d_device_set_primitive_type(device->wined3d_device, primitive_type);
+    wined3d_device_set_primitive_type(device->wined3d_device, primitive_type, 0);
     hr = wined3d_device_draw_indexed_primitive(device->wined3d_device, ib_pos / sizeof(WORD), index_count);
 
 done:
@@ -4286,8 +4284,11 @@ static HRESULT d3d_device7_DrawPrimitiveVB(IDirect3DDevice7 *iface, D3DPRIMITIVE
 {
     struct d3d_device *device = impl_from_IDirect3DDevice7(iface);
     struct d3d_vertex_buffer *vb_impl = unsafe_impl_from_IDirect3DVertexBuffer7(vb);
-    HRESULT hr;
+    struct wined3d_resource *wined3d_resource;
+    struct wined3d_map_desc wined3d_map_desc;
+    struct wined3d_box wined3d_box = {0};
     DWORD stride;
+    HRESULT hr;
 
     TRACE("iface %p, primitive_type %#x, vb %p, start_vertex %u, vertex_count %u, flags %#x.\n",
             iface, primitive_type, vb, start_vertex, vertex_count, flags);
@@ -4300,6 +4301,26 @@ static HRESULT d3d_device7_DrawPrimitiveVB(IDirect3DDevice7 *iface, D3DPRIMITIVE
 
     stride = get_flexible_vertex_size(vb_impl->fvf);
 
+    if (vb_impl->Caps & D3DVBCAPS_SYSTEMMEMORY)
+    {
+        TRACE("Drawing from D3DVBCAPS_SYSTEMMEMORY vertex buffer, forwarding to DrawPrimitive().\n");
+        wined3d_mutex_lock();
+        wined3d_resource = wined3d_buffer_get_resource(vb_impl->wined3d_buffer);
+        wined3d_box.left = start_vertex * stride;
+        wined3d_box.right = wined3d_box.left + vertex_count * stride;
+        if (FAILED(hr = wined3d_resource_map(wined3d_resource, 0, &wined3d_map_desc,
+                &wined3d_box, WINED3D_MAP_READ)))
+        {
+            wined3d_mutex_unlock();
+            return D3DERR_VERTEXBUFFERLOCKED;
+        }
+        hr = d3d_device7_DrawPrimitive(iface, primitive_type, vb_impl->fvf, wined3d_map_desc.data,
+                vertex_count, flags);
+        wined3d_resource_unmap(wined3d_resource, 0);
+        wined3d_mutex_unlock();
+        return hr;
+    }
+
     wined3d_mutex_lock();
     wined3d_device_set_vertex_declaration(device->wined3d_device, vb_impl->wined3d_declaration);
     if (FAILED(hr = wined3d_device_set_stream_source(device->wined3d_device,
@@ -4311,7 +4332,7 @@ static HRESULT d3d_device7_DrawPrimitiveVB(IDirect3DDevice7 *iface, D3DPRIMITIVE
     }
 
     /* Now draw the primitives */
-    wined3d_device_set_primitive_type(device->wined3d_device, primitive_type);
+    wined3d_device_set_primitive_type(device->wined3d_device, primitive_type, 0);
     hr = wined3d_device_draw_primitive(device->wined3d_device, start_vertex, vertex_count);
 
     wined3d_mutex_unlock();
@@ -4342,7 +4363,7 @@ static HRESULT WINAPI d3d_device3_DrawPrimitiveVB(IDirect3DDevice3 *iface, D3DPR
         IDirect3DVertexBuffer *D3DVertexBuf, DWORD StartVertex, DWORD NumVertices, DWORD Flags)
 {
     struct d3d_device *device = impl_from_IDirect3DDevice3(iface);
-    struct d3d_vertex_buffer *vb = unsafe_impl_from_IDirect3DVertexBuffer(D3DVertexBuf);
+    struct d3d_vertex_buffer *vb = unsafe_impl_from_IDirect3DVertexBuffer7((IDirect3DVertexBuffer7 *)D3DVertexBuf);
 
     TRACE("iface %p, primitive_type %#x, vb %p, start_vertex %u, vertex_count %u, flags %#x.\n",
             iface, PrimitiveType, D3DVertexBuf, StartVertex, NumVertices, Flags);
@@ -4377,6 +4398,7 @@ static HRESULT d3d_device7_DrawIndexedPrimitiveVB(IDirect3DDevice7 *iface,
     struct d3d_device *device = impl_from_IDirect3DDevice7(iface);
     struct d3d_vertex_buffer *vb_impl = unsafe_impl_from_IDirect3DVertexBuffer7(vb);
     DWORD stride = get_flexible_vertex_size(vb_impl->fvf);
+    struct wined3d_resource *wined3d_resource;
     struct wined3d_map_desc wined3d_map_desc;
     struct wined3d_box wined3d_box = {0};
     struct wined3d_resource *ib;
@@ -4393,11 +4415,31 @@ static HRESULT d3d_device7_DrawIndexedPrimitiveVB(IDirect3DDevice7 *iface,
         return D3D_OK;
     }
 
+    if (vb_impl->Caps & D3DVBCAPS_SYSTEMMEMORY)
+    {
+        TRACE("Drawing from D3DVBCAPS_SYSTEMMEMORY vertex buffer, forwarding to DrawIndexedPrimitive().\n");
+        wined3d_mutex_lock();
+        wined3d_box.left = start_vertex * stride;
+        wined3d_box.right = wined3d_box.left + vertex_count * stride;
+        wined3d_resource = wined3d_buffer_get_resource(vb_impl->wined3d_buffer);
+        if (FAILED(hr = wined3d_resource_map(wined3d_resource, 0, &wined3d_map_desc,
+                &wined3d_box, WINED3D_MAP_READ)))
+        {
+            wined3d_mutex_unlock();
+            return D3DERR_VERTEXBUFFERLOCKED;
+        }
+        hr = d3d_device7_DrawIndexedPrimitive(iface, primitive_type, vb_impl->fvf,
+                wined3d_map_desc.data, vertex_count, indices, index_count, flags);
+        wined3d_resource_unmap(wined3d_resource, 0);
+        wined3d_mutex_unlock();
+        return hr;
+    }
+
     /* Steps:
      * 1) Upload the indices to the index buffer
      * 2) Set the index source
      * 3) Set the Vertex Buffer as the Stream source
-     * 4) Call IWineD3DDevice::DrawIndexedPrimitive
+     * 4) Call wined3d_device_draw_indexed_primitive()
      */
 
     wined3d_mutex_lock();
@@ -4415,15 +4457,12 @@ static HRESULT d3d_device7_DrawIndexedPrimitiveVB(IDirect3DDevice7 *iface,
     if (device->index_buffer_size - index_count * sizeof(WORD) < ib_pos)
         ib_pos = 0;
 
-    /* Copy the index stream into the index buffer. A new IWineD3DDevice
-     * method could be created which takes an user pointer containing the
-     * indices or a SetData-Method for the index buffer, which overrides the
-     * index buffer data with our pointer. */
+    /* Copy the index stream into the index buffer. */
     wined3d_box.left = ib_pos;
     wined3d_box.right = ib_pos + index_count * sizeof(WORD);
     ib = wined3d_buffer_get_resource(device->index_buffer);
     if (FAILED(hr = wined3d_resource_map(ib, 0, &wined3d_map_desc, &wined3d_box,
-            ib_pos ? WINED3D_MAP_NOOVERWRITE : WINED3D_MAP_DISCARD)))
+            WINED3D_MAP_WRITE | (ib_pos ? WINED3D_MAP_NOOVERWRITE : WINED3D_MAP_DISCARD))))
     {
         ERR("Failed to map buffer, hr %#x.\n", hr);
         wined3d_mutex_unlock();
@@ -4446,7 +4485,7 @@ static HRESULT d3d_device7_DrawIndexedPrimitiveVB(IDirect3DDevice7 *iface,
         return hr;
     }
 
-    wined3d_device_set_primitive_type(device->wined3d_device, primitive_type);
+    wined3d_device_set_primitive_type(device->wined3d_device, primitive_type, 0);
     hr = wined3d_device_draw_indexed_primitive(device->wined3d_device, ib_pos / sizeof(WORD), index_count);
 
     wined3d_mutex_unlock();
@@ -4482,7 +4521,7 @@ static HRESULT WINAPI d3d_device3_DrawIndexedPrimitiveVB(IDirect3DDevice3 *iface
         DWORD IndexCount, DWORD Flags)
 {
     struct d3d_device *device = impl_from_IDirect3DDevice3(iface);
-    struct d3d_vertex_buffer *vb = unsafe_impl_from_IDirect3DVertexBuffer(D3DVertexBuf);
+    struct d3d_vertex_buffer *vb = unsafe_impl_from_IDirect3DVertexBuffer7((IDirect3DVertexBuffer7 *)D3DVertexBuf);
 
     TRACE("iface %p, primitive_type %#x, vb %p, indices %p, index_count %u, flags %#x.\n",
             iface, PrimitiveType, D3DVertexBuf, Indices, IndexCount, Flags);
@@ -4520,96 +4559,163 @@ static HRESULT WINAPI d3d_device3_DrawIndexedPrimitiveVB(IDirect3DDevice3 *iface
  *
  *****************************************************************************/
 
-static DWORD in_plane(UINT plane, D3DVECTOR normal, D3DVALUE origin_plane, D3DVECTOR center, D3DVALUE radius)
+static DWORD in_plane(UINT idx, struct wined3d_vec4 p, D3DVECTOR center, D3DVALUE radius, BOOL equality)
 {
     float distance, norm;
 
-    norm = sqrtf(normal.u1.x * normal.u1.x + normal.u2.y * normal.u2.y + normal.u3.z * normal.u3.z);
-    distance = ( origin_plane + normal.u1.x * center.u1.x + normal.u2.y * center.u2.y + normal.u3.z * center.u3.z ) / norm;
+    norm = sqrtf(p.x * p.x + p.y * p.y + p.z * p.z);
+    distance = (p.x * center.u1.x + p.y * center.u2.y + p.z * center.u3.z + p.w) / norm;
 
-    if ( fabs( distance ) < radius ) return D3DSTATUS_CLIPUNIONLEFT << plane;
-    if ( distance < -radius ) return (D3DSTATUS_CLIPUNIONLEFT  | D3DSTATUS_CLIPINTERSECTIONLEFT) << plane;
+    if (equality)
+    {
+        if (fabs(distance) <= radius)
+            return D3DSTATUS_CLIPUNIONLEFT << idx;
+        if (distance <= -radius)
+            return (D3DSTATUS_CLIPUNIONLEFT | D3DSTATUS_CLIPINTERSECTIONLEFT) << idx;
+    }
+    else
+    {
+        if (fabs(distance) < radius)
+            return D3DSTATUS_CLIPUNIONLEFT << idx;
+        if (distance < -radius)
+            return (D3DSTATUS_CLIPUNIONLEFT | D3DSTATUS_CLIPINTERSECTIONLEFT) << idx;
+    }
     return 0;
+}
+
+static void prepare_clip_space_planes(struct d3d_device *device, struct wined3d_vec4 *plane)
+{
+    D3DMATRIX m, temp;
+
+    /* We want the wined3d matrices since those include the legacy viewport
+     * transformation. */
+    wined3d_mutex_lock();
+    wined3d_device_get_transform(device->wined3d_device,
+            WINED3D_TS_WORLD, (struct wined3d_matrix *)&m);
+
+    wined3d_device_get_transform(device->wined3d_device,
+            WINED3D_TS_VIEW, (struct wined3d_matrix *)&temp);
+    multiply_matrix(&m, &temp, &m);
+
+    wined3d_device_get_transform(device->wined3d_device,
+            WINED3D_TS_PROJECTION, (struct wined3d_matrix *)&temp);
+    multiply_matrix(&m, &temp, &m);
+    wined3d_mutex_unlock();
+
+    /* Left plane. */
+    plane[0].x = m._14 + m._11;
+    plane[0].y = m._24 + m._21;
+    plane[0].z = m._34 + m._31;
+    plane[0].w = m._44 + m._41;
+
+    /* Right plane. */
+    plane[1].x = m._14 - m._11;
+    plane[1].y = m._24 - m._21;
+    plane[1].z = m._34 - m._31;
+    plane[1].w = m._44 - m._41;
+
+    /* Top plane. */
+    plane[2].x = m._14 - m._12;
+    plane[2].y = m._24 - m._22;
+    plane[2].z = m._34 - m._32;
+    plane[2].w = m._44 - m._42;
+
+    /* Bottom plane. */
+    plane[3].x = m._14 + m._12;
+    plane[3].y = m._24 + m._22;
+    plane[3].z = m._34 + m._32;
+    plane[3].w = m._44 + m._42;
+
+    /* Front plane. */
+    plane[4].x = m._13;
+    plane[4].y = m._23;
+    plane[4].z = m._33;
+    plane[4].w = m._43;
+
+    /* Back plane. */
+    plane[5].x = m._14 - m._13;
+    plane[5].y = m._24 - m._23;
+    plane[5].z = m._34 - m._33;
+    plane[5].w = m._44 - m._43;
+}
+
+static void compute_sphere_visibility(struct wined3d_vec4 plane[12], DWORD enabled_planes, BOOL equality,
+        D3DVECTOR *centers, D3DVALUE *radii, DWORD sphere_count, DWORD *return_values)
+{
+    UINT i, j;
+
+    for (i = 0; i < sphere_count; ++i)
+    {
+        return_values[i] = 0;
+        for (j = 0; j < 12; ++j)
+            if (enabled_planes & 1u << j)
+                return_values[i] |= in_plane(j, plane[j], centers[i], radii[i], equality);
+    }
 }
 
 static HRESULT WINAPI d3d_device7_ComputeSphereVisibility(IDirect3DDevice7 *iface,
         D3DVECTOR *centers, D3DVALUE *radii, DWORD sphere_count, DWORD flags, DWORD *return_values)
 {
-    D3DMATRIX m, temp;
-    D3DVALUE origin_plane[6];
-    D3DVECTOR vec[6];
-    HRESULT hr;
-    UINT i, j;
+    struct wined3d_vec4 plane[12];
+    DWORD enabled_planes = 0x3f;
+    DWORD user_clip_planes;
+    UINT j;
 
     TRACE("iface %p, centers %p, radii %p, sphere_count %u, flags %#x, return_values %p.\n",
             iface, centers, radii, sphere_count, flags, return_values);
 
-    hr = d3d_device7_GetTransform(iface, D3DTRANSFORMSTATE_WORLD, &m);
-    if ( hr != DD_OK ) return DDERR_INVALIDPARAMS;
-    hr = d3d_device7_GetTransform(iface, D3DTRANSFORMSTATE_VIEW, &temp);
-    if ( hr != DD_OK ) return DDERR_INVALIDPARAMS;
-    multiply_matrix(&m, &temp, &m);
+    prepare_clip_space_planes(impl_from_IDirect3DDevice7(iface), plane);
 
-    hr = d3d_device7_GetTransform(iface, D3DTRANSFORMSTATE_PROJECTION, &temp);
-    if ( hr != DD_OK ) return DDERR_INVALIDPARAMS;
-    multiply_matrix(&m, &temp, &m);
+    IDirect3DDevice7_GetRenderState(iface, D3DRENDERSTATE_CLIPPLANEENABLE, &user_clip_planes);
+    enabled_planes |= user_clip_planes << 6;
+    for (j = 6; j < 12; ++j)
+        IDirect3DDevice7_GetClipPlane(iface, j - 6, (D3DVALUE *)&plane[j]);
 
-/* Left plane */
-    vec[0].u1.x = m._14 + m._11;
-    vec[0].u2.y = m._24 + m._21;
-    vec[0].u3.z = m._34 + m._31;
-    origin_plane[0] = m._44 + m._41;
-
-/* Right plane */
-    vec[1].u1.x = m._14 - m._11;
-    vec[1].u2.y = m._24 - m._21;
-    vec[1].u3.z = m._34 - m._31;
-    origin_plane[1] = m._44 - m._41;
-
-/* Top plane */
-    vec[2].u1.x = m._14 - m._12;
-    vec[2].u2.y = m._24 - m._22;
-    vec[2].u3.z = m._34 - m._32;
-    origin_plane[2] = m._44 - m._42;
-
-/* Bottom plane */
-    vec[3].u1.x = m._14 + m._12;
-    vec[3].u2.y = m._24 + m._22;
-    vec[3].u3.z = m._34 + m._32;
-    origin_plane[3] = m._44 + m._42;
-
-/* Front plane */
-    vec[4].u1.x = m._13;
-    vec[4].u2.y = m._23;
-    vec[4].u3.z = m._33;
-    origin_plane[4] = m._43;
-
-/* Back plane*/
-    vec[5].u1.x = m._14 - m._13;
-    vec[5].u2.y = m._24 - m._23;
-    vec[5].u3.z = m._34 - m._33;
-    origin_plane[5] = m._44 - m._43;
-
-    for (i = 0; i < sphere_count; ++i)
-    {
-        return_values[i] = 0;
-        for (j = 0; j < 6; ++j)
-            return_values[i] |= in_plane(j, vec[j], origin_plane[j], centers[i], radii[i]);
-    }
-
+    compute_sphere_visibility(plane, enabled_planes, FALSE, centers, radii, sphere_count, return_values);
     return D3D_OK;
 }
 
 static HRESULT WINAPI d3d_device3_ComputeSphereVisibility(IDirect3DDevice3 *iface,
         D3DVECTOR *centers, D3DVALUE *radii, DWORD sphere_count, DWORD flags, DWORD *return_values)
 {
-    struct d3d_device *device = impl_from_IDirect3DDevice3(iface);
+    static const DWORD enabled_planes = 0x3f;
+    struct wined3d_vec4 plane[6];
+    unsigned int i, j;
 
     TRACE("iface %p, centers %p, radii %p, sphere_count %u, flags %#x, return_values %p.\n",
             iface, centers, radii, sphere_count, flags, return_values);
 
-    return IDirect3DDevice7_ComputeSphereVisibility(&device->IDirect3DDevice7_iface,
-            centers, radii, sphere_count, flags, return_values);
+    prepare_clip_space_planes(impl_from_IDirect3DDevice3(iface), plane);
+
+    compute_sphere_visibility(plane, enabled_planes, TRUE, centers, radii, sphere_count, return_values);
+    for (i = 0; i < sphere_count; ++i)
+    {
+        BOOL intersect_frustum = FALSE, outside_frustum = FALSE;
+        DWORD d3d7_result = return_values[i];
+
+        return_values[i] = 0;
+
+        for (j = 0; j < 6; ++j)
+        {
+            DWORD clip = (d3d7_result >> j) & (D3DSTATUS_CLIPUNIONLEFT | D3DSTATUS_CLIPINTERSECTIONLEFT);
+
+            if (clip == D3DSTATUS_CLIPUNIONLEFT)
+            {
+                return_values[i] |= D3DVIS_INTERSECT_LEFT << j * 2;
+                intersect_frustum = TRUE;
+            }
+            else if (clip)
+            {
+                return_values[i] |= D3DVIS_OUTSIDE_LEFT << j * 2;
+                outside_frustum = TRUE;
+            }
+        }
+        if (outside_frustum)
+            return_values[i] |= D3DVIS_OUTSIDE_FRUSTUM;
+        else if (intersect_frustum)
+            return_values[i] |= D3DVIS_INTERSECT_FRUSTUM;
+    }
+    return D3D_OK;
 }
 
 /*****************************************************************************
@@ -4628,7 +4734,6 @@ static HRESULT WINAPI d3d_device3_ComputeSphereVisibility(IDirect3DDevice3 *ifac
  * Returns:
  *  D3D_OK on success
  *  DDERR_INVALIDPARAMS if Texture is NULL
- *  For details, see IWineD3DDevice::GetTexture
  *
  *****************************************************************************/
 static HRESULT d3d_device7_GetTexture(IDirect3DDevice7 *iface,
@@ -4710,7 +4815,6 @@ static HRESULT WINAPI d3d_device3_GetTexture(IDirect3DDevice3 *iface, DWORD stag
  *
  * Returns
  * D3D_OK on success
- * For details, see IWineD3DDevice::SetTexture
  *
  *****************************************************************************/
 static HRESULT d3d_device7_SetTexture(IDirect3DDevice7 *iface,
@@ -4855,7 +4959,6 @@ tss_lookup[] =
  * Returns:
  *  D3D_OK on success
  *  DDERR_INVALIDPARAMS if State is NULL
- *  For details, see IWineD3DDevice::GetTextureStageState
  *
  *****************************************************************************/
 static HRESULT d3d_device7_GetTextureStageState(IDirect3DDevice7 *iface,
@@ -4995,7 +5098,6 @@ static HRESULT WINAPI d3d_device3_GetTextureStageState(IDirect3DDevice3 *iface,
  *
  * Returns:
  *  D3D_OK on success
- *  For details, see IWineD3DDevice::SetTextureStageState
  *
  *****************************************************************************/
 static HRESULT d3d_device7_SetTextureStageState(IDirect3DDevice7 *iface,
@@ -5137,7 +5239,6 @@ static HRESULT WINAPI d3d_device3_SetTextureStageState(IDirect3DDevice3 *iface,
  *
  * Returns:
  *  D3D_OK on success
- *  See IWineD3DDevice::ValidateDevice for more details
  *
  *****************************************************************************/
 static HRESULT d3d_device7_ValidateDevice(IDirect3DDevice7 *iface, DWORD *pass_count)
@@ -5198,7 +5299,6 @@ static HRESULT WINAPI d3d_device3_ValidateDevice(IDirect3DDevice3 *iface, DWORD 
  *
  * Returns:
  *  D3D_OK on success
- *  For details, see IWineD3DDevice::Clear
  *
  *****************************************************************************/
 static HRESULT d3d_device7_Clear(IDirect3DDevice7 *iface, DWORD count,
@@ -5249,35 +5349,44 @@ static HRESULT WINAPI d3d_device7_Clear_FPUPreserve(IDirect3DDevice7 *iface, DWO
     return hr;
 }
 
-/*****************************************************************************
- * IDirect3DDevice7::SetViewport
- *
- * Sets the current viewport.
- *
- * Version 7 only, but IDirect3DViewport uses this call for older
- * versions
- *
- * Params:
- *  Data: The new viewport to set
- *
- * Returns:
- *  D3D_OK on success
- *  DDERR_INVALIDPARAMS if Data is NULL
- *  For more details, see IWineDDDevice::SetViewport
- *
- *****************************************************************************/
 static HRESULT d3d_device7_SetViewport(IDirect3DDevice7 *iface, D3DVIEWPORT7 *viewport)
 {
     struct d3d_device *device = impl_from_IDirect3DDevice7(iface);
+    struct wined3d_sub_resource_desc rt_desc;
+    struct wined3d_rendertarget_view *rtv;
+    struct ddraw_surface *surface;
+    struct wined3d_viewport vp;
 
     TRACE("iface %p, viewport %p.\n", iface, viewport);
 
     if (!viewport)
         return DDERR_INVALIDPARAMS;
 
-    /* Note: D3DVIEWPORT7 is compatible with struct wined3d_viewport. */
     wined3d_mutex_lock();
-    wined3d_device_set_viewport(device->wined3d_device, (struct wined3d_viewport *)viewport);
+    if (!(rtv = wined3d_device_get_rendertarget_view(device->wined3d_device, 0)))
+    {
+        wined3d_mutex_unlock();
+        return DDERR_INVALIDCAPS;
+    }
+    surface = wined3d_rendertarget_view_get_sub_resource_parent(rtv);
+    wined3d_texture_get_sub_resource_desc(surface->wined3d_texture, surface->sub_resource_idx, &rt_desc);
+
+    if (viewport->dwX > rt_desc.width || viewport->dwWidth > rt_desc.width - viewport->dwX
+            || viewport->dwY > rt_desc.height || viewport->dwHeight > rt_desc.height - viewport->dwY)
+    {
+        WARN("Invalid viewport, returning E_INVALIDARG.\n");
+        wined3d_mutex_unlock();
+        return E_INVALIDARG;
+    }
+
+    vp.x = viewport->dwX;
+    vp.y = viewport->dwY;
+    vp.width = viewport->dwWidth;
+    vp.height = viewport->dwHeight;
+    vp.min_z = viewport->dvMinZ;
+    vp.max_z = viewport->dvMaxZ;
+
+    wined3d_device_set_viewports(device->wined3d_device, 1, &vp);
     wined3d_mutex_unlock();
 
     return D3D_OK;
@@ -5300,35 +5409,26 @@ static HRESULT WINAPI d3d_device7_SetViewport_FPUPreserve(IDirect3DDevice7 *ifac
     return hr;
 }
 
-/*****************************************************************************
- * IDirect3DDevice::GetViewport
- *
- * Returns the current viewport
- *
- * Version 7
- *
- * Params:
- *  Data: D3D7Viewport structure to write the viewport information to
- *
- * Returns:
- *  D3D_OK on success
- *  DDERR_INVALIDPARAMS if Data is NULL
- *  For more details, see IWineD3DDevice::GetViewport
- *
- *****************************************************************************/
 static HRESULT d3d_device7_GetViewport(IDirect3DDevice7 *iface, D3DVIEWPORT7 *viewport)
 {
     struct d3d_device *device = impl_from_IDirect3DDevice7(iface);
+    struct wined3d_viewport wined3d_viewport;
 
     TRACE("iface %p, viewport %p.\n", iface, viewport);
 
     if (!viewport)
         return DDERR_INVALIDPARAMS;
 
-    /* Note: D3DVIEWPORT7 is compatible with struct wined3d_viewport. */
     wined3d_mutex_lock();
-    wined3d_device_get_viewport(device->wined3d_device, (struct wined3d_viewport *)viewport);
+    wined3d_device_get_viewports(device->wined3d_device, NULL, &wined3d_viewport);
     wined3d_mutex_unlock();
+
+    viewport->dwX = wined3d_viewport.x;
+    viewport->dwY = wined3d_viewport.y;
+    viewport->dwWidth = wined3d_viewport.width;
+    viewport->dwHeight = wined3d_viewport.height;
+    viewport->dvMinZ = wined3d_viewport.min_z;
+    viewport->dvMaxZ = wined3d_viewport.max_z;
 
     return D3D_OK;
 }
@@ -5363,7 +5463,6 @@ static HRESULT WINAPI d3d_device7_GetViewport_FPUPreserve(IDirect3DDevice7 *ifac
  * Returns:
  *  D3D_OK on success
  *  DDERR_INVALIDPARAMS if Mat is NULL.
- *  For more details, see IWineD3DDevice::SetMaterial
  *
  *****************************************************************************/
 static HRESULT d3d_device7_SetMaterial(IDirect3DDevice7 *iface, D3DMATERIAL7 *material)
@@ -5413,7 +5512,6 @@ static HRESULT WINAPI d3d_device7_SetMaterial_FPUPreserve(IDirect3DDevice7 *ifac
  * Returns:
  *  D3D_OK on success
  *  DDERR_INVALIDPARAMS if Mat is NULL
- *  For more details, see IWineD3DDevice::GetMaterial
  *
  *****************************************************************************/
 static HRESULT d3d_device7_GetMaterial(IDirect3DDevice7 *iface, D3DMATERIAL7 *material)
@@ -5460,7 +5558,6 @@ static HRESULT WINAPI d3d_device7_GetMaterial_FPUPreserve(IDirect3DDevice7 *ifac
  *
  * Returns:
  *  D3D_OK on success
- *  For more details, see IWineD3DDevice::SetLight
  *
  *****************************************************************************/
 static HRESULT d3d_device7_SetLight(IDirect3DDevice7 *iface, DWORD light_idx, D3DLIGHT7 *light)
@@ -5506,7 +5603,6 @@ static HRESULT WINAPI d3d_device7_SetLight_FPUPreserve(IDirect3DDevice7 *iface, 
  * Returns:
  *  D3D_OK on success
  *  DDERR_INVALIDPARAMS if Light is NULL
- *  For details, see IWineD3DDevice::GetLight
  *
  *****************************************************************************/
 static HRESULT d3d_device7_GetLight(IDirect3DDevice7 *iface, DWORD light_idx, D3DLIGHT7 *light)
@@ -5551,7 +5647,6 @@ static HRESULT WINAPI d3d_device7_GetLight_FPUPreserve(IDirect3DDevice7 *iface, 
  *
  * Returns:
  *  D3D_OK on success
- *  For details see IWineD3DDevice::BeginStateBlock
  *
  *****************************************************************************/
 static HRESULT d3d_device7_BeginStateBlock(IDirect3DDevice7 *iface)
@@ -5599,7 +5694,6 @@ static HRESULT WINAPI d3d_device7_BeginStateBlock_FPUPreserve(IDirect3DDevice7 *
  * Returns:
  *  D3D_OK on success
  *  DDERR_INVALIDPARAMS if BlockHandle is NULL
- *  See IWineD3DDevice::EndStateBlock for more details
  *
  *****************************************************************************/
 static HRESULT d3d_device7_EndStateBlock(IDirect3DDevice7 *iface, DWORD *stateblock)
@@ -5672,7 +5766,6 @@ static HRESULT WINAPI d3d_device7_EndStateBlock_FPUPreserve(IDirect3DDevice7 *if
  * Returns:
  *  D3D_OK on success
  *  DDERR_INVALIDPARAMS if Texture is NULL
- *  See IWineD3DSurface::PreLoad for details
  *
  *****************************************************************************/
 static HRESULT d3d_device7_PreLoad(IDirect3DDevice7 *iface, IDirectDrawSurface7 *texture)
@@ -5773,7 +5866,6 @@ static HRESULT WINAPI d3d_device7_ApplyStateBlock_FPUPreserve(IDirect3DDevice7 *
  * Returns:
  *  D3D_OK on success
  *  D3DERR_INVALIDSTATEBLOCK if BlockHandle is NULL
- *  See IWineD3DDevice::CaptureStateBlock for more details
  *
  *****************************************************************************/
 static HRESULT d3d_device7_CaptureStateBlock(IDirect3DDevice7 *iface, DWORD stateblock)
@@ -6316,7 +6408,6 @@ static HRESULT WINAPI d3d_device7_Load_FPUPreserve(IDirect3DDevice7 *iface, IDir
  *
  * Returns:
  *  D3D_OK on success
- *  For more details, see IWineD3DDevice::SetLightEnable
  *
  *****************************************************************************/
 static HRESULT d3d_device7_LightEnable(IDirect3DDevice7 *iface, DWORD light_idx, BOOL enabled)
@@ -6364,7 +6455,6 @@ static HRESULT WINAPI d3d_device7_LightEnable_FPUPreserve(IDirect3DDevice7 *ifac
  * Returns:
  *  D3D_OK on success
  *  DDERR_INVALIDPARAMS if Enable is NULL
- *  See IWineD3DDevice::GetLightEnable for more details
  *
  *****************************************************************************/
 static HRESULT d3d_device7_GetLightEnable(IDirect3DDevice7 *iface, DWORD light_idx, BOOL *enabled)
@@ -6415,12 +6505,12 @@ static HRESULT WINAPI d3d_device7_GetLightEnable_FPUPreserve(IDirect3DDevice7 *i
  * Returns:
  *  D3D_OK on success
  *  DDERR_INVALIDPARAMS if PlaneEquation is NULL
- *  See IWineD3DDevice::SetClipPlane for more details
  *
  *****************************************************************************/
 static HRESULT d3d_device7_SetClipPlane(IDirect3DDevice7 *iface, DWORD idx, D3DVALUE *plane)
 {
     struct d3d_device *device = impl_from_IDirect3DDevice7(iface);
+    const struct wined3d_vec4 *wined3d_plane;
     HRESULT hr;
 
     TRACE("iface %p, idx %u, plane %p.\n", iface, idx, plane);
@@ -6428,8 +6518,19 @@ static HRESULT d3d_device7_SetClipPlane(IDirect3DDevice7 *iface, DWORD idx, D3DV
     if (!plane)
         return DDERR_INVALIDPARAMS;
 
+    wined3d_plane = (struct wined3d_vec4 *)plane;
+
     wined3d_mutex_lock();
-    hr = wined3d_device_set_clip_plane(device->wined3d_device, idx, (struct wined3d_vec4 *)plane);
+    hr = wined3d_device_set_clip_plane(device->wined3d_device, idx, wined3d_plane);
+    if (idx < ARRAY_SIZE(device->user_clip_planes))
+    {
+        device->user_clip_planes[idx] = *wined3d_plane;
+        if (hr == WINED3DERR_INVALIDCALL)
+        {
+            WARN("Clip plane %u is not supported.\n", idx);
+            hr = D3D_OK;
+        }
+    }
     wined3d_mutex_unlock();
 
     return hr;
@@ -6464,12 +6565,12 @@ static HRESULT WINAPI d3d_device7_SetClipPlane_FPUPreserve(IDirect3DDevice7 *ifa
  * Returns:
  *  D3D_OK on success
  *  DDERR_INVALIDPARAMS if PlaneEquation is NULL
- *  See IWineD3DDevice::GetClipPlane for more details
  *
  *****************************************************************************/
 static HRESULT d3d_device7_GetClipPlane(IDirect3DDevice7 *iface, DWORD idx, D3DVALUE *plane)
 {
     struct d3d_device *device = impl_from_IDirect3DDevice7(iface);
+    struct wined3d_vec4 *wined3d_plane;
     HRESULT hr;
 
     TRACE("iface %p, idx %u, plane %p.\n", iface, idx, plane);
@@ -6477,8 +6578,16 @@ static HRESULT d3d_device7_GetClipPlane(IDirect3DDevice7 *iface, DWORD idx, D3DV
     if (!plane)
         return DDERR_INVALIDPARAMS;
 
+    wined3d_plane = (struct wined3d_vec4 *)plane;
+
     wined3d_mutex_lock();
-    hr = wined3d_device_get_clip_plane(device->wined3d_device, idx, (struct wined3d_vec4 *)plane);
+    hr = wined3d_device_get_clip_plane(device->wined3d_device, idx, wined3d_plane);
+    if (hr == WINED3DERR_INVALIDCALL && idx < ARRAY_SIZE(device->user_clip_planes))
+    {
+        WARN("Clip plane %u is not supported.\n", idx);
+        *wined3d_plane = device->user_clip_planes[idx];
+        hr = D3D_OK;
+    }
     wined3d_mutex_unlock();
 
     return hr;
@@ -6930,18 +7039,18 @@ HRESULT d3d_device_create(struct ddraw *ddraw, struct ddraw_surface *target, IUn
         return DDERR_NOPALETTEATTACHED;
     }
 
-    if (!(target->surface_desc.ddsCaps.dwCaps & DDSCAPS_VIDEOMEMORY))
-    {
-        WARN("Surface %p is not in video memory.\n", target);
-        return D3DERR_SURFACENOTINVIDMEM;
-    }
-
     if (ddraw->flags & DDRAW_NO3D)
     {
         ERR_(winediag)("The application wants to create a Direct3D device, "
                 "but the current DirectDrawRenderer does not support this.\n");
 
-        return DDERR_NO3D;
+        return DDERR_OUTOFMEMORY;
+    }
+
+    if (!(target->surface_desc.ddsCaps.dwCaps & DDSCAPS_VIDEOMEMORY))
+    {
+        WARN("Surface %p is not in video memory.\n", target);
+        return D3DERR_SURFACENOTINVIDMEM;
     }
 
     if (ddraw->d3ddevice)
@@ -6950,8 +7059,7 @@ HRESULT d3d_device_create(struct ddraw *ddraw, struct ddraw_surface *target, IUn
         return DDERR_INVALIDPARAMS;
     }
 
-    object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*object));
-    if (!object)
+    if (!(object = heap_alloc_zero(sizeof(*object))))
     {
         ERR("Failed to allocate device memory.\n");
         return DDERR_OUTOFMEMORY;
@@ -6960,7 +7068,7 @@ HRESULT d3d_device_create(struct ddraw *ddraw, struct ddraw_surface *target, IUn
     if (FAILED(hr = d3d_device_init(object, ddraw, target, rt_iface, version, outer_unknown)))
     {
         WARN("Failed to initialize device, hr %#x.\n", hr);
-        HeapFree(GetProcessHeap(), 0, object);
+        heap_free(object);
         return hr;
     }
 

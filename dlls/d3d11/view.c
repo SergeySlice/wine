@@ -25,6 +25,74 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3d11);
 
+static HRESULT get_resource_properties(ID3D11Resource *resource, D3D11_RESOURCE_DIMENSION *dimension,
+        DXGI_FORMAT *format, unsigned int *miplevel_count, unsigned int *layer_count)
+{
+    ID3D11Resource_GetType(resource, dimension);
+    switch (*dimension)
+    {
+        case D3D11_RESOURCE_DIMENSION_BUFFER:
+            return S_OK;
+
+        case D3D11_RESOURCE_DIMENSION_TEXTURE1D:
+        {
+            const struct d3d_texture1d *texture;
+
+            if (!(texture = unsafe_impl_from_ID3D11Texture1D((ID3D11Texture1D *)resource)))
+            {
+                ERR("Cannot get implementation from ID3D11Texture1D.\n");
+                return E_FAIL;
+            }
+
+            *format = texture->desc.Format;
+            if (miplevel_count)
+                *miplevel_count = texture->desc.MipLevels;
+            *layer_count = texture->desc.ArraySize;
+            break;
+        }
+
+        case D3D11_RESOURCE_DIMENSION_TEXTURE2D:
+        {
+            const struct d3d_texture2d *texture;
+
+            if (!(texture = unsafe_impl_from_ID3D11Texture2D((ID3D11Texture2D *)resource)))
+            {
+                ERR("Cannot get implementation from ID3D11Texture2D.\n");
+                return E_FAIL;
+            }
+
+            *format = texture->desc.Format;
+            if (miplevel_count)
+                *miplevel_count = texture->desc.MipLevels;
+            *layer_count = texture->desc.ArraySize;
+            break;
+        }
+
+        case D3D11_RESOURCE_DIMENSION_TEXTURE3D:
+        {
+            const struct d3d_texture3d *texture;
+
+            if (!(texture = unsafe_impl_from_ID3D11Texture3D((ID3D11Texture3D *)resource)))
+            {
+                ERR("Cannot get implementation from ID3D11Texture3D.\n");
+                return E_FAIL;
+            }
+
+            *format = texture->desc.Format;
+            if (miplevel_count)
+                *miplevel_count = texture->desc.MipLevels;
+            *layer_count = texture->desc.Depth;
+            break;
+        }
+
+        default:
+            WARN("Invalid resource dimension %#x.\n", *dimension);
+            return E_INVALIDARG;
+    }
+
+    return S_OK;
+}
+
 static HRESULT set_dsv_desc_from_resource(D3D11_DEPTH_STENCIL_VIEW_DESC *desc, ID3D11Resource *resource)
 {
     D3D11_RESOURCE_DIMENSION dimension;
@@ -113,10 +181,10 @@ static HRESULT set_dsv_desc_from_resource(D3D11_DEPTH_STENCIL_VIEW_DESC *desc, I
             return S_OK;
         }
 
-        default:
-            ERR("Unhandled resource dimension %#x.\n", dimension);
         case D3D11_RESOURCE_DIMENSION_BUFFER:
         case D3D11_RESOURCE_DIMENSION_TEXTURE3D:
+        default:
+            WARN("Invalid resource dimension %#x.\n", dimension);
             return E_INVALIDARG;
     }
 }
@@ -126,27 +194,22 @@ static HRESULT normalize_dsv_desc(D3D11_DEPTH_STENCIL_VIEW_DESC *desc, ID3D11Res
     D3D11_RESOURCE_DIMENSION dimension;
     unsigned int layer_count;
     DXGI_FORMAT format;
+    HRESULT hr;
 
-    ID3D11Resource_GetType(resource, &dimension);
+    if (FAILED(hr = get_resource_properties(resource, &dimension, &format, NULL, &layer_count)))
+        return hr;
     switch (dimension)
     {
         case D3D11_RESOURCE_DIMENSION_TEXTURE1D:
-        {
             if (desc->ViewDimension != D3D11_DSV_DIMENSION_TEXTURE1D
                     && desc->ViewDimension != D3D11_DSV_DIMENSION_TEXTURE1DARRAY)
             {
                 WARN("Incompatible dimensions %#x, %#x.\n", dimension, desc->ViewDimension);
                 return E_INVALIDARG;
             }
-
-            FIXME("Unhandled 1D texture resource.\n");
-            return S_OK;
-        }
+            break;
 
         case D3D11_RESOURCE_DIMENSION_TEXTURE2D:
-        {
-            const struct d3d_texture2d *texture;
-
             if (desc->ViewDimension != D3D11_DSV_DIMENSION_TEXTURE2D
                     && desc->ViewDimension != D3D11_DSV_DIMENSION_TEXTURE2DARRAY
                     && desc->ViewDimension != D3D11_DSV_DIMENSION_TEXTURE2DMS
@@ -155,26 +218,13 @@ static HRESULT normalize_dsv_desc(D3D11_DEPTH_STENCIL_VIEW_DESC *desc, ID3D11Res
                 WARN("Incompatible dimensions %#x, %#x.\n", dimension, desc->ViewDimension);
                 return E_INVALIDARG;
             }
-
-            if (!(texture = unsafe_impl_from_ID3D11Texture2D((ID3D11Texture2D *)resource)))
-            {
-                ERR("Cannot get implementation from ID3D11Texture2D.\n");
-                return E_FAIL;
-            }
-
-            format = texture->desc.Format;
-            layer_count = texture->desc.ArraySize;
             break;
-        }
 
         case D3D11_RESOURCE_DIMENSION_BUFFER:
         case D3D11_RESOURCE_DIMENSION_TEXTURE3D:
+        default:
             WARN("Invalid resource dimension %#x.\n", dimension);
             return E_INVALIDARG;
-
-        default:
-            ERR("Unhandled resource dimension %#x.\n", dimension);
-            return E_FAIL;
     }
 
     if (desc->Format == DXGI_FORMAT_UNKNOWN)
@@ -328,37 +378,30 @@ static HRESULT normalize_rtv_desc(D3D11_RENDER_TARGET_VIEW_DESC *desc, ID3D11Res
     D3D11_RESOURCE_DIMENSION dimension;
     unsigned int layer_count;
     DXGI_FORMAT format;
+    HRESULT hr;
 
-    ID3D11Resource_GetType(resource, &dimension);
+    if (FAILED(hr = get_resource_properties(resource, &dimension, &format, NULL, &layer_count)))
+        return hr;
     switch (dimension)
     {
         case D3D11_RESOURCE_DIMENSION_BUFFER:
-        {
             if (desc->ViewDimension != D3D11_RTV_DIMENSION_BUFFER)
             {
                 WARN("Incompatible dimensions %#x, %#x.\n", dimension, desc->ViewDimension);
                 return E_INVALIDARG;
             }
             return S_OK;
-        }
 
         case D3D11_RESOURCE_DIMENSION_TEXTURE1D:
-        {
             if (desc->ViewDimension != D3D11_RTV_DIMENSION_TEXTURE1D
                     && desc->ViewDimension != D3D11_RTV_DIMENSION_TEXTURE1DARRAY)
             {
                 WARN("Incompatible dimensions %#x, %#x.\n", dimension, desc->ViewDimension);
                 return E_INVALIDARG;
             }
-
-            FIXME("Unhandled 1D texture resource.\n");
-            return S_OK;
-        }
+            break;
 
         case D3D11_RESOURCE_DIMENSION_TEXTURE2D:
-        {
-            const struct d3d_texture2d *texture;
-
             if (desc->ViewDimension != D3D11_RTV_DIMENSION_TEXTURE2D
                     && desc->ViewDimension != D3D11_RTV_DIMENSION_TEXTURE2DARRAY
                     && desc->ViewDimension != D3D11_RTV_DIMENSION_TEXTURE2DMS
@@ -367,42 +410,19 @@ static HRESULT normalize_rtv_desc(D3D11_RENDER_TARGET_VIEW_DESC *desc, ID3D11Res
                 WARN("Incompatible dimensions %#x, %#x.\n", dimension, desc->ViewDimension);
                 return E_INVALIDARG;
             }
-
-            if (!(texture = unsafe_impl_from_ID3D11Texture2D((ID3D11Texture2D *)resource)))
-            {
-                ERR("Cannot get implementation from ID3D11Texture2D.\n");
-                return E_FAIL;
-            }
-
-            format = texture->desc.Format;
-            layer_count = texture->desc.ArraySize;
             break;
-        }
 
         case D3D11_RESOURCE_DIMENSION_TEXTURE3D:
-        {
-            const struct d3d_texture3d *texture;
-
             if (desc->ViewDimension != D3D11_RTV_DIMENSION_TEXTURE3D)
             {
                 WARN("Incompatible dimensions %#x, %#x.\n", dimension, desc->ViewDimension);
                 return E_INVALIDARG;
             }
-
-            if (!(texture = unsafe_impl_from_ID3D11Texture3D((ID3D11Texture3D *)resource)))
-            {
-                ERR("Cannot get implementation from ID3D11Texture3D.\n");
-                return E_FAIL;
-            }
-
-            format = texture->desc.Format;
-            layer_count = texture->desc.Depth;
             break;
-        }
 
         default:
-            ERR("Unhandled resource dimension %#x.\n", dimension);
-            return E_FAIL;
+            WARN("Invalid resource dimension %#x.\n", dimension);
+            return E_INVALIDARG;
     }
 
     if (desc->Format == DXGI_FORMAT_UNKNOWN)
@@ -520,7 +540,24 @@ static HRESULT set_srv_desc_from_resource(D3D11_SHADER_RESOURCE_VIEW_DESC *desc,
             ID3D11Texture2D_Release(texture);
 
             desc->Format = texture_desc.Format;
-            if (texture_desc.ArraySize == 1)
+            if (texture_desc.MiscFlags & D3D11_RESOURCE_MISC_TEXTURECUBE)
+            {
+                if (texture_desc.ArraySize >= 12)
+                {
+                    desc->ViewDimension = D3D11_SRV_DIMENSION_TEXTURECUBEARRAY;
+                    desc->u.TextureCubeArray.MostDetailedMip = 0;
+                    desc->u.TextureCubeArray.MipLevels = texture_desc.MipLevels;
+                    desc->u.TextureCubeArray.First2DArrayFace = 0;
+                    desc->u.TextureCubeArray.NumCubes = texture_desc.ArraySize / 6;
+                }
+                else
+                {
+                    desc->ViewDimension = D3D11_SRV_DIMENSION_TEXTURECUBE;
+                    desc->u.TextureCube.MostDetailedMip = 0;
+                    desc->u.TextureCube.MipLevels = texture_desc.MipLevels;
+                }
+            }
+            else if (texture_desc.ArraySize == 1)
             {
                 if (texture_desc.SampleDesc.Count == 1)
                 {
@@ -577,7 +614,7 @@ static HRESULT set_srv_desc_from_resource(D3D11_SHADER_RESOURCE_VIEW_DESC *desc,
         }
 
         default:
-            ERR("Unhandled resource dimension %#x.\n", dimension);
+            WARN("Invalid resource dimension %#x.\n", dimension);
             return E_INVALIDARG;
     }
 }
@@ -587,38 +624,36 @@ static HRESULT normalize_srv_desc(D3D11_SHADER_RESOURCE_VIEW_DESC *desc, ID3D11R
     unsigned int miplevel_count, layer_count;
     D3D11_RESOURCE_DIMENSION dimension;
     DXGI_FORMAT format;
+    HRESULT hr;
 
-    ID3D11Resource_GetType(resource, &dimension);
+    if (FAILED(hr = get_resource_properties(resource, &dimension, &format, &miplevel_count, &layer_count)))
+        return hr;
     switch (dimension)
     {
         case D3D11_RESOURCE_DIMENSION_BUFFER:
-        {
             if (desc->ViewDimension != D3D11_SRV_DIMENSION_BUFFER
                     && desc->ViewDimension != D3D11_SRV_DIMENSION_BUFFEREX)
             {
                 WARN("Incompatible dimensions %#x, %#x.\n", dimension, desc->ViewDimension);
                 return E_INVALIDARG;
             }
+            if (!desc->u.Buffer.u2.NumElements)
+            {
+                WARN("Zero sized buffer view.\n");
+                return E_INVALIDARG;
+            }
             return S_OK;
-        }
 
         case D3D11_RESOURCE_DIMENSION_TEXTURE1D:
-        {
             if (desc->ViewDimension != D3D11_SRV_DIMENSION_TEXTURE1D
                     && desc->ViewDimension != D3D11_SRV_DIMENSION_TEXTURE1DARRAY)
             {
                 WARN("Incompatible dimensions %#x, %#x.\n", dimension, desc->ViewDimension);
                 return E_INVALIDARG;
             }
-
-            FIXME("Unhandled 1D texture resource.\n");
-            return S_OK;
-        }
+            break;
 
         case D3D11_RESOURCE_DIMENSION_TEXTURE2D:
-        {
-            const struct d3d_texture2d *texture;
-
             if (desc->ViewDimension != D3D11_SRV_DIMENSION_TEXTURE2D
                     && desc->ViewDimension != D3D11_SRV_DIMENSION_TEXTURE2DARRAY
                     && desc->ViewDimension != D3D11_SRV_DIMENSION_TEXTURE2DMS
@@ -629,44 +664,19 @@ static HRESULT normalize_srv_desc(D3D11_SHADER_RESOURCE_VIEW_DESC *desc, ID3D11R
                 WARN("Incompatible dimensions %#x, %#x.\n", dimension, desc->ViewDimension);
                 return E_INVALIDARG;
             }
-
-            if (!(texture = unsafe_impl_from_ID3D11Texture2D((ID3D11Texture2D *)resource)))
-            {
-                ERR("Cannot get implementation from ID3D11Texture2D.\n");
-                return E_FAIL;
-            }
-
-            format = texture->desc.Format;
-            miplevel_count = texture->desc.MipLevels;
-            layer_count = texture->desc.ArraySize;
             break;
-        }
 
         case D3D11_RESOURCE_DIMENSION_TEXTURE3D:
-        {
-            const struct d3d_texture3d *texture;
-
             if (desc->ViewDimension != D3D11_SRV_DIMENSION_TEXTURE3D)
             {
                 WARN("Incompatible dimensions %#x, %#x.\n", dimension, desc->ViewDimension);
                 return E_INVALIDARG;
             }
-
-            if (!(texture = unsafe_impl_from_ID3D11Texture3D((ID3D11Texture3D *)resource)))
-            {
-                ERR("Cannot get implementation from ID3D11Texture3D.\n");
-                return E_FAIL;
-            }
-
-            format = texture->desc.Format;
-            miplevel_count = texture->desc.MipLevels;
-            layer_count = 1;
             break;
-        }
 
         default:
-            ERR("Unhandled resource dimension %#x.\n", dimension);
-            return E_FAIL;
+            WARN("Invalid resource dimension %#x.\n", dimension);
+            return E_INVALIDARG;
     }
 
     if (desc->Format == DXGI_FORMAT_UNKNOWN)
@@ -833,79 +843,49 @@ static HRESULT normalize_uav_desc(D3D11_UNORDERED_ACCESS_VIEW_DESC *desc, ID3D11
     D3D11_RESOURCE_DIMENSION dimension;
     unsigned int layer_count;
     DXGI_FORMAT format;
+    HRESULT hr;
 
-    ID3D11Resource_GetType(resource, &dimension);
+    if (FAILED(hr = get_resource_properties(resource, &dimension, &format, NULL, &layer_count)))
+        return hr;
     switch (dimension)
     {
         case D3D11_RESOURCE_DIMENSION_BUFFER:
-        {
             if (desc->ViewDimension != D3D11_UAV_DIMENSION_BUFFER)
             {
                 WARN("Incompatible dimensions %#x, %#x.\n", dimension, desc->ViewDimension);
                 return E_INVALIDARG;
             }
             return S_OK;
-        }
 
         case D3D11_RESOURCE_DIMENSION_TEXTURE1D:
-        {
             if (desc->ViewDimension != D3D11_UAV_DIMENSION_TEXTURE1D
                     && desc->ViewDimension != D3D11_UAV_DIMENSION_TEXTURE1DARRAY)
             {
                 WARN("Incompatible dimensions %#x, %#x.\n", dimension, desc->ViewDimension);
                 return E_INVALIDARG;
             }
-
-            FIXME("Unhandled 1D texture resource.\n");
-            return S_OK;
-        }
+            break;
 
         case D3D11_RESOURCE_DIMENSION_TEXTURE2D:
-        {
-            const struct d3d_texture2d *texture;
-
             if (desc->ViewDimension != D3D11_UAV_DIMENSION_TEXTURE2D
                     && desc->ViewDimension != D3D11_UAV_DIMENSION_TEXTURE2DARRAY)
             {
                 WARN("Incompatible dimensions %#x, %#x.\n", dimension, desc->ViewDimension);
                 return E_INVALIDARG;
             }
-
-            if (!(texture = unsafe_impl_from_ID3D11Texture2D((ID3D11Texture2D *)resource)))
-            {
-                ERR("Cannot get implementation from ID3D11Texture2D.\n");
-                return E_FAIL;
-            }
-
-            format = texture->desc.Format;
-            layer_count = texture->desc.ArraySize;
             break;
-        }
 
         case D3D11_RESOURCE_DIMENSION_TEXTURE3D:
-        {
-            const struct d3d_texture3d *texture;
-
             if (desc->ViewDimension != D3D11_UAV_DIMENSION_TEXTURE3D)
             {
                 WARN("Incompatible dimensions %#x, %#x.\n", dimension, desc->ViewDimension);
                 return E_INVALIDARG;
             }
-
-            if (!(texture = unsafe_impl_from_ID3D11Texture3D((ID3D11Texture3D *)resource)))
-            {
-                ERR("Cannot get implementation from ID3D11Texture3D.\n");
-                return E_FAIL;
-            }
-
-            format = texture->desc.Format;
-            layer_count = texture->desc.Depth;
             break;
-        }
 
         default:
-            ERR("Unhandled resource dimension %#x.\n", dimension);
-            return E_FAIL;
+            WARN("Invalid resource dimension %#x.\n", dimension);
+            return E_INVALIDARG;
     }
 
     if (desc->Format == DXGI_FORMAT_UNKNOWN)
@@ -982,6 +962,14 @@ static ULONG STDMETHODCALLTYPE d3d11_depthstencil_view_AddRef(ID3D11DepthStencil
 
     TRACE("%p increasing refcount to %u.\n", view, refcount);
 
+    if (refcount == 1)
+    {
+        ID3D11Device2_AddRef(view->device);
+        wined3d_mutex_lock();
+        wined3d_rendertarget_view_incref(view->wined3d_view);
+        wined3d_mutex_unlock();
+    }
+
     return refcount;
 }
 
@@ -994,12 +982,13 @@ static ULONG STDMETHODCALLTYPE d3d11_depthstencil_view_Release(ID3D11DepthStenci
 
     if (!refcount)
     {
+        ID3D11Device2 *device = view->device;
+
         wined3d_mutex_lock();
         wined3d_rendertarget_view_decref(view->wined3d_view);
-        ID3D11Device_Release(view->device);
-        wined3d_private_store_cleanup(&view->private_store);
         wined3d_mutex_unlock();
-        HeapFree(GetProcessHeap(), 0, view);
+
+        ID3D11Device2_Release(device);
     }
 
     return refcount;
@@ -1012,7 +1001,7 @@ static void STDMETHODCALLTYPE d3d11_depthstencil_view_GetDevice(ID3D11DepthStenc
 
     TRACE("iface %p, device %p.\n", iface, device);
 
-    *device = view->device;
+    *device = (ID3D11Device *)view->device;
     ID3D11Device_AddRef(*device);
 }
 
@@ -1129,7 +1118,7 @@ static void STDMETHODCALLTYPE d3d10_depthstencil_view_GetDevice(ID3D10DepthStenc
 
     TRACE("iface %p, device %p.\n", iface, device);
 
-    ID3D11Device_QueryInterface(view->device, &IID_ID3D10Device, (void **)device);
+    ID3D11Device2_QueryInterface(view->device, &IID_ID3D10Device, (void **)device);
 }
 
 static HRESULT STDMETHODCALLTYPE d3d10_depthstencil_view_GetPrivateData(ID3D10DepthStencilView *iface,
@@ -1206,6 +1195,19 @@ static const struct ID3D10DepthStencilViewVtbl d3d10_depthstencil_view_vtbl =
     d3d10_depthstencil_view_GetResource,
     /* ID3D10DepthStencilView methods */
     d3d10_depthstencil_view_GetDesc,
+};
+
+static void STDMETHODCALLTYPE d3d_depth_stencil_view_wined3d_object_destroyed(void *parent)
+{
+    struct d3d_depthstencil_view *view = parent;
+
+    wined3d_private_store_cleanup(&view->private_store);
+    heap_free(parent);
+}
+
+static const struct wined3d_parent_ops d3d_depth_stencil_view_wined3d_parent_ops =
+{
+    d3d_depth_stencil_view_wined3d_object_destroyed,
 };
 
 static void wined3d_depth_stencil_view_desc_from_d3d11(struct wined3d_view_desc *wined3d_desc,
@@ -1301,7 +1303,7 @@ static HRESULT d3d_depthstencil_view_init(struct d3d_depthstencil_view *view, st
 
     wined3d_depth_stencil_view_desc_from_d3d11(&wined3d_desc, &view->desc);
     if (FAILED(hr = wined3d_rendertarget_view_create(&wined3d_desc, wined3d_resource,
-            view, &d3d_null_wined3d_parent_ops, &view->wined3d_view)))
+            view, &d3d_depth_stencil_view_wined3d_parent_ops, &view->wined3d_view)))
     {
         wined3d_mutex_unlock();
         WARN("Failed to create a wined3d rendertarget view, hr %#x.\n", hr);
@@ -1311,8 +1313,7 @@ static HRESULT d3d_depthstencil_view_init(struct d3d_depthstencil_view *view, st
     wined3d_private_store_init(&view->private_store);
     wined3d_mutex_unlock();
     view->resource = resource;
-    view->device = &device->ID3D11Device_iface;
-    ID3D11Device_AddRef(view->device);
+    ID3D11Device2_AddRef(view->device = &device->ID3D11Device2_iface);
 
     return S_OK;
 }
@@ -1323,13 +1324,13 @@ HRESULT d3d_depthstencil_view_create(struct d3d_device *device, ID3D11Resource *
     struct d3d_depthstencil_view *object;
     HRESULT hr;
 
-    if (!(object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*object))))
+    if (!(object = heap_alloc_zero(sizeof(*object))))
         return E_OUTOFMEMORY;
 
     if (FAILED(hr = d3d_depthstencil_view_init(object, device, resource, desc)))
     {
         WARN("Failed to initialize depthstencil view, hr %#x.\n", hr);
-        HeapFree(GetProcessHeap(), 0, object);
+        heap_free(object);
         return hr;
     }
 
@@ -1403,6 +1404,14 @@ static ULONG STDMETHODCALLTYPE d3d11_rendertarget_view_AddRef(ID3D11RenderTarget
 
     TRACE("%p increasing refcount to %u.\n", view, refcount);
 
+    if (refcount == 1)
+    {
+        ID3D11Device2_AddRef(view->device);
+        wined3d_mutex_lock();
+        wined3d_rendertarget_view_incref(view->wined3d_view);
+        wined3d_mutex_unlock();
+    }
+
     return refcount;
 }
 
@@ -1415,12 +1424,13 @@ static ULONG STDMETHODCALLTYPE d3d11_rendertarget_view_Release(ID3D11RenderTarge
 
     if (!refcount)
     {
+        ID3D11Device2 *device = view->device;
+
         wined3d_mutex_lock();
         wined3d_rendertarget_view_decref(view->wined3d_view);
-        ID3D11Device_Release(view->device);
-        wined3d_private_store_cleanup(&view->private_store);
         wined3d_mutex_unlock();
-        HeapFree(GetProcessHeap(), 0, view);
+
+        ID3D11Device2_Release(device);
     }
 
     return refcount;
@@ -1433,7 +1443,7 @@ static void STDMETHODCALLTYPE d3d11_rendertarget_view_GetDevice(ID3D11RenderTarg
 
     TRACE("iface %p, device %p.\n", iface, device);
 
-    *device = view->device;
+    *device = (ID3D11Device *)view->device;
     ID3D11Device_AddRef(*device);
 }
 
@@ -1550,7 +1560,7 @@ static void STDMETHODCALLTYPE d3d10_rendertarget_view_GetDevice(ID3D10RenderTarg
 
     TRACE("iface %p, device %p.\n", iface, device);
 
-    ID3D11Device_QueryInterface(view->device, &IID_ID3D10Device, (void **)device);
+    ID3D11Device2_QueryInterface(view->device, &IID_ID3D10Device, (void **)device);
 }
 
 static HRESULT STDMETHODCALLTYPE d3d10_rendertarget_view_GetPrivateData(ID3D10RenderTargetView *iface,
@@ -1624,6 +1634,19 @@ static const struct ID3D10RenderTargetViewVtbl d3d10_rendertarget_view_vtbl =
     d3d10_rendertarget_view_GetResource,
     /* ID3D10RenderTargetView methods */
     d3d10_rendertarget_view_GetDesc,
+};
+
+static void STDMETHODCALLTYPE d3d_render_target_view_wined3d_object_destroyed(void *parent)
+{
+    struct d3d_rendertarget_view *view = parent;
+
+    wined3d_private_store_cleanup(&view->private_store);
+    heap_free(parent);
+}
+
+static const struct wined3d_parent_ops d3d_render_target_view_wined3d_parent_ops =
+{
+    d3d_render_target_view_wined3d_object_destroyed,
 };
 
 static void wined3d_rendertarget_view_desc_from_d3d11(struct wined3d_view_desc *wined3d_desc,
@@ -1727,7 +1750,7 @@ static HRESULT d3d_rendertarget_view_init(struct d3d_rendertarget_view *view, st
 
     wined3d_rendertarget_view_desc_from_d3d11(&wined3d_desc, &view->desc);
     if (FAILED(hr = wined3d_rendertarget_view_create(&wined3d_desc, wined3d_resource,
-            view, &d3d_null_wined3d_parent_ops, &view->wined3d_view)))
+            view, &d3d_render_target_view_wined3d_parent_ops, &view->wined3d_view)))
     {
         wined3d_mutex_unlock();
         WARN("Failed to create a wined3d rendertarget view, hr %#x.\n", hr);
@@ -1737,8 +1760,7 @@ static HRESULT d3d_rendertarget_view_init(struct d3d_rendertarget_view *view, st
     wined3d_private_store_init(&view->private_store);
     wined3d_mutex_unlock();
     view->resource = resource;
-    view->device = &device->ID3D11Device_iface;
-    ID3D11Device_AddRef(view->device);
+    ID3D11Device2_AddRef(view->device = &device->ID3D11Device2_iface);
 
     return S_OK;
 }
@@ -1749,13 +1771,13 @@ HRESULT d3d_rendertarget_view_create(struct d3d_device *device, ID3D11Resource *
     struct d3d_rendertarget_view *object;
     HRESULT hr;
 
-    if (!(object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*object))))
+    if (!(object = heap_alloc_zero(sizeof(*object))))
         return E_OUTOFMEMORY;
 
     if (FAILED(hr = d3d_rendertarget_view_init(object, device, resource, desc)))
     {
         WARN("Failed to initialize rendertarget view, hr %#x.\n", hr);
-        HeapFree(GetProcessHeap(), 0, object);
+        heap_free(object);
         return hr;
     }
 
@@ -1830,6 +1852,14 @@ static ULONG STDMETHODCALLTYPE d3d11_shader_resource_view_AddRef(ID3D11ShaderRes
 
     TRACE("%p increasing refcount to %u.\n", view, refcount);
 
+    if (refcount == 1)
+    {
+        ID3D11Device2_AddRef(view->device);
+        wined3d_mutex_lock();
+        wined3d_shader_resource_view_incref(view->wined3d_view);
+        wined3d_mutex_unlock();
+    }
+
     return refcount;
 }
 
@@ -1842,12 +1872,13 @@ static ULONG STDMETHODCALLTYPE d3d11_shader_resource_view_Release(ID3D11ShaderRe
 
     if (!refcount)
     {
+        ID3D11Device2 *device = view->device;
+
         wined3d_mutex_lock();
         wined3d_shader_resource_view_decref(view->wined3d_view);
-        ID3D11Device_Release(view->device);
-        wined3d_private_store_cleanup(&view->private_store);
         wined3d_mutex_unlock();
-        HeapFree(GetProcessHeap(), 0, view);
+
+        ID3D11Device2_Release(device);
     }
 
     return refcount;
@@ -1860,7 +1891,7 @@ static void STDMETHODCALLTYPE d3d11_shader_resource_view_GetDevice(ID3D11ShaderR
 
     TRACE("iface %p, device %p.\n", iface, device);
 
-    *device = view->device;
+    *device = (ID3D11Device *)view->device;
     ID3D11Device_AddRef(*device);
 }
 
@@ -1978,7 +2009,7 @@ static void STDMETHODCALLTYPE d3d10_shader_resource_view_GetDevice(ID3D10ShaderR
 
     TRACE("iface %p, device %p.\n", iface, device);
 
-    ID3D11Device_QueryInterface(view->device, &IID_ID3D10Device, (void **)device);
+    ID3D11Device2_QueryInterface(view->device, &IID_ID3D10Device, (void **)device);
 }
 
 static HRESULT STDMETHODCALLTYPE d3d10_shader_resource_view_GetPrivateData(ID3D10ShaderResourceView1 *iface,
@@ -2064,6 +2095,19 @@ static const struct ID3D10ShaderResourceView1Vtbl d3d10_shader_resource_view_vtb
     d3d10_shader_resource_view_GetDesc,
     /* ID3D10ShaderResourceView1 methods */
     d3d10_shader_resource_view_GetDesc1,
+};
+
+static void STDMETHODCALLTYPE d3d_shader_resource_view_wined3d_object_destroyed(void *parent)
+{
+    struct d3d_shader_resource_view *view = parent;
+
+    wined3d_private_store_cleanup(&view->private_store);
+    heap_free(parent);
+}
+
+static const struct wined3d_parent_ops d3d_shader_resource_view_wined3d_parent_ops =
+{
+    d3d_shader_resource_view_wined3d_object_destroyed,
 };
 
 static unsigned int wined3d_view_flags_from_d3d11_bufferex_flags(unsigned int d3d11_flags)
@@ -2206,7 +2250,7 @@ static HRESULT d3d_shader_resource_view_init(struct d3d_shader_resource_view *vi
     }
 
     if (FAILED(hr = wined3d_shader_resource_view_create(&wined3d_desc, wined3d_resource,
-            view, &d3d_null_wined3d_parent_ops, &view->wined3d_view)))
+            view, &d3d_shader_resource_view_wined3d_parent_ops, &view->wined3d_view)))
     {
         wined3d_mutex_unlock();
         WARN("Failed to create wined3d shader resource view, hr %#x.\n", hr);
@@ -2216,8 +2260,7 @@ static HRESULT d3d_shader_resource_view_init(struct d3d_shader_resource_view *vi
     wined3d_private_store_init(&view->private_store);
     wined3d_mutex_unlock();
     view->resource = resource;
-    view->device = &device->ID3D11Device_iface;
-    ID3D11Device_AddRef(view->device);
+    ID3D11Device2_AddRef(view->device = &device->ID3D11Device2_iface);
 
     return S_OK;
 }
@@ -2228,13 +2271,13 @@ HRESULT d3d_shader_resource_view_create(struct d3d_device *device, ID3D11Resourc
     struct d3d_shader_resource_view *object;
     HRESULT hr;
 
-    if (!(object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*object))))
+    if (!(object = heap_alloc_zero(sizeof(*object))))
         return E_OUTOFMEMORY;
 
     if (FAILED(hr = d3d_shader_resource_view_init(object, device, resource, desc)))
     {
         WARN("Failed to initialize shader resource view, hr %#x.\n", hr);
-        HeapFree(GetProcessHeap(), 0, object);
+        heap_free(object);
         return hr;
     }
 
@@ -2294,6 +2337,14 @@ static ULONG STDMETHODCALLTYPE d3d11_unordered_access_view_AddRef(ID3D11Unordere
 
     TRACE("%p increasing refcount to %u.\n", view, refcount);
 
+    if (refcount == 1)
+    {
+        ID3D11Device2_AddRef(view->device);
+        wined3d_mutex_lock();
+        wined3d_unordered_access_view_incref(view->wined3d_view);
+        wined3d_mutex_unlock();
+    }
+
     return refcount;
 }
 
@@ -2306,12 +2357,13 @@ static ULONG STDMETHODCALLTYPE d3d11_unordered_access_view_Release(ID3D11Unorder
 
     if (!refcount)
     {
+        ID3D11Device2 *device = view->device;
+
         wined3d_mutex_lock();
         wined3d_unordered_access_view_decref(view->wined3d_view);
-        ID3D11Device_Release(view->device);
-        wined3d_private_store_cleanup(&view->private_store);
         wined3d_mutex_unlock();
-        HeapFree(GetProcessHeap(), 0, view);
+
+        ID3D11Device2_Release(device);
     }
 
     return refcount;
@@ -2324,7 +2376,7 @@ static void STDMETHODCALLTYPE d3d11_unordered_access_view_GetDevice(ID3D11Unorde
 
     TRACE("iface %p, device %p.\n", iface, device);
 
-    ID3D11Device_AddRef(*device = view->device);
+    ID3D11Device_AddRef(*device = (ID3D11Device *)view->device);
 }
 
 static HRESULT STDMETHODCALLTYPE d3d11_unordered_access_view_GetPrivateData(ID3D11UnorderedAccessView *iface,
@@ -2392,6 +2444,19 @@ static const struct ID3D11UnorderedAccessViewVtbl d3d11_unordered_access_view_vt
     d3d11_unordered_access_view_GetResource,
     /* ID3D11UnorderedAccessView methods */
     d3d11_unordered_access_view_GetDesc,
+};
+
+static void STDMETHODCALLTYPE d3d11_unordered_access_view_wined3d_object_destroyed(void *parent)
+{
+    struct d3d11_unordered_access_view *view = parent;
+
+    wined3d_private_store_cleanup(&view->private_store);
+    heap_free(parent);
+}
+
+static const struct wined3d_parent_ops d3d11_unordered_access_view_wined3d_parent_ops =
+{
+    d3d11_unordered_access_view_wined3d_object_destroyed,
 };
 
 static unsigned int wined3d_view_flags_from_d3d11_buffer_uav_flags(unsigned int d3d11_flags)
@@ -2494,7 +2559,7 @@ static HRESULT d3d11_unordered_access_view_init(struct d3d11_unordered_access_vi
     }
 
     if (FAILED(hr = wined3d_unordered_access_view_create(&wined3d_desc, wined3d_resource,
-            view, &d3d_null_wined3d_parent_ops, &view->wined3d_view)))
+            view, &d3d11_unordered_access_view_wined3d_parent_ops, &view->wined3d_view)))
     {
         wined3d_mutex_unlock();
         WARN("Failed to create wined3d unordered access view, hr %#x.\n", hr);
@@ -2504,7 +2569,7 @@ static HRESULT d3d11_unordered_access_view_init(struct d3d11_unordered_access_vi
     wined3d_private_store_init(&view->private_store);
     wined3d_mutex_unlock();
     view->resource = resource;
-    ID3D11Device_AddRef(view->device = &device->ID3D11Device_iface);
+    ID3D11Device2_AddRef(view->device = &device->ID3D11Device2_iface);
 
     return S_OK;
 }
@@ -2515,13 +2580,13 @@ HRESULT d3d11_unordered_access_view_create(struct d3d_device *device, ID3D11Reso
     struct d3d11_unordered_access_view *object;
     HRESULT hr;
 
-    if (!(object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*object))))
+    if (!(object = heap_alloc_zero(sizeof(*object))))
         return E_OUTOFMEMORY;
 
     if (FAILED(hr = d3d11_unordered_access_view_init(object, device, resource, desc)))
     {
         WARN("Failed to initialize unordered access view, hr %#x.\n", hr);
-        HeapFree(GetProcessHeap(), 0, object);
+        heap_free(object);
         return hr;
     }
 

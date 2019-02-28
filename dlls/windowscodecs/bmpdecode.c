@@ -271,7 +271,7 @@ static HRESULT WINAPI BmpFrameDecode_CopyPalette(IWICBitmapFrameDecode *iface,
             if (This->bih.bV5ClrUsed == 0)
                 count = 1 << This->bih.bV5BitCount;
             else
-                count = This->bih.bV5ClrUsed;
+                count = min(This->bih.bV5ClrUsed, 1 << This->bih.bV5BitCount);
 
             tablesize = sizeof(WICColor) * count;
             wiccolors = HeapAlloc(GetProcessHeap(), 0, tablesize);
@@ -321,7 +321,7 @@ static HRESULT WINAPI BmpFrameDecode_CopyPixels(IWICBitmapFrameDecode *iface,
     BmpDecoder *This = impl_from_IWICBitmapFrameDecode(iface);
     HRESULT hr=S_OK;
     UINT width, height;
-    TRACE("(%p,%p,%u,%u,%p)\n", iface, prc, cbStride, cbBufferSize, pbBuffer);
+    TRACE("(%p,%s,%u,%u,%p)\n", iface, debug_wic_rect(prc), cbStride, cbBufferSize, pbBuffer);
 
     EnterCriticalSection(&This->lock);
     if (!This->imagedata)
@@ -1068,20 +1068,9 @@ static HRESULT WINAPI BmpDecoder_GetContainerFormat(IWICBitmapDecoder *iface,
 static HRESULT WINAPI BmpDecoder_GetDecoderInfo(IWICBitmapDecoder *iface,
     IWICBitmapDecoderInfo **ppIDecoderInfo)
 {
-    HRESULT hr;
-    IWICComponentInfo *compinfo;
-
     TRACE("(%p,%p)\n", iface, ppIDecoderInfo);
 
-    hr = CreateComponentInfo(&CLSID_WICBmpDecoder, &compinfo);
-    if (FAILED(hr)) return hr;
-
-    hr = IWICComponentInfo_QueryInterface(compinfo, &IID_IWICBitmapDecoderInfo,
-        (void**)ppIDecoderInfo);
-
-    IWICComponentInfo_Release(compinfo);
-
-    return hr;
+    return get_decoder_info(&CLSID_WICBmpDecoder, ppIDecoderInfo);
 }
 
 static HRESULT WINAPI BmpDecoder_CopyPalette(IWICBitmapDecoder *iface,

@@ -67,9 +67,13 @@ DEFINE_EXPECT(GetClassID);
 DEFINE_EXPECT(Save);
 
 DEFINE_EXPECT(HBC_QueryInterface_IHlinkHistory);
+DEFINE_EXPECT(HBC_QueryInterface_IMarshal);
+DEFINE_EXPECT(HBC_QueryInterface_IdentityUnmarshal);
+DEFINE_EXPECT(HBC_QueryInterface_IUnknown);
 DEFINE_EXPECT(HBC_GetObject);
 DEFINE_EXPECT(HBC_UpdateHlink);
 
+DEFINE_EXPECT(HT_QueryInterface_IHlinkTarget);
 DEFINE_EXPECT(HT_SetBrowseContext);
 DEFINE_EXPECT(HT_GetBrowseContext);
 DEFINE_EXPECT(HT_Navigate);
@@ -77,7 +81,22 @@ DEFINE_EXPECT(HT_GetFriendlyName);
 
 DEFINE_EXPECT(HLF_UpdateHlink);
 
+DEFINE_EXPECT(BindStatusCallback_GetBindInfo);
+DEFINE_EXPECT(BindStatusCallback_OnObjectAvailable);
+DEFINE_EXPECT(BindStatusCallback_OnStartBinding);
+DEFINE_EXPECT(BindStatusCallback_OnStopBinding);
+
+DEFINE_GUID(CLSID_IdentityUnmarshal,0x0000001b,0x0000,0x0000,0xc0,0x00,0x00,0x00,0x00,0x00,0x00,0x46);
 DEFINE_GUID(IID_IHlinkHistory,0x79eac9c8,0xbaf9,0x11ce,0x8c,0x82,0x00,0xaa,0x00,0x4b,0xa9,0x0b);
+
+static IHlinkTarget HlinkTarget;
+
+static const WCHAR winehq_urlW[] =
+        {'h','t','t','p',':','/','/','t','e','s','t','.','w','i','n','e','h','q','.','o','r','g',
+         '/','t','e','s','t','s','/','h','e','l','l','o','.','h','t','m','l',0};
+static const WCHAR winehq_404W[] =
+        {'h','t','t','p',':','/','/','t','e','s','t','.','w','i','n','e','h','q','.','o','r','g',
+         '/','t','e','s','t','s','/','f','a','k','e','u','r','l',0};
 
 static void test_HlinkIsShortcut(void)
 {
@@ -108,7 +127,7 @@ static void test_HlinkIsShortcut(void)
         {NULL,  E_INVALIDARG}
     };
 
-    for(i=0; i<sizeof(shortcut_test)/sizeof(shortcut_test[0]); i++) {
+    for (i=0; i < ARRAY_SIZE(shortcut_test); i++) {
         hres = HlinkIsShortcut(shortcut_test[i].file);
         ok(hres == shortcut_test[i].hres, "[%d] HlinkIsShortcut returned %08x, expected %08x\n",
            i, hres, shortcut_test[i].hres);
@@ -405,7 +424,8 @@ static void test_persist_save_data(const char *testname, IHlink *lnk,
                 (expected_data_alt == expected_hlink_data3_ie7 && i == 109) /* Win10 */ ||
                 (expected_data_alt == expected_hlink_data5_ie7 && i == 107) /* Win10 */)
             {
-                ok(data[i] == 0 || broken(data[i] == 1), "Expected 0 or 1, got %d\n", data[i]);
+                ok(data[i] == 0 || broken(data[i] == 1) || broken(data[i] == 3),
+                   "Expected 0 or 1, got %d\n", data[i]);
                 continue;
             }
             if ((expected_data_alt[i] != data[i]) &&
@@ -627,9 +647,6 @@ static void test_HlinkParseDisplayName(void)
     IBindCtx *bctx;
     HRESULT hres;
 
-    static const WCHAR winehq_urlW[] =
-            {'h','t','t','p',':','/','/','w','w','w','.','w','i','n','e','h','q','.','o','r','g',
-	     '/','s','i','t','e','/','a','b','o','u','t',0};
     static const WCHAR invalid_urlW[] = {'t','e','s','t',':','1','2','3','a','b','c',0};
     static const WCHAR clsid_nameW[] = {'c','l','s','i','d',':',
             '2','0','D','0','4','F','E','0','-','3','A','E','A','-','1','0','6','9','-','A','2','D','8',
@@ -641,7 +658,7 @@ static void test_HlinkParseDisplayName(void)
 
     hres = HlinkParseDisplayName(bctx, winehq_urlW, FALSE, &eaten, &mon);
     ok(hres == S_OK, "HlinkParseDisplayName failed: %08x\n", hres);
-    ok(eaten == sizeof(winehq_urlW)/sizeof(WCHAR)-1, "eaten=%d\n", eaten);
+    ok(eaten == ARRAY_SIZE(winehq_urlW)-1, "eaten=%d\n", eaten);
     ok(mon != NULL, "mon == NULL\n");
 
     hres = IMoniker_GetDisplayName(mon, bctx, 0, &name);
@@ -657,7 +674,7 @@ static void test_HlinkParseDisplayName(void)
 
     hres = HlinkParseDisplayName(bctx, clsid_nameW, FALSE, &eaten, &mon);
     ok(hres == S_OK, "HlinkParseDisplayName failed: %08x\n", hres);
-    ok(eaten == sizeof(clsid_nameW)/sizeof(WCHAR)-1, "eaten=%d\n", eaten);
+    ok(eaten == ARRAY_SIZE(clsid_nameW)-1, "eaten=%d\n", eaten);
     ok(mon != NULL, "mon == NULL\n");
 
     hres = IMoniker_IsSystemMoniker(mon, &issys);
@@ -668,7 +685,7 @@ static void test_HlinkParseDisplayName(void)
 
     hres = HlinkParseDisplayName(bctx, invalid_urlW, FALSE, &eaten, &mon);
     ok(hres == S_OK, "HlinkParseDisplayName failed: %08x\n", hres);
-    ok(eaten == sizeof(invalid_urlW)/sizeof(WCHAR)-1, "eaten=%d\n", eaten);
+    ok(eaten == ARRAY_SIZE(invalid_urlW)-1, "eaten=%d\n", eaten);
     ok(mon != NULL, "mon == NULL\n");
 
     hres = IMoniker_GetDisplayName(mon, bctx, 0, &name);
@@ -684,7 +701,7 @@ static void test_HlinkParseDisplayName(void)
 
     hres = HlinkParseDisplayName(bctx, file_urlW, FALSE, &eaten, &mon);
     ok(hres == S_OK, "HlinkParseDisplayName failed: %08x\n", hres);
-    ok(eaten == sizeof(file_urlW)/sizeof(WCHAR)-1, "eaten=%d\n", eaten);
+    ok(eaten == ARRAY_SIZE(file_urlW)-1, "eaten=%d\n", eaten);
     ok(mon != NULL, "mon == NULL\n");
 
     hres = IMoniker_GetDisplayName(mon, bctx, 0, &name);
@@ -747,21 +764,25 @@ static HRESULT WINAPI BindStatusCallback_QueryInterface(IBindStatusCallback *ifa
     return E_NOINTERFACE;
 }
 
+static LONG bind_callback_refs = 1;
+
 static ULONG WINAPI BindStatusCallback_AddRef(IBindStatusCallback *iface)
 {
-    return 2;
+    return ++bind_callback_refs;
 }
 
 static ULONG WINAPI BindStatusCallback_Release(IBindStatusCallback *iface)
 {
-    return 1;
+    return --bind_callback_refs;
 }
 
-static HRESULT WINAPI BindStatusCallback_OnStartBinding(IBindStatusCallback *iface, DWORD dwReserved,
-        IBinding *pib)
+static HRESULT WINAPI BindStatusCallback_OnStartBinding(IBindStatusCallback *iface,
+        DWORD reserved, IBinding *binding)
 {
-    ok(0, "unexpected call\n");
-    return E_NOTIMPL;
+    CHECK_EXPECT(BindStatusCallback_OnStartBinding);
+
+    ok(!binding, "binding = %p\n", binding);
+    return S_OK;
 }
 
 static HRESULT WINAPI BindStatusCallback_GetPriority(IBindStatusCallback *iface, LONG *pnPriority)
@@ -783,15 +804,20 @@ static HRESULT WINAPI BindStatusCallback_OnProgress(IBindStatusCallback *iface, 
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI BindStatusCallback_OnStopBinding(IBindStatusCallback *iface, HRESULT hresult, LPCWSTR szError)
+static HRESULT WINAPI BindStatusCallback_OnStopBinding(IBindStatusCallback *iface, HRESULT hr, const WCHAR *error)
 {
-    ok(0, "unexpected call\n");
-    return E_NOTIMPL;
+    CHECK_EXPECT(BindStatusCallback_OnStopBinding);
+
+    ok(hr == S_OK, "got hr %#x\n", hr);
+    ok(!error, "got error %s\n", wine_dbgstr_w(error));
+
+    return 0xdeadbeef;
 }
 
-static HRESULT WINAPI BindStatusCallback_GetBindInfo(IBindStatusCallback *iface, DWORD *grfBINDF, BINDINFO *pbindinfo)
+static HRESULT WINAPI BindStatusCallback_GetBindInfo(IBindStatusCallback *iface, DWORD *bind_flags, BINDINFO *bind_info)
 {
-    ok(0, "unexpected call\n");
+    CHECK_EXPECT(BindStatusCallback_GetBindInfo);
+
     return E_NOTIMPL;
 }
 
@@ -802,10 +828,14 @@ static HRESULT WINAPI BindStatusCallback_OnDataAvailable(IBindStatusCallback *if
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI BindStatusCallback_OnObjectAvailable(IBindStatusCallback *iface, REFIID riid, IUnknown *punk)
+static HRESULT WINAPI BindStatusCallback_OnObjectAvailable(IBindStatusCallback *iface, REFIID iid, IUnknown *out)
 {
-    ok(0, "unexpected call\n");
-    return E_NOTIMPL;
+    CHECK_EXPECT(BindStatusCallback_OnObjectAvailable);
+
+    ok(IsEqualGUID(iid, &IID_IUnknown), "iid = %s\n", wine_dbgstr_guid(iid));
+    ok(out == (IUnknown *)&HlinkTarget, "out = %p\n", out);
+
+    return 0xdeadbeef;
 }
 
 static IBindStatusCallbackVtbl BindStatusCallbackVtbl = {
@@ -829,23 +859,30 @@ static HRESULT WINAPI HlinkBrowseContext_QueryInterface(
 {
     *ppv = NULL;
 
-    if(IsEqualGUID(&IID_IHlinkHistory, riid)) {
+    if (IsEqualGUID(&IID_IHlinkHistory, riid))
         CHECK_EXPECT(HBC_QueryInterface_IHlinkHistory);
-        return E_NOINTERFACE;
-    }
+    else if (IsEqualGUID(&IID_IMarshal, riid))
+        CHECK_EXPECT2(HBC_QueryInterface_IMarshal);
+    else if (IsEqualGUID(&CLSID_IdentityUnmarshal, riid))
+        CHECK_EXPECT(HBC_QueryInterface_IdentityUnmarshal);
+    else if (IsEqualGUID(&IID_IUnknown, riid))
+        CHECK_EXPECT(HBC_QueryInterface_IUnknown);
+    else
+        ok(0, "unexpected interface: %s\n", wine_dbgstr_guid(riid));
 
-    ok(0, "unexpected interface: %s\n", wine_dbgstr_guid(riid));
     return E_NOINTERFACE;
 }
 
+static LONG browse_ctx_refs = 1;
+
 static ULONG WINAPI HlinkBrowseContext_AddRef(IHlinkBrowseContext *iface)
 {
-    return 2;
+    return ++browse_ctx_refs;
 }
 
 static ULONG WINAPI HlinkBrowseContext_Release(IHlinkBrowseContext *iface)
 {
-    return 1;
+    return --browse_ctx_refs;
 }
 
 static HRESULT WINAPI HlinkBrowseContext_Register(IHlinkBrowseContext *iface,
@@ -855,16 +892,29 @@ static HRESULT WINAPI HlinkBrowseContext_Register(IHlinkBrowseContext *iface,
     return E_NOTIMPL;
 }
 
+static IUnknown *HBC_object;
+
 static IMoniker Moniker;
 static HRESULT WINAPI HlinkBrowseContext_GetObject(IHlinkBrowseContext *iface,
         IMoniker *pimk, BOOL fBindIfRootRegistered, IUnknown **ppiunk)
 {
+    IBindCtx *bctx;
+    WCHAR *name;
+    HRESULT hr;
+
     CHECK_EXPECT(HBC_GetObject);
 
-    ok(pimk == &Moniker, "pimk != &Moniker\n");
+    CreateBindCtx(0, &bctx);
+    hr = IMoniker_GetDisplayName(pimk, bctx, NULL, &name);
+    ok(hr == S_OK, "Failed to get display name, hr %#x.\n", hr);
+    ok(!lstrcmpW(winehq_urlW, name) || !lstrcmpW(winehq_404W, name), "got unexpected url\n");
+    CoTaskMemFree(name);
+    IBindCtx_Release(bctx);
+
     ok(fBindIfRootRegistered == 1, "fBindIfRootRegistered = %x\n", fBindIfRootRegistered);
-    *ppiunk = NULL;
-    return S_FALSE;
+
+    *ppiunk = HBC_object;
+    return HBC_object ? S_OK : 0xdeadbeef;
 }
 
 static HRESULT WINAPI HlinkBrowseContext_Revoke(IHlinkBrowseContext *iface, DWORD dwRegister)
@@ -974,6 +1024,7 @@ static IHlinkBrowseContext HlinkBrowseContext = { &HlinkBrowseContextVtbl };
 static HRESULT WINAPI HlinkTarget_QueryInterface(IHlinkTarget *iface, REFIID riid, void **ppv)
 {
     if(IsEqualGUID(&IID_IHlinkTarget, riid)) {
+        CHECK_EXPECT(HT_QueryInterface_IHlinkTarget);
         *ppv = iface;
         return S_OK;
     }
@@ -1096,9 +1147,16 @@ static HRESULT WINAPI Moniker_GetSizeMax(IMoniker *iface, ULARGE_INTEGER *pcbSiz
     return E_NOTIMPL;
 }
 
+static BOOL async_bind;
+static IBindStatusCallback *async_bind_callback;
+
 static HRESULT WINAPI Moniker_BindToObject(IMoniker *iface, IBindCtx *pbc, IMoniker *pmkToLeft,
         REFIID riid, void **ppv)
 {
+    static WCHAR bscb_holderW[] = {'_','B','S','C','B','_','H','o','l','d','e','r','_',0};
+    IUnknown *bind_callback_holder;
+    HRESULT hr;
+
     CHECK_EXPECT(BindToObject);
 
     ok(pbc != _bctx, "pbc != _bctx\n");
@@ -1106,6 +1164,17 @@ static HRESULT WINAPI Moniker_BindToObject(IMoniker *iface, IBindCtx *pbc, IMoni
     ok(IsEqualGUID(&IID_IUnknown, riid), "unexpected riid %s\n", wine_dbgstr_guid(riid));
     ok(ppv != NULL, "ppv == NULL\n");
     ok(*ppv == NULL, "*ppv = %p\n", *ppv);
+
+    if (async_bind)
+    {
+        hr = IBindCtx_GetObjectParam(pbc, bscb_holderW, &bind_callback_holder);
+        ok(hr == S_OK, "Failed to get IBindStatusCallback holder, hr %#x.\n", hr);
+        hr = IUnknown_QueryInterface(bind_callback_holder, &IID_IBindStatusCallback,
+                (void **)&async_bind_callback);
+        ok(hr == S_OK, "Failed to get IBindStatusCallback interface, hr %#x.\n", hr);
+        IUnknown_Release(bind_callback_holder);
+        return MK_S_ASYNCHRONOUS;
+    }
 
     *ppv = &HlinkTarget;
     return S_OK;
@@ -1205,10 +1274,6 @@ static HRESULT WINAPI Moniker_RelativePathTo(IMoniker *iface, IMoniker *pmkOther
 static HRESULT WINAPI Moniker_GetDisplayName(IMoniker *iface, IBindCtx *pbc,
         IMoniker *pmkToLeft, LPOLESTR *ppszDisplayName)
 {
-    static const WCHAR winehq_urlW[] =
-            {'h','t','t','p',':','/','/','w','w','w','.','w','i','n','e','h','q','.','o','r','g',
-	     '/','s','i','t','e','/','a','b','o','u','t',0};
-
     CHECK_EXPECT2(GetDisplayName);
 
     ok(pbc != NULL, "pbc == NULL\n");
@@ -2163,6 +2228,8 @@ static void test_StdHlink(void)
 
 static void test_Hlink_Navigate(void)
 {
+    BINDINFO bind_info = {sizeof(BINDINFO)};
+    DWORD bind_flags;
     IHlink *hlink;
     IBindCtx *pbc;
     HRESULT hres;
@@ -2170,6 +2237,8 @@ static void test_Hlink_Navigate(void)
     hres = CreateBindCtx(0, &pbc);
     ok(hres == S_OK, "CreateBindCtx failed: %08x\n", hres);
     _bctx = pbc;
+
+    HBC_object = NULL;
 
     SET_EXPECT(Reduce);
     SET_EXPECT(Enum);
@@ -2188,6 +2257,7 @@ static void test_Hlink_Navigate(void)
     SET_EXPECT(HBC_GetObject);
     SET_EXPECT(Reduce);
     SET_EXPECT(BindToObject);
+    SET_EXPECT(HT_QueryInterface_IHlinkTarget);
     SET_EXPECT(HT_GetBrowseContext);
     SET_EXPECT(HT_SetBrowseContext);
     SET_EXPECT(HBC_QueryInterface_IHlinkHistory);
@@ -2196,15 +2266,255 @@ static void test_Hlink_Navigate(void)
     hres = IHlink_Navigate(hlink, 0, pbc, NULL, &HlinkBrowseContext);
     ok(hres == S_OK, "Navigate failed: %08x\n", hres);
     CHECK_CALLED(IsSystemMoniker);
-    todo_wine CHECK_CALLED(GetDisplayName);
-    todo_wine CHECK_CALLED(HBC_GetObject);
+    CHECK_CALLED(GetDisplayName);
+    CHECK_CALLED(HBC_GetObject);
     todo_wine CHECK_CALLED(Reduce);
     CHECK_CALLED(BindToObject);
+    CHECK_CALLED(HT_QueryInterface_IHlinkTarget);
     todo_wine CHECK_CALLED(HT_GetBrowseContext);
     CHECK_CALLED(HT_SetBrowseContext);
     todo_wine CHECK_CALLED(HBC_QueryInterface_IHlinkHistory);
     CHECK_CALLED(HT_Navigate);
     todo_wine CHECK_CALLED(HT_GetFriendlyName);
+
+    /* Test with valid return from HlinkBrowseContext::GetObject */
+    HBC_object = (IUnknown *)&HlinkTarget;
+
+    SET_EXPECT(IsSystemMoniker);
+    SET_EXPECT(GetDisplayName);
+    SET_EXPECT(HBC_GetObject);
+    SET_EXPECT(HT_QueryInterface_IHlinkTarget);
+    SET_EXPECT(HT_Navigate);
+    SET_EXPECT(HT_GetFriendlyName);
+    hres = IHlink_Navigate(hlink, 0, pbc, NULL, &HlinkBrowseContext);
+    ok(hres == S_OK, "Navigate failed: %08x\n", hres);
+    CHECK_CALLED(IsSystemMoniker);
+    CHECK_CALLED(GetDisplayName);
+    CHECK_CALLED(HBC_GetObject);
+    CHECK_CALLED(HT_QueryInterface_IHlinkTarget);
+    CHECK_CALLED(HT_Navigate);
+    todo_wine CHECK_CALLED(HT_GetFriendlyName);
+
+    HBC_object = NULL;
+
+if (0) {    /* these currently open a browser window on wine */
+    /* Test from string */
+    SET_EXPECT(HBC_GetObject);
+    hres = HlinkNavigateToStringReference(winehq_404W, NULL, NULL, 0, NULL, 0, pbc, NULL, &HlinkBrowseContext);
+    todo_wine ok(hres == INET_E_OBJECT_NOT_FOUND, "Expected INET_E_OBJECT_NOT_FOUND, got %08x\n", hres);
+    CHECK_CALLED(HBC_GetObject);
+
+    /* MSDN claims browse context and bind context can't be null, but they can */
+    SET_EXPECT(HBC_GetObject);
+    hres = HlinkNavigateToStringReference(winehq_404W, NULL, NULL, 0, NULL, 0, NULL, NULL, &HlinkBrowseContext);
+    todo_wine ok(hres == INET_E_OBJECT_NOT_FOUND, "Expected INET_E_OBJECT_NOT_FOUND, got %08x\n", hres);
+    CHECK_CALLED(HBC_GetObject);
+}
+
+    /* these open a browser window, so mark them interactive only */
+    if (winetest_interactive)
+    {
+        /* both parameters null */
+        SET_EXPECT(IsSystemMoniker);
+        SET_EXPECT(GetDisplayName);
+        hres = IHlink_Navigate(hlink, 0, NULL, NULL, NULL);
+        ok(hres == DRAGDROP_S_DROP, "Expected DRAGDROP_S_DROP, got %08x\n", hres);
+        CHECK_CALLED(IsSystemMoniker);
+        CHECK_CALLED(GetDisplayName);
+
+        /* same, from string */
+        hres = HlinkNavigateToStringReference(winehq_404W, NULL, NULL, 0, NULL, 0, NULL, NULL, NULL);
+        ok(hres == DRAGDROP_S_DROP, "Expected DRAGDROP_S_DROP, got %08x\n", hres);
+
+        /* try basic test with valid URL */
+        SET_EXPECT(HBC_GetObject);
+        SET_EXPECT(HBC_QueryInterface_IHlinkHistory);
+        SET_EXPECT(HBC_QueryInterface_IMarshal);
+        SET_EXPECT(HBC_QueryInterface_IdentityUnmarshal);
+        SET_EXPECT(HBC_QueryInterface_IUnknown);
+        hres = HlinkNavigateToStringReference(winehq_urlW, NULL, NULL, 0, NULL, 0, pbc, NULL, &HlinkBrowseContext);
+        ok(hres == S_OK, "Expected S_OK, got %08x\n", hres);
+        CHECK_CALLED(HBC_GetObject);
+        todo_wine CHECK_CALLED(HBC_QueryInterface_IHlinkHistory);
+        todo_wine CHECK_CALLED(HBC_QueryInterface_IMarshal);
+        todo_wine CHECK_CALLED(HBC_QueryInterface_IdentityUnmarshal);
+        todo_wine CHECK_CALLED(HBC_QueryInterface_IUnknown);
+    }
+    else
+        skip("interactive IHlink_Navigate tests\n");
+
+    /* test binding callback */
+    SET_EXPECT(IsSystemMoniker);
+    SET_EXPECT(GetDisplayName);
+    SET_EXPECT(BindStatusCallback_GetBindInfo);
+    SET_EXPECT(HBC_GetObject);
+    SET_EXPECT(Reduce);
+    SET_EXPECT(BindToObject);
+    SET_EXPECT(BindStatusCallback_OnStartBinding);
+    SET_EXPECT(BindStatusCallback_OnObjectAvailable);
+    SET_EXPECT(HT_QueryInterface_IHlinkTarget);
+    SET_EXPECT(HT_GetBrowseContext);
+    SET_EXPECT(HT_SetBrowseContext);
+    SET_EXPECT(HBC_QueryInterface_IHlinkHistory);
+    SET_EXPECT(HT_Navigate);
+    SET_EXPECT(HT_GetFriendlyName);
+    SET_EXPECT(BindStatusCallback_OnStopBinding);
+    hres = IHlink_Navigate(hlink, 0, pbc, &BindStatusCallback, &HlinkBrowseContext);
+    ok(hres == S_OK, "Navigate failed: %#x\n", hres);
+    CHECK_CALLED(IsSystemMoniker);
+    CHECK_CALLED(GetDisplayName);
+    CHECK_CALLED(HBC_GetObject);
+todo_wine
+    CHECK_CALLED(BindStatusCallback_GetBindInfo);
+todo_wine
+    CHECK_CALLED(Reduce);
+    CHECK_CALLED(BindToObject);
+todo_wine {
+    CHECK_CALLED(BindStatusCallback_OnStartBinding);
+    CHECK_CALLED(BindStatusCallback_OnObjectAvailable);
+}
+    CHECK_CALLED(HT_QueryInterface_IHlinkTarget);
+todo_wine
+    CHECK_CALLED(HT_GetBrowseContext);
+    CHECK_CALLED(HT_SetBrowseContext);
+todo_wine
+    CHECK_CALLED(HBC_QueryInterface_IHlinkHistory);
+    CHECK_CALLED(HT_Navigate);
+todo_wine
+    CHECK_CALLED(HT_GetFriendlyName);
+todo_wine
+    CHECK_CALLED(BindStatusCallback_OnStopBinding);
+
+    ok(bind_callback_refs == 1, "Got unexpected refcount %d.\n", bind_callback_refs);
+    ok(browse_ctx_refs == 1, "Got unexpected refcount %d.\n", browse_ctx_refs);
+
+    /* test asynchronous binding */
+    async_bind = TRUE;
+    SET_EXPECT(IsSystemMoniker);
+    SET_EXPECT(GetDisplayName);
+    SET_EXPECT(HBC_GetObject);
+    SET_EXPECT(Reduce);
+    SET_EXPECT(BindToObject);
+    hres = IHlink_Navigate(hlink, 0, pbc, NULL, &HlinkBrowseContext);
+    ok(hres == MK_S_ASYNCHRONOUS, "Navigate failed: %#x\n", hres);
+    CHECK_CALLED(IsSystemMoniker);
+    CHECK_CALLED(GetDisplayName);
+    CHECK_CALLED(HBC_GetObject);
+todo_wine
+    CHECK_CALLED(Reduce);
+    CHECK_CALLED(BindToObject);
+
+    ok(browse_ctx_refs > 1, "Got unexpected refcount %d.\n", browse_ctx_refs);
+
+    hres = IHlink_Navigate(hlink, 0, pbc, NULL, &HlinkBrowseContext);
+    ok(hres == E_UNEXPECTED, "Got hr %#x.\n", hres);
+
+    hres = IBindStatusCallback_GetBindInfo(async_bind_callback, &bind_flags, &bind_info);
+    ok(hres == S_OK, "Got hr %#x.\n", hres);
+
+    hres = IBindStatusCallback_OnStartBinding(async_bind_callback, 0, NULL);
+    ok(hres == S_OK, "Got hr %#x.\n", hres);
+
+    SET_EXPECT(HT_QueryInterface_IHlinkTarget);
+    SET_EXPECT(HT_GetBrowseContext);
+    SET_EXPECT(HT_SetBrowseContext);
+    SET_EXPECT(HBC_QueryInterface_IHlinkHistory);
+    SET_EXPECT(HT_Navigate);
+    SET_EXPECT(HT_GetFriendlyName);
+    hres = IBindStatusCallback_OnObjectAvailable(async_bind_callback, &IID_IUnknown,
+            (IUnknown *)&HlinkTarget);
+    ok(hres == S_OK, "Got hr %#x.\n", hres);
+    CHECK_CALLED(HT_QueryInterface_IHlinkTarget);
+todo_wine
+    CHECK_CALLED(HT_GetBrowseContext);
+    CHECK_CALLED(HT_SetBrowseContext);
+todo_wine
+    CHECK_CALLED(HBC_QueryInterface_IHlinkHistory);
+    CHECK_CALLED(HT_Navigate);
+todo_wine
+    CHECK_CALLED(HT_GetFriendlyName);
+
+    hres = IHlink_Navigate(hlink, 0, pbc, NULL, &HlinkBrowseContext);
+    ok(hres == E_UNEXPECTED, "Got hr %#x.\n", hres);
+
+    ok(browse_ctx_refs > 1, "Got unexpected refcount %d.\n", browse_ctx_refs);
+
+    hres = IBindStatusCallback_OnStopBinding(async_bind_callback, S_OK, NULL);
+    ok(hres == S_OK, "Got hr %#x.\n", hres);
+
+    ok(browse_ctx_refs == 1, "Got unexpected refcount %d.\n", browse_ctx_refs);
+
+    IBindStatusCallback_Release(async_bind_callback);
+
+    SET_EXPECT(IsSystemMoniker);
+    SET_EXPECT(GetDisplayName);
+    SET_EXPECT(BindStatusCallback_GetBindInfo);
+    SET_EXPECT(HBC_GetObject);
+    SET_EXPECT(Reduce);
+    SET_EXPECT(BindToObject);
+    hres = IHlink_Navigate(hlink, 0, pbc, &BindStatusCallback, &HlinkBrowseContext);
+    ok(hres == MK_S_ASYNCHRONOUS, "Navigate failed: %#x\n", hres);
+    CHECK_CALLED(IsSystemMoniker);
+    CHECK_CALLED(GetDisplayName);
+todo_wine
+    CHECK_CALLED(BindStatusCallback_GetBindInfo);
+    CHECK_CALLED(HBC_GetObject);
+todo_wine
+    CHECK_CALLED(Reduce);
+    CHECK_CALLED(BindToObject);
+
+    ok(bind_callback_refs > 1, "Got unexpected refcount %d.\n", bind_callback_refs);
+    ok(browse_ctx_refs > 1, "Got unexpected refcount %d.\n", browse_ctx_refs);
+
+    hres = IHlink_Navigate(hlink, 0, pbc, NULL, &HlinkBrowseContext);
+    ok(hres == E_UNEXPECTED, "Got hr %#x.\n", hres);
+
+    SET_EXPECT(BindStatusCallback_GetBindInfo);
+    hres = IBindStatusCallback_GetBindInfo(async_bind_callback, &bind_flags, &bind_info);
+    ok(hres == E_NOTIMPL, "Got hr %#x.\n", hres);
+    CHECK_CALLED(BindStatusCallback_GetBindInfo);
+
+    SET_EXPECT(BindStatusCallback_OnStartBinding);
+    hres = IBindStatusCallback_OnStartBinding(async_bind_callback, 0, NULL);
+    ok(hres == S_OK, "Got hr %#x.\n", hres);
+    CHECK_CALLED(BindStatusCallback_OnStartBinding);
+
+    SET_EXPECT(BindStatusCallback_OnObjectAvailable);
+    SET_EXPECT(HT_QueryInterface_IHlinkTarget);
+    SET_EXPECT(HT_GetBrowseContext);
+    SET_EXPECT(HT_SetBrowseContext);
+    SET_EXPECT(HBC_QueryInterface_IHlinkHistory);
+    SET_EXPECT(HT_Navigate);
+    SET_EXPECT(HT_GetFriendlyName);
+    hres = IBindStatusCallback_OnObjectAvailable(async_bind_callback, &IID_IUnknown,
+            (IUnknown *)&HlinkTarget);
+    ok(hres == S_OK, "Got hr %#x.\n", hres);
+    CHECK_CALLED(BindStatusCallback_OnObjectAvailable);
+    CHECK_CALLED(HT_QueryInterface_IHlinkTarget);
+todo_wine
+    CHECK_CALLED(HT_GetBrowseContext);
+    CHECK_CALLED(HT_SetBrowseContext);
+todo_wine
+    CHECK_CALLED(HBC_QueryInterface_IHlinkHistory);
+    CHECK_CALLED(HT_Navigate);
+todo_wine
+    CHECK_CALLED(HT_GetFriendlyName);
+
+    hres = IHlink_Navigate(hlink, 0, pbc, NULL, &HlinkBrowseContext);
+    ok(hres == E_UNEXPECTED, "Got hr %#x.\n", hres);
+
+    ok(bind_callback_refs > 1, "Got unexpected refcount %d.\n", bind_callback_refs);
+    ok(browse_ctx_refs > 1, "Got unexpected refcount %d.\n", browse_ctx_refs);
+
+    SET_EXPECT(BindStatusCallback_OnStopBinding);
+    hres = IBindStatusCallback_OnStopBinding(async_bind_callback, S_OK, NULL);
+    ok(hres == S_OK, "Got hr %#x.\n", hres);
+    CHECK_CALLED(BindStatusCallback_OnStopBinding);
+
+    ok(bind_callback_refs == 1, "Got unexpected refcount %d.\n", bind_callback_refs);
+    ok(browse_ctx_refs == 1, "Got unexpected refcount %d.\n", browse_ctx_refs);
+
+    IBindStatusCallback_Release(async_bind_callback);
 
     IHlink_Release(hlink);
     IBindCtx_Release(pbc);

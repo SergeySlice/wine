@@ -16,7 +16,7 @@
 ' Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
 '
 
-Option Explicit
+OPTION EXPLICIT  : : DIM W
 
 dim x, y, z
 Dim obj
@@ -52,6 +52,9 @@ Call ok(true = -1, "! true = -1")
 Call ok(false = 0, "false <> 0")
 Call ok(&hff = 255, "&hff <> 255")
 Call ok(&Hff = 255, "&Hff <> 255")
+
+W = 5
+Call ok(W = 5, "W = " & W & " expected " & 5)
 
 x = "xx"
 Call ok(x = "xx", "x = " & x & " expected ""xx""")
@@ -325,6 +328,18 @@ end if
 while false
 wend
 
+x = 0
+WHILE x < 3 : x = x + 1
+Wend
+Call ok(x = 3, "x not equal to 3")
+
+z = 2
+while z > -4 :
+
+
+z = z -2
+wend
+
 x = false
 y = false
 do while not (x and y)
@@ -342,6 +357,17 @@ do while true
     exit do
     ok false, "exit do didn't work"
 loop
+
+x = 0
+Do While x < 2 : x = x + 1
+Loop
+Call ok(x = 2, "x not equal to 2")
+
+x = 0
+Do While x >= -2 :
+x = x - 1
+Loop
+Call ok(x = -3, "x not equal to -3")
 
 x = false
 y = false
@@ -361,12 +387,33 @@ do until false
     ok false, "exit do didn't work"
 loop
 
+x = 0
+Do: :: x = x + 2
+Loop Until x = 4
+Call ok(x = 4, "x not equal to 4")
+
+x = 5
+Do: :
+
+: x = x * 2
+Loop Until x = 40
+Call ok(x = 40, "x not equal to 40")
+
+
 x = false
 do
     if x then exit do
     x = true
 loop
 call ok(x, "x is false after do..loop?")
+
+x = 0
+Do :If x = 6 Then
+        Exit Do
+    End If
+    x = x + 3
+Loop
+Call ok(x = 6, "x not equal to 6")
 
 x = false
 y = false
@@ -451,6 +498,11 @@ for x = 5 to 8 step z
 next
 Call ok(y = "for7: 5 6 7 8", "y = " & y)
 
+z = 0
+For x = 10 To 18 Step 2 : : z = z + 1
+Next
+Call ok(z = 5, "z not equal to 5")
+
 y = "for8:"
 for x = 5 to 8
     y = y & " " & x
@@ -464,6 +516,12 @@ next
 
 for x = 1 to 100
     exit for
+    Call ok(false, "exit for not escaped the loop?")
+next
+
+for x = 1 to 5 :
+:
+:   :exit for
     Call ok(false, "exit for not escaped the loop?")
 next
 
@@ -481,12 +539,22 @@ wend
 
 Call collectionObj.reset()
 y = 0
+for each x in collectionObj :
+
+   :y = y + 3
+next
+Call ok(y = 9, "y = " & y)
+
+Call collectionObj.reset()
+y = 0
 x = 10
-for each x in collectionObj
+z = 0
+for each x in collectionObj : z = z + 2
     y = y+1
     Call ok(x = y, "x <> y")
 next
 Call ok(y = 3, "y = " & y)
+Call ok(z = 6, "z = " & z)
 Call ok(getVT(x) = "VT_EMPTY*", "getVT(x) = " & getVT(x))
 
 Call collectionObj.reset()
@@ -581,6 +649,21 @@ select case 2: case 5,6,7: Call ok(false, "unexpected case")
 end select
 Call ok(x, "wrong case")
 
+x = False
+select case 1  :
+
+    :case 3, 4 :
+
+
+    case 5
+:
+        Call ok(false, "unexpected case") :
+    Case Else:
+
+        x = True
+end select
+Call ok(x, "wrong case")
+
 if false then
 Sub testsub
     x = true
@@ -668,6 +751,11 @@ Call TestPublicSub
 Private Sub TestPrivateSub
 End Sub
 Call TestPrivateSub
+
+Public Sub TestSeparatorSub : :
+:
+End Sub
+Call TestSeparatorSub
 
 if false then
 Function testfunc
@@ -783,6 +871,12 @@ Call TestPublicFunc
 Private Function TestPrivateFunc
 End Function
 Call TestPrivateFunc
+
+Public Function TestSepFunc(ByVal a) : :
+: TestSepFunc = a
+End Function
+Call ok(TestSepFunc(1) = 1, "Function did not return 1")
+
 
 ' Stop has an effect only in debugging mode
 Stop
@@ -1044,6 +1138,30 @@ Class Property2
     End Sub
 End Class
 
+Class SeparatorTest : : Dim varTest1
+:
+    Private Sub Class_Initialize : varTest1 = 1
+    End Sub ::
+
+    Property Get Test1() :
+        Test1 = varTest1
+    End Property ::
+: :
+    Property Let Test1(a) :
+        varTest1 = a
+    End Property :
+
+    Public Function AddToTest1(ByVal a)  :: :
+        varTest1 = varTest1 + a
+        AddToTest1 = varTest1
+    End Function :    End Class : ::   Set obj = New SeparatorTest
+
+Call ok(obj.Test1 = 1, "obj.Test1 is not 1")
+obj.Test1 = 6
+Call ok(obj.Test1 = 6, "obj.Test1 is not 6")
+obj.AddToTest1(5)
+Call ok(obj.Test1 = 11, "obj.Test1 is not 11")
+
 ' Array tests
 
 Call ok(getVT(arr) = "VT_EMPTY*", "getVT(arr) = " & getVT(arr))
@@ -1077,6 +1195,8 @@ arr3(3,2,1) = 1
 arr3(1,2,3) = 2
 Call ok(arr3(3,2,1) = 1, "arr3(3,2,1) = " & arr3(3,2,1))
 Call ok(arr3(1,2,3) = 2, "arr3(1,2,3) = " & arr3(1,2,3))
+arr2(4,3) = 1
+Call ok(arr2(4,3) = 1, "arr2(4,3) = " & arr2(4,3))
 
 x = arr3
 Call ok(x(3,2,1) = 1, "x(3,2,1) = " & x(3,2,1))
@@ -1170,6 +1290,49 @@ Call testarrarg(1, "VT_I2*")
 Call testarrarg(false, "VT_BOOL*")
 Call testarrarg(Empty, "VT_EMPTY*")
 
+Sub modifyarr(arr)
+    'Following test crashes on wine
+    'Call ok(arr(0) = "not modified", "arr(0) = " & arr(0))
+    arr(0) = "modified"
+End Sub
+
+arr(0) = "not modified"
+Call modifyarr(arr)
+Call ok(arr(0) = "modified", "arr(0) = " & arr(0))
+
+arr(0) = "not modified"
+modifyarr(arr)
+Call todo_wine_ok(arr(0) = "not modified", "arr(0) = " & arr(0))
+
+for x = 0 to UBound(arr)
+    arr(x) = x
+next
+y = 0
+for each x in arr
+    Call ok(x = y, "x = " & x & ", expected " & y)
+    Call ok(arr(y) = y, "arr(" & y & ") = " & arr(y))
+    arr(y) = 1
+    x = 1
+    y = y+1
+next
+Call ok(y = 4, "y = " & y & " after array enumeration")
+
+for x=0 to UBound(arr2, 1)
+    for y=0 to UBound(arr2, 2)
+        arr2(x, y) = x + y*(UBound(arr2, 1)+1)
+    next
+next
+y = 0
+for each x in arr2
+    Call ok(x = y, "x = " & x & ", expected " & y)
+    y = y+1
+next
+Call ok(y = 20, "y = " & y & " after array enumeration")
+
+for each x in noarr
+    Call ok(false, "Empty array contains: " & x)
+next
+
 ' It's allowed to declare non-builtin RegExp class...
 class RegExp
      public property get Global()
@@ -1181,5 +1344,25 @@ end class
 ' ...but there is no way to use it because builtin instance is always created
 set x = new RegExp
 Call ok(x.Global = false, "x.Global = " & x.Global)
+
+sub test_identifiers
+    ' test keywords that can also be a declared identifier
+    Dim default
+    default = "xx"
+    Call ok(default = "xx", "default = " & default & " expected ""xx""")
+
+    Dim error
+    error = "xx"
+    Call ok(error = "xx", "error = " & error & " expected ""xx""")
+
+    Dim explicit
+    explicit = "xx"
+    Call ok(explicit = "xx", "explicit = " & explicit & " expected ""xx""")
+
+    Dim step
+    step = "xx"
+    Call ok(step = "xx", "step = " & step & " expected ""xx""")
+end sub
+call test_identifiers()
 
 reportSuccess()

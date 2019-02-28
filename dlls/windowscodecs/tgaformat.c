@@ -360,20 +360,9 @@ static HRESULT WINAPI TgaDecoder_GetContainerFormat(IWICBitmapDecoder *iface,
 static HRESULT WINAPI TgaDecoder_GetDecoderInfo(IWICBitmapDecoder *iface,
     IWICBitmapDecoderInfo **ppIDecoderInfo)
 {
-    HRESULT hr;
-    IWICComponentInfo *compinfo;
-
     TRACE("(%p,%p)\n", iface, ppIDecoderInfo);
 
-    hr = CreateComponentInfo(&CLSID_WineTgaDecoder, &compinfo);
-    if (FAILED(hr)) return hr;
-
-    hr = IWICComponentInfo_QueryInterface(compinfo, &IID_IWICBitmapDecoderInfo,
-        (void**)ppIDecoderInfo);
-
-    IWICComponentInfo_Release(compinfo);
-
-    return hr;
+    return get_decoder_info(&CLSID_WineTgaDecoder, ppIDecoderInfo);
 }
 
 static HRESULT WINAPI TgaDecoder_CopyPalette(IWICBitmapDecoder *iface,
@@ -901,7 +890,7 @@ static HRESULT WINAPI TgaDecoder_Frame_CopyPixels(IWICBitmapFrameDecode *iface,
     TgaDecoder *This = impl_from_IWICBitmapFrameDecode(iface);
     HRESULT hr;
 
-    TRACE("(%p,%p,%u,%u,%p)\n", iface, prc, cbStride, cbBufferSize, pbBuffer);
+    TRACE("(%p,%s,%u,%u,%p)\n", iface, debug_wic_rect(prc), cbStride, cbBufferSize, pbBuffer);
 
     hr = TgaDecoder_ReadImage(This);
 

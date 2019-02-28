@@ -33,12 +33,12 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(mshtml);
 
-typedef struct {
+struct HTMLLinkElement {
     HTMLElement element;
     IHTMLLinkElement IHTMLLinkElement_iface;
 
     nsIDOMHTMLLinkElement *nslink;
-} HTMLLinkElement;
+};
 
 static inline HTMLLinkElement *impl_from_IHTMLLinkElement(IHTMLLinkElement *iface)
 {
@@ -302,7 +302,7 @@ static HRESULT WINAPI HTMLLinkElement_get_disabled(IHTMLLinkElement *iface, VARI
     if(NS_FAILED(nsres))
         return E_FAIL;
 
-    *p = ret ? VARIANT_TRUE : VARIANT_FALSE;
+    *p = variant_bool(ret);
     return S_OK;
 }
 
@@ -422,13 +422,13 @@ static void HTMLLinkElement_unlink(HTMLDOMNode *iface)
     }
 }
 static const NodeImplVtbl HTMLLinkElementImplVtbl = {
+    &CLSID_HTMLLinkElement,
     HTMLLinkElement_QI,
     HTMLElement_destructor,
     HTMLElement_cpc,
     HTMLElement_clone,
     HTMLElement_handle_event,
     HTMLElement_get_attr_col,
-    NULL,
     NULL,
     HTMLLinkElementImpl_put_disabled,
     HTMLLinkElementImpl_get_disabled,
@@ -453,7 +453,7 @@ static dispex_static_data_t HTMLLinkElement_dispex = {
     HTMLElement_init_dispex_info
 };
 
-HRESULT HTMLLinkElement_Create(HTMLDocumentNode *doc, nsIDOMHTMLElement *nselem, HTMLElement **elem)
+HRESULT HTMLLinkElement_Create(HTMLDocumentNode *doc, nsIDOMElement *nselem, HTMLElement **elem)
 {
     HTMLLinkElement *ret;
     nsresult nsres;
@@ -467,7 +467,7 @@ HRESULT HTMLLinkElement_Create(HTMLDocumentNode *doc, nsIDOMHTMLElement *nselem,
 
     HTMLElement_Init(&ret->element, doc, nselem, &HTMLLinkElement_dispex);
 
-    nsres = nsIDOMHTMLElement_QueryInterface(nselem, &IID_nsIDOMHTMLLinkElement, (void**)&ret->nslink);
+    nsres = nsIDOMElement_QueryInterface(nselem, &IID_nsIDOMHTMLLinkElement, (void**)&ret->nslink);
     assert(nsres == NS_OK);
 
     *elem = &ret->element;

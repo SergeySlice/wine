@@ -280,8 +280,8 @@ static NTSTATUS get_line_control(int fd, SERIAL_LINE_CONTROL* slc)
     case PARENB:                slc->Parity = EVENPARITY;       break;
     case PARENB|PARODD:         slc->Parity = ODDPARITY;        break;
 #ifdef CMSPAR
-    case PARENB|CMSPAR:         slc->Parity = MARKPARITY;       break;
-    case PARENB|PARODD|CMSPAR:  slc->Parity = SPACEPARITY;      break;
+    case PARENB|PARODD|CMSPAR:  slc->Parity = MARKPARITY;       break;
+    case PARENB|CMSPAR:         slc->Parity = SPACEPARITY;      break;
 #endif
     }
     switch (port.c_cflag & CSIZE)
@@ -387,26 +387,6 @@ static NTSTATUS get_status(int fd, SERIAL_STATUS* ss)
 #else
     ss->AmountInInQueue = 0; /* FIXME: find a different way to find out */
 #endif
-    return status;
-}
-
-static NTSTATUS get_timeouts(HANDLE handle, SERIAL_TIMEOUTS* st)
-{
-    NTSTATUS    status;
-    SERVER_START_REQ( get_serial_info )
-    {
-        req->handle = wine_server_obj_handle( handle );
-        req->flags = 0;
-        if (!(status = wine_server_call( req )))
-        {
-            st->ReadIntervalTimeout         = reply->readinterval;
-            st->ReadTotalTimeoutMultiplier  = reply->readmult;
-            st->ReadTotalTimeoutConstant    = reply->readconst;
-            st->WriteTotalTimeoutMultiplier = reply->writemult;
-            st->WriteTotalTimeoutConstant   = reply->writeconst;
-        }
-    }
-    SERVER_END_REQ;
     return status;
 }
 
@@ -696,8 +676,8 @@ static NTSTATUS set_line_control(int fd, const SERIAL_LINE_CONTROL* slc)
     case EVENPARITY:    port.c_cflag |= PARENB;                         break;
 #ifdef CMSPAR
         /* Linux defines mark/space (stick) parity */
-    case MARKPARITY:    port.c_cflag |= PARENB | CMSPAR;                break;
-    case SPACEPARITY:   port.c_cflag |= PARENB | PARODD |  CMSPAR;      break;
+    case MARKPARITY:    port.c_cflag |= PARENB | PARODD | CMSPAR;       break;
+    case SPACEPARITY:   port.c_cflag |= PARENB | CMSPAR;                break;
 #else
         /* try the POSIX way */
     case MARKPARITY:
@@ -789,40 +769,6 @@ static NTSTATUS set_special_chars(int fd, const SERIAL_CHARS* sc)
         return FILE_GetNtStatus();
     }
     return STATUS_SUCCESS;
-}
-
-static NTSTATUS set_timeouts(HANDLE handle, const SERIAL_TIMEOUTS* st)
-{
-    NTSTATUS            status;
-
-    SERVER_START_REQ( set_serial_info )
-    {
-        req->handle       = wine_server_obj_handle( handle );
-        req->flags        = SERIALINFO_SET_TIMEOUTS;
-        req->readinterval = st->ReadIntervalTimeout ;
-        req->readmult     = st->ReadTotalTimeoutMultiplier ;
-        req->readconst    = st->ReadTotalTimeoutConstant ;
-        req->writemult    = st->WriteTotalTimeoutMultiplier ;
-        req->writeconst   = st->WriteTotalTimeoutConstant ;
-        status = wine_server_call( req );
-    }
-    SERVER_END_REQ;
-    return status;
-}
-
-static NTSTATUS set_wait_mask(HANDLE hDevice, DWORD mask)
-{
-    NTSTATUS status;
-
-    SERVER_START_REQ( set_serial_info )
-    {
-        req->handle    = wine_server_obj_handle( hDevice );
-        req->flags     = SERIALINFO_SET_MASK;
-        req->eventmask = mask;
-        status = wine_server_call( req );
-    }
-    SERVER_END_REQ;
-    return status;
 }
 
 /*
@@ -1155,25 +1101,31 @@ static inline NTSTATUS io_control(HANDLE hDevice,
     DWORD       sz = 0, access = FILE_READ_DATA;
     NTSTATUS    status = STATUS_SUCCESS;
     int         fd = -1, needs_close = 0;
+    enum server_fd_type type;
 
     TRACE("%p %s %p %d %p %d %p\n",
           hDevice, iocode2str(dwIoControlCode), lpInBuffer, nInBufferSize,
           lpOutBuffer, nOutBufferSize, piosb);
 
+    switch (dwIoControlCode)
+    {
+    case IOCTL_SERIAL_GET_TIMEOUTS:
+    case IOCTL_SERIAL_SET_TIMEOUTS:
+    case IOCTL_SERIAL_GET_WAIT_MASK:
+    case IOCTL_SERIAL_SET_WAIT_MASK:
+        /* these are handled on the server side */
+        return STATUS_NOT_SUPPORTED;
+    }
+
     piosb->Information = 0;
 
-    if (dwIoControlCode != IOCTL_SERIAL_GET_TIMEOUTS &&
-        dwIoControlCode != IOCTL_SERIAL_SET_TIMEOUTS)
+    if ((status = server_get_unix_fd( hDevice, access, &fd, &needs_close, &type, NULL )))
+        goto error;
+    if (type != FD_TYPE_SERIAL)
     {
-        enum server_fd_type type;
-        if ((status = server_get_unix_fd( hDevice, access, &fd, &needs_close, &type, NULL )))
-            goto error;
-        if (type != FD_TYPE_SERIAL)
-        {
-            if (needs_close) close( fd );
-            status = STATUS_OBJECT_TYPE_MISMATCH;
-            goto error;
-        }
+        if (needs_close) close( fd );
+        status = STATUS_OBJECT_TYPE_MISMATCH;
+        goto error;
     }
 
     switch (dwIoControlCode)
@@ -1243,24 +1195,6 @@ static inline NTSTATUS io_control(HANDLE hDevice,
                 sz = sizeof(DWORD);
         }
         else status = STATUS_INVALID_PARAMETER;
-        break;
-    case IOCTL_SERIAL_GET_TIMEOUTS:
-        if (lpOutBuffer && nOutBufferSize == sizeof(SERIAL_TIMEOUTS))
-        {
-            if (!(status = get_timeouts(hDevice, lpOutBuffer)))
-                sz = sizeof(SERIAL_TIMEOUTS);
-        }
-        else
-            status = STATUS_INVALID_PARAMETER;
-        break;
-    case IOCTL_SERIAL_GET_WAIT_MASK:
-        if (lpOutBuffer && nOutBufferSize == sizeof(DWORD))
-        {
-            if (!(status = get_wait_mask(hDevice, lpOutBuffer, NULL, NULL, FALSE)))
-                sz = sizeof(DWORD);
-        }
-        else
-            status = STATUS_INVALID_PARAMETER;
         break;
     case IOCTL_SERIAL_IMMEDIATE_CHAR:
         if (lpInBuffer && nInBufferSize == sizeof(CHAR))
@@ -1344,19 +1278,6 @@ static inline NTSTATUS io_control(HANDLE hDevice,
 #else
         status = STATUS_NOT_SUPPORTED;
 #endif
-        break;
-    case IOCTL_SERIAL_SET_TIMEOUTS:
-        if (lpInBuffer && nInBufferSize == sizeof(SERIAL_TIMEOUTS))
-            status = set_timeouts(hDevice, lpInBuffer);
-        else
-            status = STATUS_INVALID_PARAMETER;
-        break;
-    case IOCTL_SERIAL_SET_WAIT_MASK:
-        if (lpInBuffer && nInBufferSize == sizeof(DWORD))
-        {
-            status = set_wait_mask(hDevice, *(DWORD*)lpInBuffer);
-        }
-        else status = STATUS_INVALID_PARAMETER;
         break;
     case IOCTL_SERIAL_SET_XOFF:
         status = set_XOff(fd);

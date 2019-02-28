@@ -389,9 +389,9 @@ HRESULT WINAPI HlinkParseDisplayName(LPBC pibc, LPCWSTR pwzDisplayName, BOOL fNo
     if(fNoForceAbs)
         FIXME("Unsupported fNoForceAbs\n");
 
-    if(!strncmpiW(pwzDisplayName, file_colonW, sizeof(file_colonW)/sizeof(WCHAR))) {
-        pwzDisplayName += sizeof(file_colonW)/sizeof(WCHAR);
-        eaten += sizeof(file_colonW)/sizeof(WCHAR);
+    if(!strncmpiW(pwzDisplayName, file_colonW, ARRAY_SIZE(file_colonW))) {
+        pwzDisplayName += ARRAY_SIZE(file_colonW);
+        eaten += ARRAY_SIZE(file_colonW);
 
         while(*pwzDisplayName == '/') {
             pwzDisplayName++;
@@ -528,7 +528,7 @@ static HRESULT WINAPI HLinkCF_fnQueryInterface ( LPCLASSFACTORY iface,
     if (IsEqualIID(riid, &IID_IUnknown) ||
         IsEqualIID(riid, &IID_IClassFactory))
     {
-        *ppvObj = This;
+        *ppvObj = &This->IClassFactory_iface;
         return S_OK;
     }
 

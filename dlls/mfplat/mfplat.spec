@@ -35,31 +35,31 @@
 @ stub MFConvertColorInfoToDXVA
 @ stub MFConvertFromFP16Array
 @ stub MFConvertToFP16Array
-@ stub MFCopyImage
+@ stdcall MFCopyImage(ptr long ptr long long long)
 @ stub MFCreateAMMediaTypeFromMFMediaType
 @ stub MFCreateAlignedMemoryBuffer
 @ stub MFCreateAsyncResult
-@ stub MFCreateAttributes
+@ stdcall MFCreateAttributes(ptr long)
 @ stub MFCreateAudioMediaType
 @ stub MFCreateCollection
-@ stub MFCreateEventQueue
-@ stub MFCreateFile
+@ stdcall MFCreateEventQueue(ptr)
+@ stdcall MFCreateFile(long long long wstr ptr)
 @ stub MFCreateLegacyMediaBufferOnMFMediaBuffer
-@ stub MFCreateMFByteStreamOnStream
+@ stdcall MFCreateMFByteStreamOnStream(ptr ptr)
 @ stub MFCreateMFVideoFormatFromMFMediaType
 @ stub MFCreateMediaBufferWrapper
-@ stub MFCreateMediaEvent
-@ stub MFCreateMediaType
+@ stdcall MFCreateMediaEvent(long ptr long ptr ptr)
+@ stdcall MFCreateMediaType(ptr)
 @ stub MFCreateMediaTypeFromRepresentation
-@ stub MFCreateMemoryBuffer
+@ stdcall MFCreateMemoryBuffer(long ptr)
 @ stub MFCreateMemoryStream
 @ stub MFCreatePathFromURL
 @ stub MFCreatePresentationDescriptor
-@ stub MFCreateSample
+@ stdcall MFCreateSample(ptr)
 @ stub MFCreateSocket
 @ stub MFCreateSocketListener
-@ stub MFCreateSourceResolver
-@ stub MFCreateStreamDescriptor
+@ stdcall MFCreateSourceResolver(ptr)
+@ stdcall MFCreateStreamDescriptor(long long ptr ptr)
 @ stub MFCreateSystemTimeSource
 @ stub MFCreateSystemUnderlyingClock
 @ stub MFCreateTempFile
@@ -98,7 +98,7 @@
 @ stub MFGetPrivateWorkqueues
 @ stub MFGetSockaddrFromNumericName
 @ stub MFGetStrideForBitmapInfoHeader
-@ stub MFGetSystemTime
+@ stdcall MFGetSystemTime()
 @ stub MFGetTimerPeriodicity
 @ stub MFGetUncompressedVideoFormat
 @ stub MFGetWorkQueueMMCSSClass
@@ -134,14 +134,14 @@
 @ stdcall MFShutdown()
 @ stdcall MFStartup(long long)
 @ stub MFStreamDescriptorProtectMediaType
-@ stub MFTEnum
-@ stub MFTEnumEx
+@ stdcall MFTEnum(int128 long ptr ptr ptr ptr ptr)
+@ stdcall MFTEnumEx(int128 long ptr ptr ptr ptr)
 @ stub MFTGetInfo
-@ stub MFTRegister
-@ stub MFTRegisterLocal
+@ stdcall MFTRegister(int128 int128 wstr long long ptr long ptr ptr)
+@ stdcall MFTRegisterLocal(ptr ptr wstr long long  ptr long ptr)
 @ stub MFTRegisterLocalByCLSID
-@ stub MFTUnregister
-@ stub MFTUnregisterLocal
+@ stdcall MFTUnregister(int128)
+@ stdcall MFTUnregisterLocal(ptr)
 @ stub MFTUnregisterLocalByCLSID
 @ stub MFTraceError
 @ stub MFTraceFuncEnter

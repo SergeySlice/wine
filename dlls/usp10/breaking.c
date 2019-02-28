@@ -32,6 +32,7 @@
 #include "winternl.h"
 
 #include "wine/debug.h"
+#include "wine/heap.h"
 #include "usp10_internal.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(uniscribe);
@@ -81,8 +82,8 @@ void BREAK_line(const WCHAR *chars, int count, const SCRIPT_ANALYSIS *sa, SCRIPT
 
     TRACE("In      %s\n",debugstr_wn(chars,count));
 
-    break_class = HeapAlloc(GetProcessHeap(),0, count * sizeof(short));
-    break_before = HeapAlloc(GetProcessHeap(),0, count * sizeof(short));
+    break_class = heap_alloc(count * sizeof(*break_class));
+    break_before = heap_alloc(count * sizeof(*break_before));
 
     for (i = 0; i < count; i++)
     {
@@ -438,6 +439,6 @@ void BREAK_line(const WCHAR *chars, int count, const SCRIPT_ANALYSIS *sa, SCRIPT
         }
     }
 
-    HeapFree(GetProcessHeap(), 0, break_before);
-    HeapFree(GetProcessHeap(), 0, break_class);
+    heap_free(break_before);
+    heap_free(break_class);
 }

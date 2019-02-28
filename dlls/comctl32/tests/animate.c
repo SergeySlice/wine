@@ -108,26 +108,6 @@ static void create_animate(DWORD parent_style, DWORD animate_style)
     update_window(hAnimateParentWnd);
 }
 
-static void init(void)
-{
-    HMODULE hComctl32;
-    BOOL (WINAPI *pInitCommonControlsEx)(const INITCOMMONCONTROLSEX*);
-
-    hComctl32 = GetModuleHandleA("comctl32.dll");
-    pInitCommonControlsEx = (void*)GetProcAddress(hComctl32, "InitCommonControlsEx");
-    if (pInitCommonControlsEx)
-    {
-        INITCOMMONCONTROLSEX iccex;
-        iccex.dwSize = sizeof(iccex);
-        iccex.dwICC  = ICC_ANIMATE_CLASS;
-        pInitCommonControlsEx(&iccex);
-    }
-    else
-        InitCommonControls();
-
-    shell32 = LoadLibraryA("Shell32.dll");
-}
-
 static void destroy_animate(void)
 {
     MSG msg;
@@ -160,8 +140,9 @@ static void test_play(void)
 
     SetLastError(0xdeadbeef);
     res = SendMessageA(hAnimateWnd, ACM_PLAY, (WPARAM) -1, MAKELONG(0, -1));
+    err = GetLastError();
     ok(res == 0, "Play should have failed\n");
-    ok(err == ERROR_RESOURCE_NAME_NOT_FOUND, "Expected 1814, got %u\n", err);
+    ok(err == 0xdeadbeef, "Expected 0xdeadbeef, got %u\n", err);
     destroy_animate();
 
     create_animate(0, 0);
@@ -174,7 +155,7 @@ static void test_play(void)
 
 START_TEST(animate)
 {
-    init();
+    shell32 = LoadLibraryA("Shell32.dll");
 
     test_play();
 

@@ -649,54 +649,8 @@ void * __thiscall MSVCRT_type_info_vector_dtor(type_info * _this, unsigned int f
     return _this;
 }
 
-#ifndef __GNUC__
-void __asm_dummy_vtables(void) {
-#endif
-
-__ASM_VTABLE(type_info,
-        VTABLE_ADD_FUNC(MSVCRT_type_info_vector_dtor));
-__ASM_VTABLE(exception,
-        VTABLE_ADD_FUNC(MSVCRT_exception_vector_dtor)
-        VTABLE_ADD_FUNC(MSVCRT_what_exception));
 #if _MSVCR_VER >= 80
-__ASM_VTABLE(exception_old,
-        VTABLE_ADD_FUNC(MSVCRT_exception_vector_dtor)
-        VTABLE_ADD_FUNC(MSVCRT_what_exception));
-#endif
-__ASM_VTABLE(bad_typeid,
-        VTABLE_ADD_FUNC(MSVCRT_bad_typeid_vector_dtor)
-        VTABLE_ADD_FUNC(MSVCRT_what_exception));
-__ASM_VTABLE(bad_cast,
-        VTABLE_ADD_FUNC(MSVCRT_bad_cast_vector_dtor)
-        VTABLE_ADD_FUNC(MSVCRT_what_exception));
-__ASM_VTABLE(__non_rtti_object,
-        VTABLE_ADD_FUNC(MSVCRT___non_rtti_object_vector_dtor)
-        VTABLE_ADD_FUNC(MSVCRT_what_exception));
 
-#ifndef __GNUC__
-}
-#endif
-
-DEFINE_RTTI_DATA0( type_info, 0, ".?AVtype_info@@" )
-#if _MSVCR_VER >= 80
-DEFINE_RTTI_DATA0( exception, 0, ".?AVexception@std@@" )
-DEFINE_RTTI_DATA0( exception_old, 0, ".?AVexception@@" )
-DEFINE_RTTI_DATA1( bad_typeid, 0, &exception_rtti_base_descriptor, ".?AVbad_typeid@std@@" )
-DEFINE_RTTI_DATA1( bad_cast, 0, &exception_rtti_base_descriptor, ".?AVbad_cast@std@@" )
-DEFINE_RTTI_DATA2( __non_rtti_object, 0, &bad_typeid_rtti_base_descriptor, &exception_rtti_base_descriptor, ".?AV__non_rtti_object@std@@" )
-#else
-DEFINE_RTTI_DATA0( exception, 0, ".?AVexception@@" )
-DEFINE_RTTI_DATA1( bad_typeid, 0, &exception_rtti_base_descriptor, ".?AVbad_typeid@@" )
-DEFINE_RTTI_DATA1( bad_cast, 0, &exception_rtti_base_descriptor, ".?AVbad_cast@@" )
-DEFINE_RTTI_DATA2( __non_rtti_object, 0, &bad_typeid_rtti_base_descriptor, &exception_rtti_base_descriptor, ".?AV__non_rtti_object@@" )
-#endif
-
-DEFINE_EXCEPTION_TYPE_INFO( exception, 0, NULL, NULL )
-DEFINE_EXCEPTION_TYPE_INFO( bad_typeid, 1, &exception_cxx_type_info, NULL )
-DEFINE_EXCEPTION_TYPE_INFO( bad_cast, 1, &exception_cxx_type_info, NULL )
-DEFINE_EXCEPTION_TYPE_INFO( __non_rtti_object, 2, &bad_typeid_cxx_type_info, &exception_cxx_type_info )
-
-#if _MSVCR_VER >= 80
 typedef exception bad_alloc;
 extern const vtable_ptr MSVCRT_bad_alloc_vtable;
 
@@ -723,18 +677,419 @@ void __thiscall MSVCRT_bad_alloc_dtor(bad_alloc * _this)
     MSVCRT_exception_dtor(_this);
 }
 
+#endif /* _MSVCR_VER >= 80 */
+
+#if _MSVCR_VER >= 100
+
+typedef struct {
+    exception e;
+    HRESULT hr;
+} scheduler_resource_allocation_error;
+extern const vtable_ptr MSVCRT_scheduler_resource_allocation_error_vtable;
+
+/* ??0scheduler_resource_allocation_error@Concurrency@@QAE@PBDJ@Z */
+/* ??0scheduler_resource_allocation_error@Concurrency@@QEAA@PEBDJ@Z */
+DEFINE_THISCALL_WRAPPER(scheduler_resource_allocation_error_ctor_name, 12)
+scheduler_resource_allocation_error* __thiscall scheduler_resource_allocation_error_ctor_name(
+        scheduler_resource_allocation_error *this, const char *name, HRESULT hr)
+{
+    TRACE("(%p %s %x)\n", this, wine_dbgstr_a(name), hr);
+    MSVCRT_exception_ctor(&this->e, &name);
+    this->e.vtable = &MSVCRT_scheduler_resource_allocation_error_vtable;
+    this->hr = hr;
+    return this;
+}
+
+/* ??0scheduler_resource_allocation_error@Concurrency@@QAE@J@Z */
+/* ??0scheduler_resource_allocation_error@Concurrency@@QEAA@J@Z */
+DEFINE_THISCALL_WRAPPER(scheduler_resource_allocation_error_ctor, 8)
+scheduler_resource_allocation_error* __thiscall scheduler_resource_allocation_error_ctor(
+        scheduler_resource_allocation_error *this, HRESULT hr)
+{
+    return scheduler_resource_allocation_error_ctor_name(this, NULL, hr);
+}
+
+DEFINE_THISCALL_WRAPPER(MSVCRT_scheduler_resource_allocation_error_copy_ctor,8)
+scheduler_resource_allocation_error* __thiscall MSVCRT_scheduler_resource_allocation_error_copy_ctor(
+        scheduler_resource_allocation_error *this,
+        const scheduler_resource_allocation_error *rhs)
+{
+    TRACE("(%p,%p)\n", this, rhs);
+
+    if (!rhs->e.do_free)
+        memcpy(this, rhs, sizeof(*this));
+    else
+        scheduler_resource_allocation_error_ctor_name(this, rhs->e.name, rhs->hr);
+    return this;
+}
+
+/* ?get_error_code@scheduler_resource_allocation_error@Concurrency@@QBEJXZ */
+/* ?get_error_code@scheduler_resource_allocation_error@Concurrency@@QEBAJXZ */
+DEFINE_THISCALL_WRAPPER(scheduler_resource_allocation_error_get_error_code, 4)
+HRESULT __thiscall scheduler_resource_allocation_error_get_error_code(
+        const scheduler_resource_allocation_error *this)
+{
+    TRACE("(%p)\n", this);
+    return this->hr;
+}
+
+DEFINE_THISCALL_WRAPPER(MSVCRT_scheduler_resource_allocation_error_dtor,4)
+void __thiscall MSVCRT_scheduler_resource_allocation_error_dtor(
+        scheduler_resource_allocation_error * this)
+{
+    TRACE("(%p)\n", this);
+    MSVCRT_exception_dtor(&this->e);
+}
+
+typedef exception improper_lock;
+extern const vtable_ptr MSVCRT_improper_lock_vtable;
+
+/* ??0improper_lock@Concurrency@@QAE@PBD@Z */
+/* ??0improper_lock@Concurrency@@QEAA@PEBD@Z */
+DEFINE_THISCALL_WRAPPER(improper_lock_ctor_str, 8)
+improper_lock* __thiscall improper_lock_ctor_str(improper_lock *this, const char *str)
+{
+    TRACE("(%p %p)\n", this, str);
+    MSVCRT_exception_ctor(this, &str);
+    this->vtable = &MSVCRT_improper_lock_vtable;
+    return this;
+}
+
+/* ??0improper_lock@Concurrency@@QAE@XZ */
+/* ??0improper_lock@Concurrency@@QEAA@XZ */
+DEFINE_THISCALL_WRAPPER(improper_lock_ctor, 4)
+improper_lock* __thiscall improper_lock_ctor(improper_lock *this)
+{
+    return improper_lock_ctor_str(this, NULL);
+}
+
+DEFINE_THISCALL_WRAPPER(MSVCRT_improper_lock_copy_ctor,8)
+improper_lock * __thiscall MSVCRT_improper_lock_copy_ctor(improper_lock * _this, const improper_lock * rhs)
+{
+    TRACE("(%p %p)\n", _this, rhs);
+    MSVCRT_exception_copy_ctor(_this, rhs);
+    _this->vtable = &MSVCRT_improper_lock_vtable;
+    return _this;
+}
+
+DEFINE_THISCALL_WRAPPER(MSVCRT_improper_lock_dtor,4)
+void __thiscall MSVCRT_improper_lock_dtor(improper_lock * _this)
+{
+    TRACE("(%p)\n", _this);
+    MSVCRT_exception_dtor(_this);
+}
+
+typedef exception invalid_scheduler_policy_key;
+extern const vtable_ptr MSVCRT_invalid_scheduler_policy_key_vtable;
+
+/* ??0invalid_scheduler_policy_key@Concurrency@@QAE@PBD@Z */
+/* ??0invalid_scheduler_policy_key@Concurrency@@QEAA@PEBD@Z */
+DEFINE_THISCALL_WRAPPER(invalid_scheduler_policy_key_ctor_str, 8)
+invalid_scheduler_policy_key* __thiscall invalid_scheduler_policy_key_ctor_str(
+        invalid_scheduler_policy_key *this, const char *str)
+{
+    TRACE("(%p %p)\n", this, str);
+    MSVCRT_exception_ctor(this, &str);
+    this->vtable = &MSVCRT_invalid_scheduler_policy_key_vtable;
+    return this;
+}
+
+/* ??0invalid_scheduler_policy_key@Concurrency@@QAE@XZ */
+/* ??0invalid_scheduler_policy_key@Concurrency@@QEAA@XZ */
+DEFINE_THISCALL_WRAPPER(invalid_scheduler_policy_key_ctor, 4)
+invalid_scheduler_policy_key* __thiscall invalid_scheduler_policy_key_ctor(
+        invalid_scheduler_policy_key *this)
+{
+    return invalid_scheduler_policy_key_ctor_str(this, NULL);
+}
+
+DEFINE_THISCALL_WRAPPER(MSVCRT_invalid_scheduler_policy_key_copy_ctor,8)
+invalid_scheduler_policy_key * __thiscall MSVCRT_invalid_scheduler_policy_key_copy_ctor(
+        invalid_scheduler_policy_key * _this, const invalid_scheduler_policy_key * rhs)
+{
+    TRACE("(%p %p)\n", _this, rhs);
+    MSVCRT_exception_copy_ctor(_this, rhs);
+    _this->vtable = &MSVCRT_invalid_scheduler_policy_key_vtable;
+    return _this;
+}
+
+DEFINE_THISCALL_WRAPPER(MSVCRT_invalid_scheduler_policy_key_dtor,4)
+void __thiscall MSVCRT_invalid_scheduler_policy_key_dtor(
+        invalid_scheduler_policy_key * _this)
+{
+    TRACE("(%p)\n", _this);
+    MSVCRT_exception_dtor(_this);
+}
+
+typedef exception invalid_scheduler_policy_value;
+extern const vtable_ptr MSVCRT_invalid_scheduler_policy_value_vtable;
+
+/* ??0invalid_scheduler_policy_value@Concurrency@@QAE@PBD@Z */
+/* ??0invalid_scheduler_policy_value@Concurrency@@QEAA@PEBD@Z */
+DEFINE_THISCALL_WRAPPER(invalid_scheduler_policy_value_ctor_str, 8)
+invalid_scheduler_policy_value* __thiscall invalid_scheduler_policy_value_ctor_str(
+        invalid_scheduler_policy_value *this, const char *str)
+{
+    TRACE("(%p %p)\n", this, str);
+    MSVCRT_exception_ctor(this, &str);
+    this->vtable = &MSVCRT_invalid_scheduler_policy_value_vtable;
+    return this;
+}
+
+/* ??0invalid_scheduler_policy_value@Concurrency@@QAE@XZ */
+/* ??0invalid_scheduler_policy_value@Concurrency@@QEAA@XZ */
+DEFINE_THISCALL_WRAPPER(invalid_scheduler_policy_value_ctor, 4)
+invalid_scheduler_policy_value* __thiscall invalid_scheduler_policy_value_ctor(
+        invalid_scheduler_policy_value *this)
+{
+    return invalid_scheduler_policy_value_ctor_str(this, NULL);
+}
+
+DEFINE_THISCALL_WRAPPER(MSVCRT_invalid_scheduler_policy_value_copy_ctor,8)
+invalid_scheduler_policy_value * __thiscall MSVCRT_invalid_scheduler_policy_value_copy_ctor(
+        invalid_scheduler_policy_value * _this, const invalid_scheduler_policy_value * rhs)
+{
+    TRACE("(%p %p)\n", _this, rhs);
+    MSVCRT_exception_copy_ctor(_this, rhs);
+    _this->vtable = &MSVCRT_invalid_scheduler_policy_value_vtable;
+    return _this;
+}
+
+DEFINE_THISCALL_WRAPPER(MSVCRT_invalid_scheduler_policy_value_dtor,4)
+void __thiscall MSVCRT_invalid_scheduler_policy_value_dtor(
+        invalid_scheduler_policy_value * _this)
+{
+    TRACE("(%p)\n", _this);
+    MSVCRT_exception_dtor(_this);
+}
+
+typedef exception invalid_scheduler_policy_thread_specification;
+extern const vtable_ptr MSVCRT_invalid_scheduler_policy_thread_specification_vtable;
+
+/* ??0invalid_scheduler_policy_thread_specification@Concurrency@@QAE@PBD@Z */
+/* ??0invalid_scheduler_policy_thread_specification@Concurrency@@QEAA@PEBD@Z */
+DEFINE_THISCALL_WRAPPER(invalid_scheduler_policy_thread_specification_ctor_str, 8)
+invalid_scheduler_policy_thread_specification* __thiscall invalid_scheduler_policy_thread_specification_ctor_str(
+        invalid_scheduler_policy_thread_specification *this, const char *str)
+{
+    TRACE("(%p %p)\n", this, str);
+    MSVCRT_exception_ctor(this, &str);
+    this->vtable = &MSVCRT_invalid_scheduler_policy_thread_specification_vtable;
+    return this;
+}
+
+/* ??0invalid_scheduler_policy_thread_specification@Concurrency@@QAE@XZ */
+/* ??0invalid_scheduler_policy_thread_specification@Concurrency@@QEAA@XZ */
+DEFINE_THISCALL_WRAPPER(invalid_scheduler_policy_thread_specification_ctor, 4)
+invalid_scheduler_policy_thread_specification* __thiscall invalid_scheduler_policy_thread_specification_ctor(
+        invalid_scheduler_policy_thread_specification *this)
+{
+    return invalid_scheduler_policy_thread_specification_ctor_str(this, NULL);
+}
+
+DEFINE_THISCALL_WRAPPER(MSVCRT_invalid_scheduler_policy_thread_specification_copy_ctor,8)
+invalid_scheduler_policy_thread_specification * __thiscall MSVCRT_invalid_scheduler_policy_thread_specification_copy_ctor(
+        invalid_scheduler_policy_thread_specification * _this, const invalid_scheduler_policy_thread_specification * rhs)
+{
+    TRACE("(%p %p)\n", _this, rhs);
+    MSVCRT_exception_copy_ctor(_this, rhs);
+    _this->vtable = &MSVCRT_invalid_scheduler_policy_thread_specification_vtable;
+    return _this;
+}
+
+DEFINE_THISCALL_WRAPPER(MSVCRT_invalid_scheduler_policy_thread_specification_dtor,4)
+void __thiscall MSVCRT_invalid_scheduler_policy_thread_specification_dtor(
+        invalid_scheduler_policy_thread_specification * _this)
+{
+    TRACE("(%p)\n", _this);
+    MSVCRT_exception_dtor(_this);
+}
+
+typedef exception improper_scheduler_attach;
+extern const vtable_ptr MSVCRT_improper_scheduler_attach_vtable;
+
+/* ??0improper_scheduler_attach@Concurrency@@QAE@PBD@Z */
+/* ??0improper_scheduler_attach@Concurrency@@QEAA@PEBD@Z */
+DEFINE_THISCALL_WRAPPER(improper_scheduler_attach_ctor_str, 8)
+improper_scheduler_attach* __thiscall improper_scheduler_attach_ctor_str(
+        improper_scheduler_attach *this, const char *str)
+{
+    TRACE("(%p %p)\n", this, str);
+    MSVCRT_exception_ctor(this, &str);
+    this->vtable = &MSVCRT_improper_scheduler_attach_vtable;
+    return this;
+}
+
+/* ??0improper_scheduler_attach@Concurrency@@QAE@XZ */
+/* ??0improper_scheduler_attach@Concurrency@@QEAA@XZ */
+DEFINE_THISCALL_WRAPPER(improper_scheduler_attach_ctor, 4)
+improper_scheduler_attach* __thiscall improper_scheduler_attach_ctor(
+        improper_scheduler_attach *this)
+{
+    return improper_scheduler_attach_ctor_str(this, NULL);
+}
+
+DEFINE_THISCALL_WRAPPER(MSVCRT_improper_scheduler_attach_copy_ctor,8)
+improper_scheduler_attach * __thiscall MSVCRT_improper_scheduler_attach_copy_ctor(
+        improper_scheduler_attach * _this, const improper_scheduler_attach * rhs)
+{
+    TRACE("(%p %p)\n", _this, rhs);
+    MSVCRT_exception_copy_ctor(_this, rhs);
+    _this->vtable = &MSVCRT_improper_scheduler_attach_vtable;
+    return _this;
+}
+
+DEFINE_THISCALL_WRAPPER(MSVCRT_improper_scheduler_attach_dtor,4)
+void __thiscall MSVCRT_improper_scheduler_attach_dtor(
+        improper_scheduler_attach * _this)
+{
+    TRACE("(%p)\n", _this);
+    MSVCRT_exception_dtor(_this);
+}
+
+typedef exception improper_scheduler_detach;
+extern const vtable_ptr MSVCRT_improper_scheduler_detach_vtable;
+
+/* ??0improper_scheduler_detach@Concurrency@@QAE@PBD@Z */
+/* ??0improper_scheduler_detach@Concurrency@@QEAA@PEBD@Z */
+DEFINE_THISCALL_WRAPPER(improper_scheduler_detach_ctor_str, 8)
+improper_scheduler_detach* __thiscall improper_scheduler_detach_ctor_str(
+        improper_scheduler_detach *this, const char *str)
+{
+    TRACE("(%p %p)\n", this, str);
+    MSVCRT_exception_ctor(this, &str);
+    this->vtable = &MSVCRT_improper_scheduler_detach_vtable;
+    return this;
+}
+
+/* ??0improper_scheduler_detach@Concurrency@@QAE@XZ */
+/* ??0improper_scheduler_detach@Concurrency@@QEAA@XZ */
+DEFINE_THISCALL_WRAPPER(improper_scheduler_detach_ctor, 4)
+improper_scheduler_detach* __thiscall improper_scheduler_detach_ctor(
+        improper_scheduler_detach *this)
+{
+    return improper_scheduler_detach_ctor_str(this, NULL);
+}
+
+DEFINE_THISCALL_WRAPPER(MSVCRT_improper_scheduler_detach_copy_ctor,8)
+improper_scheduler_detach * __thiscall MSVCRT_improper_scheduler_detach_copy_ctor(
+        improper_scheduler_detach * _this, const improper_scheduler_detach * rhs)
+{
+    TRACE("(%p %p)\n", _this, rhs);
+    MSVCRT_exception_copy_ctor(_this, rhs);
+    _this->vtable = &MSVCRT_improper_scheduler_detach_vtable;
+    return _this;
+}
+
+DEFINE_THISCALL_WRAPPER(MSVCRT_improper_scheduler_detach_dtor,4)
+void __thiscall MSVCRT_improper_scheduler_detach_dtor(
+        improper_scheduler_detach * _this)
+{
+    TRACE("(%p)\n", _this);
+    MSVCRT_exception_dtor(_this);
+}
+
+#endif /* _MSVCR_VER >= 100 */
+
+#ifndef __GNUC__
+void __asm_dummy_vtables(void) {
+#endif
+
+__ASM_VTABLE(type_info,
+        VTABLE_ADD_FUNC(MSVCRT_type_info_vector_dtor));
+__ASM_VTABLE(exception,
+        VTABLE_ADD_FUNC(MSVCRT_exception_vector_dtor)
+        VTABLE_ADD_FUNC(MSVCRT_what_exception));
+#if _MSVCR_VER >= 80
+__ASM_VTABLE(exception_old,
+        VTABLE_ADD_FUNC(MSVCRT_exception_vector_dtor)
+        VTABLE_ADD_FUNC(MSVCRT_what_exception));
 __ASM_VTABLE(bad_alloc,
         VTABLE_ADD_FUNC(MSVCRT_exception_vector_dtor)
         VTABLE_ADD_FUNC(MSVCRT_what_exception));
-DEFINE_RTTI_DATA1( bad_alloc, 0, &exception_rtti_base_descriptor, ".?AVbad_alloc@std@@" )
-DEFINE_EXCEPTION_TYPE_INFO( bad_alloc, 1, &exception_cxx_type_info, NULL )
+#endif
+__ASM_VTABLE(bad_typeid,
+        VTABLE_ADD_FUNC(MSVCRT_bad_typeid_vector_dtor)
+        VTABLE_ADD_FUNC(MSVCRT_what_exception));
+__ASM_VTABLE(bad_cast,
+        VTABLE_ADD_FUNC(MSVCRT_bad_cast_vector_dtor)
+        VTABLE_ADD_FUNC(MSVCRT_what_exception));
+__ASM_VTABLE(__non_rtti_object,
+        VTABLE_ADD_FUNC(MSVCRT___non_rtti_object_vector_dtor)
+        VTABLE_ADD_FUNC(MSVCRT_what_exception));
+#if _MSVCR_VER >= 100
+__ASM_VTABLE(scheduler_resource_allocation_error,
+        VTABLE_ADD_FUNC(MSVCRT_exception_vector_dtor)
+        VTABLE_ADD_FUNC(MSVCRT_what_exception));
+__ASM_VTABLE(improper_lock,
+        VTABLE_ADD_FUNC(MSVCRT_exception_vector_dtor)
+        VTABLE_ADD_FUNC(MSVCRT_what_exception));
+__ASM_VTABLE(invalid_scheduler_policy_key,
+        VTABLE_ADD_FUNC(MSVCRT_exception_vector_dtor)
+        VTABLE_ADD_FUNC(MSVCRT_what_exception));
+__ASM_VTABLE(invalid_scheduler_policy_value,
+        VTABLE_ADD_FUNC(MSVCRT_exception_vector_dtor)
+        VTABLE_ADD_FUNC(MSVCRT_what_exception));
+__ASM_VTABLE(invalid_scheduler_policy_thread_specification,
+        VTABLE_ADD_FUNC(MSVCRT_exception_vector_dtor)
+        VTABLE_ADD_FUNC(MSVCRT_what_exception));
+__ASM_VTABLE(improper_scheduler_attach,
+        VTABLE_ADD_FUNC(MSVCRT_exception_vector_dtor)
+        VTABLE_ADD_FUNC(MSVCRT_what_exception));
+__ASM_VTABLE(improper_scheduler_detach,
+        VTABLE_ADD_FUNC(MSVCRT_exception_vector_dtor)
+        VTABLE_ADD_FUNC(MSVCRT_what_exception));
+#endif
 
-void throw_bad_alloc(const char *str)
-{
-    bad_alloc e;
-    bad_alloc_ctor(&e, &str);
-    _CxxThrowException(&e, &bad_alloc_exception_type);
+#ifndef __GNUC__
 }
+#endif
+
+DEFINE_RTTI_DATA0( type_info, 0, ".?AVtype_info@@" )
+#if _MSVCR_VER >= 80
+DEFINE_RTTI_DATA0( exception, 0, ".?AVexception@std@@" )
+DEFINE_RTTI_DATA0( exception_old, 0, ".?AVexception@@" )
+DEFINE_RTTI_DATA1( bad_typeid, 0, &exception_rtti_base_descriptor, ".?AVbad_typeid@std@@" )
+DEFINE_RTTI_DATA1( bad_cast, 0, &exception_rtti_base_descriptor, ".?AVbad_cast@std@@" )
+DEFINE_RTTI_DATA2( __non_rtti_object, 0, &bad_typeid_rtti_base_descriptor, &exception_rtti_base_descriptor, ".?AV__non_rtti_object@std@@" )
+DEFINE_RTTI_DATA1( bad_alloc, 0, &exception_rtti_base_descriptor, ".?AVbad_alloc@std@@" )
+#else
+DEFINE_RTTI_DATA0( exception, 0, ".?AVexception@@" )
+DEFINE_RTTI_DATA1( bad_typeid, 0, &exception_rtti_base_descriptor, ".?AVbad_typeid@@" )
+DEFINE_RTTI_DATA1( bad_cast, 0, &exception_rtti_base_descriptor, ".?AVbad_cast@@" )
+DEFINE_RTTI_DATA2( __non_rtti_object, 0, &bad_typeid_rtti_base_descriptor, &exception_rtti_base_descriptor, ".?AV__non_rtti_object@@" )
+#endif
+#if _MSVCR_VER >= 100
+DEFINE_RTTI_DATA1(scheduler_resource_allocation_error, 0, &exception_rtti_base_descriptor,
+        ".?AVscheduler_resource_allocation_error@Concurrency@@")
+DEFINE_RTTI_DATA1(improper_lock, 0, &exception_rtti_base_descriptor, ".?AVimproper_lock@Concurrency@@" )
+DEFINE_RTTI_DATA1(invalid_scheduler_policy_key, 0, &exception_rtti_base_descriptor,
+        ".?AVinvalid_scheduler_policy_key@Concurrency@@" )
+DEFINE_RTTI_DATA1(invalid_scheduler_policy_value, 0, &exception_rtti_base_descriptor,
+        ".?AVinvalid_scheduler_policy_value@Concurrency@@" )
+DEFINE_RTTI_DATA1(invalid_scheduler_policy_thread_specification, 0, &exception_rtti_base_descriptor,
+        ".?AVinvalid_scheduler_policy_thread_specification@Concurrency@@" )
+DEFINE_RTTI_DATA1(improper_scheduler_attach, 0, &exception_rtti_base_descriptor,
+        ".?AVimproper_scheduler_attach@Concurrency@@" )
+DEFINE_RTTI_DATA1(improper_scheduler_detach, 0, &exception_rtti_base_descriptor,
+        ".?AVimproper_scheduler_detach@Concurrency@@" )
+#endif
+
+DEFINE_EXCEPTION_TYPE_INFO( exception, 0, NULL, NULL )
+DEFINE_EXCEPTION_TYPE_INFO( bad_typeid, 1, &exception_cxx_type_info, NULL )
+DEFINE_EXCEPTION_TYPE_INFO( bad_cast, 1, &exception_cxx_type_info, NULL )
+DEFINE_EXCEPTION_TYPE_INFO( __non_rtti_object, 2, &bad_typeid_cxx_type_info, &exception_cxx_type_info )
+#if _MSVCR_VER >= 80
+DEFINE_EXCEPTION_TYPE_INFO( bad_alloc, 1, &exception_cxx_type_info, NULL )
+#endif
+#if _MSVCR_VER >= 100
+DEFINE_EXCEPTION_TYPE_INFO(scheduler_resource_allocation_error, 1, &exception_cxx_type_info, NULL)
+DEFINE_EXCEPTION_TYPE_INFO(improper_lock, 1, &exception_cxx_type_info, NULL)
+DEFINE_EXCEPTION_TYPE_INFO(invalid_scheduler_policy_key, 1, &exception_cxx_type_info, NULL)
+DEFINE_EXCEPTION_TYPE_INFO(invalid_scheduler_policy_value, 1, &exception_cxx_type_info, NULL)
+DEFINE_EXCEPTION_TYPE_INFO(invalid_scheduler_policy_thread_specification, 1, &exception_cxx_type_info, NULL)
+DEFINE_EXCEPTION_TYPE_INFO(improper_scheduler_attach, 1, &exception_cxx_type_info, NULL)
+DEFINE_EXCEPTION_TYPE_INFO(improper_scheduler_detach, 1, &exception_cxx_type_info, NULL)
 #endif
 
 void msvcrt_init_exception(void *base)
@@ -749,6 +1104,15 @@ void msvcrt_init_exception(void *base)
     init_bad_typeid_rtti(base);
     init_bad_cast_rtti(base);
     init___non_rtti_object_rtti(base);
+#if _MSVCR_VER >= 100
+    init_scheduler_resource_allocation_error_rtti(base);
+    init_improper_lock_rtti(base);
+    init_invalid_scheduler_policy_key_rtti(base);
+    init_invalid_scheduler_policy_value_rtti(base);
+    init_invalid_scheduler_policy_thread_specification_rtti(base);
+    init_improper_scheduler_attach_rtti(base);
+    init_improper_scheduler_detach_rtti(base);
+#endif
 
     init_exception_cxx(base);
     init_bad_typeid_cxx(base);
@@ -757,9 +1121,67 @@ void msvcrt_init_exception(void *base)
 #if _MSVCR_VER >= 80
     init_bad_alloc_cxx(base);
 #endif
+#if _MSVCR_VER >= 100
+    init_scheduler_resource_allocation_error_cxx(base);
+    init_improper_lock_cxx(base);
+    init_invalid_scheduler_policy_key_cxx(base);
+    init_invalid_scheduler_policy_value_cxx(base);
+    init_invalid_scheduler_policy_thread_specification_cxx(base);
+    init_improper_scheduler_attach_cxx(base);
+    init_improper_scheduler_detach_cxx(base);
+#endif
 #endif
 }
 
+#if _MSVCR_VER >= 80
+void throw_exception(exception_type et, HRESULT hr, const char *str)
+{
+    switch(et) {
+    case EXCEPTION_BAD_ALLOC: {
+        bad_alloc e;
+        bad_alloc_ctor(&e, &str);
+        _CxxThrowException(&e, &bad_alloc_exception_type);
+    }
+#if _MSVCR_VER >= 100
+    case EXCEPTION_SCHEDULER_RESOURCE_ALLOCATION_ERROR: {
+        scheduler_resource_allocation_error e;
+        scheduler_resource_allocation_error_ctor_name(&e, str, hr);
+        _CxxThrowException(&e.e, &scheduler_resource_allocation_error_exception_type);
+    }
+    case EXCEPTION_IMPROPER_LOCK: {
+        improper_lock e;
+        improper_lock_ctor_str(&e, str);
+        _CxxThrowException(&e, &improper_lock_exception_type);
+    }
+    case EXCEPTION_INVALID_SCHEDULER_POLICY_KEY: {
+        invalid_scheduler_policy_key e;
+        invalid_scheduler_policy_key_ctor_str(&e, str);
+        _CxxThrowException(&e, &invalid_scheduler_policy_key_exception_type);
+    }
+    case EXCEPTION_INVALID_SCHEDULER_POLICY_VALUE: {
+        invalid_scheduler_policy_value e;
+        invalid_scheduler_policy_value_ctor_str(&e, str);
+        _CxxThrowException(&e, &invalid_scheduler_policy_value_exception_type);
+    }
+    case EXCEPTION_INVALID_SCHEDULER_POLICY_THREAD_SPECIFICATION: {
+        invalid_scheduler_policy_thread_specification e;
+        invalid_scheduler_policy_thread_specification_ctor_str(&e, str);
+        _CxxThrowException(&e, &invalid_scheduler_policy_thread_specification_exception_type);
+    }
+    case EXCEPTION_IMPROPER_SCHEDULER_ATTACH: {
+        improper_scheduler_attach e;
+        improper_scheduler_attach_ctor_str(&e, str);
+        _CxxThrowException(&e, &improper_scheduler_attach_exception_type);
+    }
+    case EXCEPTION_IMPROPER_SCHEDULER_DETACH: {
+        improper_scheduler_detach e;
+        improper_scheduler_detach_ctor_str(&e, str);
+        _CxxThrowException(&e, &improper_scheduler_detach_exception_type);
+    }
+#endif
+    }
+}
+#endif
 
 /******************************************************************
  *		?set_terminate@@YAP6AXXZP6AXXZ@Z (MSVCRT.@)
@@ -1165,6 +1587,8 @@ void WINAPI _CxxThrowException( exception *object, const cxx_exception_type *typ
 }
 #endif
 
+#if _MSVCR_VER >= 80
+
 /*********************************************************************
  * ?_is_exception_typeof@@YAHABVtype_info@@PAU_EXCEPTION_POINTERS@@@Z
  * ?_is_exception_typeof@@YAHAEBVtype_info@@PEAU_EXCEPTION_POINTERS@@@Z
@@ -1251,7 +1675,7 @@ int __cdecl _is_exception_typeof(const type_info *ti, EXCEPTION_POINTERS *ep)
 #endif
 
 /*********************************************************************
- * __clean_type_info_names_internal (MSVCR100.@)
+ * __clean_type_info_names_internal (MSVCR80.@)
  */
 void CDECL __clean_type_info_names_internal(void *p)
 {
@@ -1270,12 +1694,16 @@ const char * __thiscall type_info_name_internal_method(type_info * _this, struct
     return MSVCRT_type_info_name(_this);
 }
 
+#endif /* _MSVCR_VER >= 80 */
+
 /* std::exception_ptr class helpers */
 typedef struct
 {
     EXCEPTION_RECORD *rec;
     int *ref; /* not binary compatible with native msvcr100 */
 } exception_ptr;
+
+#if _MSVCR_VER >= 100
 
 /*********************************************************************
  * ?__ExceptionPtrCreate@@YAXPAX@Z
@@ -1290,10 +1718,12 @@ void __cdecl __ExceptionPtrCreate(exception_ptr *ep)
 }
 
 #ifdef __i386__
-static inline void call_dtor(const cxx_exception_type *type, void *func, void *object)
-{
-    __asm__ __volatile__("call *%0" : : "m" (func), "c" (object) : "eax", "edx", "memory");
-}
+extern void call_dtor(const cxx_exception_type *type, void *func, void *object);
+
+__ASM_GLOBAL_FUNC( call_dtor,
+                   "movl 12(%esp),%ecx\n\t"
+                   "call *8(%esp)\n\t"
+                   "ret" );
 #elif __x86_64__
 static inline void call_dtor(const cxx_exception_type *type, unsigned int dtor, void *object)
 {
@@ -1347,6 +1777,25 @@ void __cdecl __ExceptionPtrCopy(exception_ptr *ep, const exception_ptr *copy)
 }
 
 /*********************************************************************
+ * ?__ExceptionPtrAssign@@YAXPAXPBX@Z
+ * ?__ExceptionPtrAssign@@YAXPEAXPEBX@Z
+ */
+void __cdecl __ExceptionPtrAssign(exception_ptr *ep, const exception_ptr *assign)
+{
+    TRACE("(%p %p)\n", ep, assign);
+
+    /* don't destroy object stored in ep */
+    if (ep->ref)
+        InterlockedDecrement(ep->ref);
+
+    *ep = *assign;
+    if (ep->ref)
+        InterlockedIncrement(ep->ref);
+}
+
+#endif /* _MSVCR_VER >= 100 */
+
+/*********************************************************************
  * ?__ExceptionPtrRethrow@@YAXPBX@Z
  * ?__ExceptionPtrRethrow@@YAXPEBX@Z
  */
@@ -1368,18 +1817,10 @@ void __cdecl __ExceptionPtrRethrow(const exception_ptr *ep)
             ep->rec->NumberParameters, ep->rec->ExceptionInformation);
 }
 
+#if _MSVCR_VER >= 100
+
 #ifdef __i386__
-static inline void call_copy_ctor( void *func, void *this, void *src, int has_vbase )
-{
-    TRACE( "calling copy ctor %p object %p src %p\n", func, this, src );
-    if (has_vbase)
-        /* in that case copy ctor takes an extra bool indicating whether to copy the base class */
-        __asm__ __volatile__("pushl $1; pushl %2; call *%0"
-                             : : "m" (func), "c" (this), "m" (src) : "eax", "edx", "memory" );
-    else
-        __asm__ __volatile__("pushl %2; call *%0"
-                             : : "m" (func), "c" (this), "m" (src) : "eax", "edx", "memory" );
-}
+extern void call_copy_ctor( void *func, void *this, void *src, int has_vbase );
 #else
 static inline void call_copy_ctor( void *func, void *this, void *src, int has_vbase )
 {
@@ -1490,6 +1931,9 @@ void __cdecl __ExceptionPtrCurrentException(exception_ptr *ep)
 }
 #endif
 
+#endif /* _MSVCR_VER >= 100 */
+
+#if _MSVCR_VER >= 110
 /*********************************************************************
  * ?__ExceptionPtrToBool@@YA_NPBX@Z
  * ?__ExceptionPtrToBool@@YA_NPEBX@Z
@@ -1498,13 +1942,107 @@ MSVCRT_bool __cdecl __ExceptionPtrToBool(exception_ptr *ep)
 {
     return !!ep->rec;
 }
+#endif
 
+#if _MSVCR_VER >= 100
+
+/*********************************************************************
+ * ?__ExceptionPtrCopyException@@YAXPAXPBX1@Z
+ * ?__ExceptionPtrCopyException@@YAXPEAXPEBX1@Z
+ */
+#ifndef __x86_64__
+void __cdecl __ExceptionPtrCopyException(exception_ptr *ep,
+        exception *object, const cxx_exception_type *type)
+{
+    const cxx_type_info *ti;
+    void **data;
+
+    __ExceptionPtrDestroy(ep);
+
+    ep->rec = HeapAlloc(GetProcessHeap(), 0, sizeof(EXCEPTION_RECORD));
+    ep->ref = HeapAlloc(GetProcessHeap(), 0, sizeof(int));
+    *ep->ref = 1;
+
+    memset(ep->rec, 0, sizeof(EXCEPTION_RECORD));
+    ep->rec->ExceptionCode = CXX_EXCEPTION;
+    ep->rec->ExceptionFlags = EH_NONCONTINUABLE;
+    ep->rec->NumberParameters = 3;
+    ep->rec->ExceptionInformation[0] = CXX_FRAME_MAGIC_VC6;
+    ep->rec->ExceptionInformation[2] = (ULONG_PTR)type;
+
+    ti = type->type_info_table->info[0];
+    data = HeapAlloc(GetProcessHeap(), 0, ti->size);
+    if (ti->flags & CLASS_IS_SIMPLE_TYPE)
+    {
+        memcpy(data, object, ti->size);
+        if (ti->size == sizeof(void *)) *data = get_this_pointer(&ti->offsets, *data);
+    }
+    else if (ti->copy_ctor)
+    {
+        call_copy_ctor(ti->copy_ctor, data, get_this_pointer(&ti->offsets, object),
+                ti->flags & CLASS_HAS_VIRTUAL_BASE_CLASS);
+    }
+    else
+        memcpy(data, get_this_pointer(&ti->offsets, object), ti->size);
+    ep->rec->ExceptionInformation[1] = (ULONG_PTR)data;
+}
+#else
+void __cdecl __ExceptionPtrCopyException(exception_ptr *ep,
+        exception *object, const cxx_exception_type *type)
+{
+    const cxx_type_info *ti;
+    void **data;
+    char *base;
+
+    RtlPcToFileHeader((void*)type, (void**)&base);
+    __ExceptionPtrDestroy(ep);
+
+    ep->rec = HeapAlloc(GetProcessHeap(), 0, sizeof(EXCEPTION_RECORD));
+    ep->ref = HeapAlloc(GetProcessHeap(), 0, sizeof(int));
+    *ep->ref = 1;
+
+    memset(ep->rec, 0, sizeof(EXCEPTION_RECORD));
+    ep->rec->ExceptionCode = CXX_EXCEPTION;
+    ep->rec->ExceptionFlags = EH_NONCONTINUABLE;
+    ep->rec->NumberParameters = 4;
+    ep->rec->ExceptionInformation[0] = CXX_FRAME_MAGIC_VC6;
+    ep->rec->ExceptionInformation[2] = (ULONG_PTR)type;
+    ep->rec->ExceptionInformation[3] = (ULONG_PTR)base;
+
+    ti = (const cxx_type_info*)(base + ((const cxx_type_info_table*)(base + type->type_info_table))->info[0]);
+    data = HeapAlloc(GetProcessHeap(), 0, ti->size);
+    if (ti->flags & CLASS_IS_SIMPLE_TYPE)
+    {
+        memcpy(data, object, ti->size);
+        if (ti->size == sizeof(void *)) *data = get_this_pointer(&ti->offsets, *data);
+    }
+    else if (ti->copy_ctor)
+    {
+        call_copy_ctor(base + ti->copy_ctor, data, get_this_pointer(&ti->offsets, object),
+                ti->flags & CLASS_HAS_VIRTUAL_BASE_CLASS);
+    }
+    else
+        memcpy(data, get_this_pointer(&ti->offsets, object), ti->size);
+    ep->rec->ExceptionInformation[1] = (ULONG_PTR)data;
+}
+#endif
+
+MSVCRT_bool __cdecl __ExceptionPtrCompare(const exception_ptr *ep1, const exception_ptr *ep2)
+{
+    return ep1->rec == ep2->rec;
+}
+
+#endif /* _MSVCR_VER >= 100 */
+
+#if _MSVCR_VER >= 80
 void* __cdecl __AdjustPointer(void *obj, const this_ptr_offsets *off)
 {
     return get_this_pointer(off, obj);
 }
+#endif
 
 #if _MSVCR_VER >= 140
+
 typedef struct
 {
     char *name;
@@ -1618,4 +2156,28 @@ MSVCRT_size_t CDECL MSVCRT_type_info_hash(const type_info140 *ti)
 
     return hash;
 }
-#endif
+
+#endif /* _MSVCR_VER >= 140 */
+
+#if _MSVCR_VER >= 100
+
+enum ConcRT_EventType
+{
+    CONCRT_EVENT_GENERIC,
+    CONCRT_EVENT_START,
+    CONCRT_EVENT_END,
+    CONCRT_EVENT_BLOCK,
+    CONCRT_EVENT_UNBLOCK,
+    CONCRT_EVENT_YIELD,
+    CONCRT_EVENT_ATTACH,
+    CONCRT_EVENT_DETACH
+};
+
+/* ?_Trace_ppl_function@Concurrency@@YAXABU_GUID@@EW4ConcRT_EventType@1@@Z */
+/* ?_Trace_ppl_function@Concurrency@@YAXAEBU_GUID@@EW4ConcRT_EventType@1@@Z */
+void __cdecl Concurrency__Trace_ppl_function(const GUID *guid, unsigned char level, enum ConcRT_EventType type)
+{
+    FIXME("(%s %u %i) stub\n", debugstr_guid(guid), level, type);
+}
+
+#endif /* _MSVCR_VER >= 100 */

@@ -782,7 +782,7 @@ static HRESULT WINAPI IDirectPlayLobby3AImpl_EnumAddressTypes( IDirectPlayLobby3
       }
 
       /* FIXME: Check return types to ensure we're interpreting data right */
-      MultiByteToWideChar( CP_ACP, 0, returnBuffer, -1, buff, sizeof(buff)/sizeof(WCHAR) );
+      MultiByteToWideChar( CP_ACP, 0, returnBuffer, -1, buff, ARRAY_SIZE( buff ));
       CLSIDFromString( buff, &serviceProviderGUID );
       /* FIXME: Have I got a memory leak on the serviceProviderGUID? */
 
@@ -809,7 +809,7 @@ static HRESULT WINAPI IDirectPlayLobby3AImpl_EnumAddressTypes( IDirectPlayLobby3
         TRACE( "Found Address Type GUID %s\n", atSubKey );
 
         /* FIXME: Check return types to ensure we're interpreting data right */
-        MultiByteToWideChar( CP_ACP, 0, atSubKey, -1, buff, sizeof(buff)/sizeof(WCHAR) );
+        MultiByteToWideChar( CP_ACP, 0, atSubKey, -1, buff, ARRAY_SIZE( buff ));
         CLSIDFromString( buff, &serviceProviderGUID );
         /* FIXME: Have I got a memory leak on the serviceProviderGUID? */
 
@@ -832,8 +832,9 @@ static HRESULT WINAPI IDirectPlayLobby3AImpl_EnumAddressTypes( IDirectPlayLobby3
 static HRESULT WINAPI IDirectPlayLobby3Impl_EnumAddressTypes( IDirectPlayLobby3 *iface,
         LPDPLENUMADDRESSTYPESCALLBACK enumaddrtypecb, REFGUID sp, void *context, DWORD flags )
 {
-  FIXME(":stub\n");
-  return DPERR_OUTOFMEMORY;
+    IDirectPlayLobbyImpl *This = impl_from_IDirectPlayLobby3( iface );
+    return IDirectPlayLobby_EnumAddressTypes( &This->IDirectPlayLobby3A_iface, enumaddrtypecb, sp,
+          context, flags );
 }
 
 /********************************************************************
@@ -949,7 +950,7 @@ static HRESULT WINAPI IDirectPlayLobby3AImpl_EnumLocalApplications( IDirectPlayL
     }
 
     /* FIXME: Check return types to ensure we're interpreting data right */
-    MultiByteToWideChar( CP_ACP, 0, returnBuffer, -1, buff, sizeof(buff)/sizeof(WCHAR) );
+    MultiByteToWideChar( CP_ACP, 0, returnBuffer, -1, buff, ARRAY_SIZE( buff ));
     CLSIDFromString( buff, &serviceProviderGUID );
     /* FIXME: Have I got a memory leak on the serviceProviderGUID? */
 
@@ -1726,8 +1727,7 @@ HRESULT DPL_CreateCompoundAddress
     }
     else
     {
-      ERR( "Unknown GUID %s\n", debugstr_guid(&lpElements->guidDataType) );
-      return DPERR_INVALIDFLAGS;
+      WARN( "Skipping Unknown GUID %s\n", debugstr_guid(&lpElements->guidDataType) );
     }
   }
 

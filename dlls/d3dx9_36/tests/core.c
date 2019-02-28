@@ -305,25 +305,28 @@ static void test_ID3DXSprite(IDirect3DDevice9 *device)
 
 static void test_ID3DXFont(IDirect3DDevice9 *device)
 {
-    D3DXFONT_DESCA desc;
-    ID3DXFont *font;
-    HRESULT hr;
-    int ref;
-    int i;
-    static const struct {
-        INT font_height;
-        UINT expected_size;
-        DWORD expected_levels;
-    } texture_tests[] = {
+    static const WCHAR testW[] = {'t','e','s','t',0};
+    static const struct
+    {
+        int font_height;
+        unsigned int expected_size;
+        unsigned int expected_levels;
+    }
+    tests[] =
+    {
         {  6, 128, 4 },
         {  8, 128, 4 },
         { 10, 256, 5 },
         { 12, 256, 5 },
-        { 72, 256, 8 }
+        { 72, 256, 8 },
     };
-    static const WCHAR testW[] = {'t','e','s','t',0};
-    static const char testA[] = "test";
-
+    const unsigned int size = ARRAY_SIZE(testW);
+    D3DXFONT_DESCA desc;
+    ID3DXSprite *sprite;
+    int ref, i, height;
+    ID3DXFont *font;
+    HRESULT hr;
+    RECT rect;
 
     /* D3DXCreateFont */
     ref = get_ref((IUnknown*)device);
@@ -465,7 +468,6 @@ static void test_ID3DXFont(IDirect3DDevice9 *device)
     /* ID3DXFont_PreloadText */
     hr = D3DXCreateFontA(device, 12, 0, FW_DONTCARE, 0, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH, "Arial", &font);
     if(SUCCEEDED(hr)) {
-
         todo_wine {
         hr = ID3DXFont_PreloadTextA(font, NULL, -1);
         ok(hr == D3DERR_INVALIDCALL, "ID3DXFont_PreloadTextA returned %#x, expected %#x\n", hr, D3DERR_INVALIDCALL);
@@ -553,7 +555,8 @@ static void test_ID3DXFont(IDirect3DDevice9 *device)
         check_release((IUnknown*)font, 0);
     } else skip("Failed to create a ID3DXFont object\n");
 
-    for(i = 0; i < sizeof(texture_tests) / sizeof(texture_tests[0]); i++) {
+    for (i = 0; i < ARRAY_SIZE(tests); ++i)
+    {
         HDC hdc;
         DWORD ret;
         HRESULT hr;
@@ -561,7 +564,8 @@ static void test_ID3DXFont(IDirect3DDevice9 *device)
         char c = 'a';
         IDirect3DTexture9 *texture;
 
-        hr = D3DXCreateFontA(device, texture_tests[i].font_height, 0, FW_DONTCARE, 0, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH, "Arial", &font);
+        hr = D3DXCreateFontA(device, tests[i].font_height, 0, FW_DONTCARE, 0, FALSE, DEFAULT_CHARSET,
+                OUT_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH, "Arial", &font);
         if(FAILED(hr)) {
             skip("Failed to create a ID3DXFont object\n");
             continue;
@@ -579,77 +583,57 @@ static void test_ID3DXFont(IDirect3DDevice9 *device)
             D3DSURFACE_DESC desc;
 
             levels = IDirect3DTexture9_GetLevelCount(texture);
-            ok(levels == texture_tests[i].expected_levels, "Got levels %u, expected %u\n", levels, texture_tests[i].expected_levels);
+            ok(levels == tests[i].expected_levels, "Got levels %u, expected %u\n",
+                    levels, tests[i].expected_levels);
             hr = IDirect3DTexture9_GetLevelDesc(texture, 0, &desc);
             ok(hr == D3D_OK, "IDirect3DTexture9_GetLevelDesc failed\n");
             ok(desc.Format == D3DFMT_A8R8G8B8, "Got format %#x, expected %#x\n", desc.Format, D3DFMT_A8R8G8B8);
             ok(desc.Usage == 0, "Got usage %#x, expected %#x\n", desc.Usage, 0);
-            ok(desc.Width == texture_tests[i].expected_size, "Got width %u, expected %u\n", desc.Width, texture_tests[i].expected_size);
-            ok(desc.Height == texture_tests[i].expected_size, "Got height %u, expected %u\n", desc.Height, texture_tests[i].expected_size);
+            ok(desc.Width == tests[i].expected_size, "Got width %u, expected %u\n",
+                    desc.Width, tests[i].expected_size);
+            ok(desc.Height == tests[i].expected_size, "Got height %u, expected %u\n",
+                    desc.Height, tests[i].expected_size);
             ok(desc.Pool == D3DPOOL_MANAGED, "Got pool %u, expected %u\n", desc.Pool, D3DPOOL_MANAGED);
 
             IDirect3DTexture9_Release(texture);
         }
-        ID3DXFont_Release(font);
-    }
 
-    /* ID3DXFont_DrawTextA, ID3DXFont_DrawTextW */
-    hr = D3DXCreateFontA(device, 12, 0, FW_DONTCARE, 0, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH, "Arial", &font);
-    if (SUCCEEDED(hr)) {
-        RECT rect;
-        int height;
+        /* ID3DXFontImpl_DrawText */
+        D3DXCreateSprite(device, &sprite);
+        SetRect(&rect, 0, 0, 640, 480);
 
-        SetRect(&rect, 10, 10, 200, 200);
+        IDirect3DDevice9_Clear(device, 0, NULL, D3DCLEAR_TARGET, 0xff000000, 1.0f, 0);
 
-        height = ID3DXFont_DrawTextA(font, NULL, testA, -2, &rect, 0, 0xFF00FF);
-        ok(height == 12, "DrawTextA returned %d, expected 12.\n", height);
+        IDirect3DDevice9_BeginScene(device);
+        hr = ID3DXSprite_Begin(sprite, D3DXSPRITE_ALPHABLEND);
+        ok (hr == D3D_OK, "Got unexpected hr %#x.\n", hr);
 
-        height = ID3DXFont_DrawTextA(font, NULL, testA, -1, &rect, 0, 0xFF00FF);
-        ok(height == 12, "DrawTextA returned %d, expected 12.\n", height);
+        todo_wine
+        {
+        height = ID3DXFont_DrawTextW(font, sprite, testW, -1, &rect, DT_TOP, 0xffffffff);
+        ok(height == tests[i].font_height, "Got unexpected height %u.\n", height);
+        height = ID3DXFont_DrawTextW(font, sprite, testW, size, &rect, DT_TOP, 0xffffffff);
+        ok(height == tests[i].font_height, "Got unexpected height %u.\n", height);
+        height = ID3DXFont_DrawTextW(font, sprite, testW, size, &rect, DT_RIGHT, 0xffffffff);
+        ok(height == tests[i].font_height, "Got unexpected height %u.\n", height);
+        height = ID3DXFont_DrawTextW(font, sprite, testW, size, &rect, DT_LEFT | DT_NOCLIP,
+                0xffffffff);
+        ok(height == tests[i].font_height, "Got unexpected height %u.\n", height);
+        }
 
-        height = ID3DXFont_DrawTextA(font, NULL, testA, 0, &rect, 0, 0xFF00FF);
-        ok(height == 0, "DrawTextA returned %d, expected 0.\n", height);
+        SetRectEmpty(&rect);
+        height = ID3DXFont_DrawTextW(font, sprite, testW, size, &rect,
+                DT_LEFT | DT_CALCRECT, 0xffffffff);
+        todo_wine ok(height == tests[i].font_height, "Got unexpected height %u.\n", height);
+        ok(!rect.left, "Got unexpected rect left %d.\n", rect.left);
+        ok(!rect.top, "Got unexpected rect top %d.\n", rect.top);
+        todo_wine ok(rect.right, "Got unexpected rect right %d.\n", rect.right);
+        todo_wine ok(rect.bottom == tests[i].font_height, "Got unexpected rect bottom %d.\n", rect.bottom);
 
-        height = ID3DXFont_DrawTextA(font, NULL, testA, 1, &rect, 0, 0xFF00FF);
-        ok(height == 12, "DrawTextA returned %d, expected 12.\n", height);
-
-        height = ID3DXFont_DrawTextA(font, NULL, testA, 2, &rect, 0, 0xFF00FF);
-        ok(height == 12, "DrawTextA returned %d, expected 12.\n", height);
-
-        height = ID3DXFont_DrawTextA(font, NULL, testA, -1, NULL, 0, 0xFF00FF);
-        ok(height == 12, "DrawTextA returned %d, expected 12.\n", height);
-
-        height = ID3DXFont_DrawTextA(font, NULL, testA, -1, NULL, DT_CALCRECT, 0xFF00FF);
-        ok(height == 12, "DrawTextA returned %d, expected 12.\n", height);
-
-        height = ID3DXFont_DrawTextA(font, NULL, NULL, -1, NULL, 0, 0xFF00FF);
-        ok(height == 0, "DrawTextA returned %d, expected 0.\n", height);
-
-if (0) { /* Causes a lockup on windows 7. */
-        height = ID3DXFont_DrawTextW(font, NULL, testW, -2, &rect, 0, 0xFF00FF);
-        ok(height == 12, "DrawTextW returned %d, expected 12.\n", height);
-}
-
-        height = ID3DXFont_DrawTextW(font, NULL, testW, -1, &rect, 0, 0xFF00FF);
-        ok(height == 12, "DrawTextW returned %d, expected 12.\n", height);
-
-        height = ID3DXFont_DrawTextW(font, NULL, testW, 0, &rect, 0, 0xFF00FF);
-        ok(height == 0, "DrawTextW returned %d, expected 0.\n", height);
-
-        height = ID3DXFont_DrawTextW(font, NULL, testW, 1, &rect, 0, 0xFF00FF);
-        ok(height == 12, "DrawTextW returned %d, expected 12.\n", height);
-
-        height = ID3DXFont_DrawTextW(font, NULL, testW, 2, &rect, 0, 0xFF00FF);
-        ok(height == 12, "DrawTextW returned %d, expected 12.\n", height);
-
-        height = ID3DXFont_DrawTextW(font, NULL, testW, -1, NULL, 0, 0xFF00FF);
-        ok(height == 12, "DrawTextA returned %d, expected 12.\n", height);
-
-        height = ID3DXFont_DrawTextW(font, NULL, testW, -1, NULL, DT_CALCRECT, 0xFF00FF);
-        ok(height == 12, "DrawTextA returned %d, expected 12.\n", height);
-
-        height = ID3DXFont_DrawTextW(font, NULL, NULL, -1, NULL, 0, 0xFF00FF);
-        ok(height == 0, "DrawTextA returned %d, expected 0.\n", height);
+        hr = ID3DXSprite_End(sprite);
+        ok (hr == D3D_OK, "Got unexpected hr %#x.\n", hr);
+        IDirect3DDevice9_EndScene(device);
+        ID3DXSprite_Release(sprite);
 
         ID3DXFont_Release(font);
     }
@@ -679,7 +663,7 @@ static void test_D3DXCreateRenderToSurface(IDirect3DDevice9 *device)
     hr = D3DXCreateRenderToSurface(device, 256, 256, D3DFMT_A8R8G8B8, FALSE, D3DFMT_UNKNOWN, NULL /* out */);
     ok(hr == D3DERR_INVALIDCALL, "D3DXCreateRenderToSurface returned %#x, expected %#x\n", hr, D3DERR_INVALIDCALL);
 
-    for (i = 0; i < sizeof(tests) / sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests); i++)
     {
         hr = D3DXCreateRenderToSurface(device, tests[i].Width, tests[i].Height, tests[i].Format, tests[i].DepthStencil,
                 tests[i].DepthStencilFormat, &render);
@@ -1086,7 +1070,7 @@ static void test_ID3DXRenderToSurface(IDirect3DDevice9 *device)
 
     check_release((IUnknown *)render, 0);
 
-    for (i = 0; i < sizeof(tests) / sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests); i++)
     {
         check_ID3DXRenderToSurface(device, tests[i].Width, tests[i].Height, tests[i].Format, tests[i].DepthStencil, tests[i].DepthStencilFormat, TRUE);
         check_ID3DXRenderToSurface(device, tests[i].Width, tests[i].Height, tests[i].Format, tests[i].DepthStencil, tests[i].DepthStencilFormat, FALSE);
@@ -1114,7 +1098,7 @@ static void test_D3DXCreateRenderToEnvMap(IDirect3DDevice9 *device)
         { { 256,   1, D3DFMT_X8R8G8B8, TRUE,  D3DFMT_UNKNOWN }, { 256, 1, D3DFMT_X8R8G8B8, TRUE,  D3DFMT_UNKNOWN } }
     };
 
-    for (i = 0; i < sizeof(tests) / sizeof(tests[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(tests); i++)
     {
         const D3DXRTE_DESC *parameters = &tests[i].parameters;
         const D3DXRTE_DESC *expected  = &tests[i].expected_values;

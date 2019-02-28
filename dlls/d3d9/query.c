@@ -21,6 +21,7 @@
  */
 
 #include "config.h"
+#include "wine/port.h"
 #include "d3d9_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3d9);
@@ -72,7 +73,7 @@ static ULONG WINAPI d3d9_query_Release(IDirect3DQuery9 *iface)
         wined3d_mutex_unlock();
 
         IDirect3DDevice9Ex_Release(query->parent_device);
-        HeapFree(GetProcessHeap(), 0, query);
+        heap_free(query);
     }
     return refcount;
 }
@@ -185,11 +186,22 @@ HRESULT query_init(struct d3d9_query *query, struct d3d9_device *device, D3DQUER
 {
     HRESULT hr;
 
+    if (type > D3DQUERYTYPE_MEMORYPRESSURE)
+    {
+        if (type == 0x16)
+            FIXME("Undocumented query %#x created.\n", type);
+        else
+            WARN("Invalid query type %#x.\n", type);
+
+        return D3DERR_NOTAVAILABLE;
+    }
+
     query->IDirect3DQuery9_iface.lpVtbl = &d3d9_query_vtbl;
     query->refcount = 1;
 
     wined3d_mutex_lock();
-    if (FAILED(hr = wined3d_query_create(device->wined3d_device, type, query, &query->wined3d_query)))
+    if (FAILED(hr = wined3d_query_create(device->wined3d_device, type,
+            query, &d3d9_null_wined3d_parent_ops, &query->wined3d_query)))
     {
         wined3d_mutex_unlock();
         WARN("Failed to create wined3d query, hr %#x.\n", hr);

@@ -83,16 +83,21 @@ static void DEFWND_HandleWindowPosChanged( HWND hwnd, const WINDOWPOS *winpos )
  *
  * Set the window text.
  */
-static void DEFWND_SetTextA( HWND hwnd, LPCSTR text )
+static LRESULT DEFWND_SetTextA( HWND hwnd, LPCSTR text )
 {
     int count;
     WCHAR *textW;
     WND *wndPtr;
 
+    /* check for string, as static icons, bitmaps (SS_ICON, SS_BITMAP)
+     * may have child window IDs instead of window name */
+    if (text && IS_INTRESOURCE(text))
+        return 0;
+
     if (!text) text = "";
     count = MultiByteToWideChar( CP_ACP, 0, text, -1, NULL, 0 );
 
-    if (!(wndPtr = WIN_GetPtr( hwnd ))) return;
+    if (!(wndPtr = WIN_GetPtr( hwnd ))) return 0;
     if ((textW = HeapAlloc(GetProcessHeap(), 0, count * sizeof(WCHAR))))
     {
         HeapFree(GetProcessHeap(), 0, wndPtr->text);
@@ -111,6 +116,8 @@ static void DEFWND_SetTextA( HWND hwnd, LPCSTR text )
     WIN_ReleasePtr( wndPtr );
 
     USER_Driver->pSetWindowText( hwnd, textW );
+
+    return 1;
 }
 
 /***********************************************************************
@@ -118,16 +125,21 @@ static void DEFWND_SetTextA( HWND hwnd, LPCSTR text )
  *
  * Set the window text.
  */
-static void DEFWND_SetTextW( HWND hwnd, LPCWSTR text )
+static LRESULT DEFWND_SetTextW( HWND hwnd, LPCWSTR text )
 {
     static const WCHAR empty_string[] = {0};
     WND *wndPtr;
     int count;
 
+    /* check for string, as static icons, bitmaps (SS_ICON, SS_BITMAP)
+     * may have child window IDs instead of window name */
+    if (text && IS_INTRESOURCE(text))
+        return 0;
+
     if (!text) text = empty_string;
     count = strlenW(text) + 1;
 
-    if (!(wndPtr = WIN_GetPtr( hwnd ))) return;
+    if (!(wndPtr = WIN_GetPtr( hwnd ))) return 0;
     HeapFree(GetProcessHeap(), 0, wndPtr->text);
     if ((wndPtr->text = HeapAlloc(GetProcessHeap(), 0, count * sizeof(WCHAR))))
     {
@@ -146,6 +158,8 @@ static void DEFWND_SetTextW( HWND hwnd, LPCWSTR text )
     WIN_ReleasePtr( wndPtr );
 
     USER_Driver->pSetWindowText( hwnd, text );
+
+    return 1;
 }
 
 /***********************************************************************
@@ -289,6 +303,15 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
          * "If it is appropriate to do so, the system sends the WM_SYSCOMMAND
          * message to the window". When is it appropriate?
          */
+        break;
+
+    case WM_XBUTTONUP:
+    case WM_NCXBUTTONUP:
+        if (HIWORD(wParam) == XBUTTON1 || HIWORD(wParam) == XBUTTON2)
+        {
+            SendMessageW(hwnd, WM_APPCOMMAND, (WPARAM)hwnd,
+                         MAKELPARAM(LOWORD(wParam), FAPPCOMMAND_MOUSE | HIWORD(wParam)));
+        }
         break;
 
     case WM_CONTEXTMENU:
@@ -774,10 +797,8 @@ LRESULT WINAPI DefWindowProcA( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         if (lParam)
         {
             CREATESTRUCTA *cs = (CREATESTRUCTA *)lParam;
-            /* check for string, as static icons, bitmaps (SS_ICON, SS_BITMAP)
-             * may have child window IDs instead of window name */
-            if (!IS_INTRESOURCE(cs->lpszName))
-                DEFWND_SetTextA( hwnd, cs->lpszName );
+
+            DEFWND_SetTextA( hwnd, cs->lpszName );
             result = 1;
 
             if(cs->style & (WS_HSCROLL | WS_VSCROLL))
@@ -813,7 +834,8 @@ LRESULT WINAPI DefWindowProcA( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         break;
 
     case WM_SETTEXT:
-        DEFWND_SetTextA( hwnd, (LPCSTR)lParam );
+        if (!DEFWND_SetTextA( hwnd, (LPCSTR)lParam ))
+            break;
         if( (GetWindowLongW( hwnd, GWL_STYLE ) & WS_CAPTION) == WS_CAPTION )
             NC_HandleNCPaint( hwnd , (HRGN)1 );  /* Repaint caption */
         result = 1; /* success. FIXME: check text length */
@@ -832,8 +854,44 @@ LRESULT WINAPI DefWindowProcA( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         result = PostMessageA( hwnd, WM_KEYUP, wParam, lParam );
         break;
 
-    case WM_IME_STARTCOMPOSITION:
     case WM_IME_COMPOSITION:
+        if (lParam & GCS_RESULTSTR)
+        {
+            LONG size, i;
+            unsigned char lead = 0;
+            char *buf = NULL;
+            HIMC himc = ImmGetContext( hwnd );
+
+            if (himc)
+            {
+                if ((size = ImmGetCompositionStringA( himc, GCS_RESULTSTR, NULL, 0 )))
+                {
+                    if (!(buf = HeapAlloc( GetProcessHeap(), 0, size ))) size = 0;
+                    else size = ImmGetCompositionStringA( himc, GCS_RESULTSTR, buf, size );
+                }
+                ImmReleaseContext( hwnd, himc );
+
+                for (i = 0; i < size; i++)
+                {
+                    unsigned char c = buf[i];
+                    if (!lead)
+                    {
+                        if (IsDBCSLeadByte( c ))
+                            lead = c;
+                        else
+                            SendMessageA( hwnd, WM_IME_CHAR, c, 1 );
+                    }
+                    else
+                    {
+                        SendMessageA( hwnd, WM_IME_CHAR, MAKEWORD(c, lead), 1 );
+                        lead = 0;
+                    }
+                }
+                HeapFree( GetProcessHeap(), 0, buf );
+            }
+        }
+        /* fall through */
+    case WM_IME_STARTCOMPOSITION:
     case WM_IME_ENDCOMPOSITION:
     case WM_IME_SELECT:
     case WM_IME_NOTIFY:
@@ -924,10 +982,8 @@ LRESULT WINAPI DefWindowProcW(
         if (lParam)
         {
             CREATESTRUCTW *cs = (CREATESTRUCTW *)lParam;
-            /* check for string, as static icons, bitmaps (SS_ICON, SS_BITMAP)
-             * may have child window IDs instead of window name */
-            if (!IS_INTRESOURCE(cs->lpszName))
-                DEFWND_SetTextW( hwnd, cs->lpszName );
+
+            DEFWND_SetTextW( hwnd, cs->lpszName );
             result = 1;
 
             if(cs->style & (WS_HSCROLL | WS_VSCROLL))
@@ -960,7 +1016,8 @@ LRESULT WINAPI DefWindowProcW(
         break;
 
     case WM_SETTEXT:
-        DEFWND_SetTextW( hwnd, (LPCWSTR)lParam );
+        if (!DEFWND_SetTextW( hwnd, (LPCWSTR)lParam ))
+            break;
         if( (GetWindowLongW( hwnd, GWL_STYLE ) & WS_CAPTION) == WS_CAPTION )
             NC_HandleNCPaint( hwnd , (HRGN)1 );  /* Repaint caption */
         result = 1; /* success. FIXME: check text length */
@@ -985,8 +1042,29 @@ LRESULT WINAPI DefWindowProcW(
         }
         break;
 
-    case WM_IME_STARTCOMPOSITION:
     case WM_IME_COMPOSITION:
+        if (lParam & GCS_RESULTSTR)
+        {
+            LONG size, i;
+            WCHAR *buf = NULL;
+            HIMC himc = ImmGetContext( hwnd );
+
+            if (himc)
+            {
+                if ((size = ImmGetCompositionStringW( himc, GCS_RESULTSTR, NULL, 0 )))
+                {
+                    if (!(buf = HeapAlloc( GetProcessHeap(), 0, size * sizeof(WCHAR) ))) size = 0;
+                    else size = ImmGetCompositionStringW( himc, GCS_RESULTSTR, buf, size * sizeof(WCHAR) );
+                }
+                ImmReleaseContext( hwnd, himc );
+
+                for (i = 0; i < size / sizeof(WCHAR); i++)
+                    SendMessageW( hwnd, WM_IME_CHAR, buf[i], 1 );
+                HeapFree( GetProcessHeap(), 0, buf );
+            }
+        }
+        /* fall through */
+    case WM_IME_STARTCOMPOSITION:
     case WM_IME_ENDCOMPOSITION:
     case WM_IME_SELECT:
     case WM_IME_NOTIFY:

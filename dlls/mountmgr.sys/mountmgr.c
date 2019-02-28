@@ -47,21 +47,14 @@ struct mount_point
 static struct list mount_points_list = LIST_INIT(mount_points_list);
 static HKEY mount_key;
 
-void set_mount_point_id( struct mount_point *mount, const void *id, unsigned int id_len, int drive )
+void set_mount_point_id( struct mount_point *mount, const void *id, unsigned int id_len )
 {
-    WCHAR logicalW[] = {'\\','\\','.','\\','a',':',0};
     RtlFreeHeap( GetProcessHeap(), 0, mount->id );
     mount->id_len = max( MIN_ID_LEN, id_len );
     if ((mount->id = RtlAllocateHeap( GetProcessHeap(), HEAP_ZERO_MEMORY, mount->id_len )))
     {
         memcpy( mount->id, id, id_len );
-        if (drive < 0)
-            RegSetValueExW( mount_key, mount->link.Buffer, 0, REG_BINARY, mount->id, mount->id_len );
-        else
-        {
-            logicalW[4] = 'a' + drive;
-            RegSetValueExW( mount_key, mount->link.Buffer, 0, REG_BINARY, (BYTE*)logicalW, sizeof(logicalW) );
-        }
+        RegSetValueExW( mount_key, mount->link.Buffer, 0, REG_BINARY, mount->id, mount->id_len );
     }
     else mount->id_len = 0;
 }
@@ -426,14 +419,23 @@ NTSTATUS WINAPI DriverEntry( DRIVER_OBJECT *driver, UNICODE_STRING *path )
     static const WCHAR device_mountmgrW[] = {'\\','D','e','v','i','c','e','\\','M','o','u','n','t','P','o','i','n','t','M','a','n','a','g','e','r',0};
     static const WCHAR link_mountmgrW[] = {'\\','?','?','\\','M','o','u','n','t','P','o','i','n','t','M','a','n','a','g','e','r',0};
     static const WCHAR harddiskW[] = {'\\','D','r','i','v','e','r','\\','H','a','r','d','d','i','s','k',0};
-    static const WCHAR devicemapW[] = {'H','A','R','D','W','A','R','E','\\','D','E','V','I','C','E','M','A','P',0};
-    static const WCHAR parallelW[] = {'P','A','R','A','L','L','E','L',' ','P','O','R','T','S',0};
-    static const WCHAR serialW[] = {'S','E','R','I','A','L','C','O','M','M',0};
+    static const WCHAR driver_serialW[] = {'\\','D','r','i','v','e','r','\\','S','e','r','i','a','l',0};
+    static const WCHAR driver_parallelW[] = {'\\','D','r','i','v','e','r','\\','P','a','r','a','l','l','e','l',0};
+
+#ifdef _WIN64
+    static const WCHAR qualified_ports_keyW[] = {'\\','R','E','G','I','S','T','R','Y','\\',
+                                                 'M','A','C','H','I','N','E','\\','S','o','f','t','w','a','r','e','\\',
+                                                 'W','i','n','e','\\','P','o','r','t','s'}; /* no null terminator */
+    static const WCHAR wow64_ports_keyW[] = {'S','o','f','t','w','a','r','e','\\',
+                                             'W','o','w','6','4','3','2','N','o','d','e','\\','W','i','n','e','\\',
+                                             'P','o','r','t','s',0};
+    static const WCHAR symbolic_link_valueW[] = {'S','y','m','b','o','l','i','c','L','i','n','k','V','a','l','u','e',0};
+    HKEY wow64_ports_key = NULL;
+#endif
 
     UNICODE_STRING nameW, linkW;
     DEVICE_OBJECT *device;
     NTSTATUS status;
-    HKEY hkey, devicemap_key;
 
     TRACE( "%s\n", debugstr_w(path->Buffer) );
 
@@ -452,23 +454,26 @@ NTSTATUS WINAPI DriverEntry( DRIVER_OBJECT *driver, UNICODE_STRING *path )
     RegCreateKeyExW( HKEY_LOCAL_MACHINE, mounted_devicesW, 0, NULL,
                      REG_OPTION_VOLATILE, KEY_ALL_ACCESS, NULL, &mount_key, NULL );
 
-    if (!RegCreateKeyExW( HKEY_LOCAL_MACHINE, devicemapW, 0, NULL, REG_OPTION_VOLATILE,
-                          KEY_ALL_ACCESS, NULL, &devicemap_key, NULL ))
-    {
-        if (!RegCreateKeyExW( devicemap_key, parallelW, 0, NULL, REG_OPTION_VOLATILE,
-                              KEY_ALL_ACCESS, NULL, &hkey, NULL ))
-            RegCloseKey( hkey );
-        if (!RegCreateKeyExW( devicemap_key, serialW, 0, NULL, REG_OPTION_VOLATILE,
-                              KEY_ALL_ACCESS, NULL, &hkey, NULL ))
-            RegCloseKey( hkey );
-        RegCloseKey( devicemap_key );
-    }
-
     RtlInitUnicodeString( &nameW, harddiskW );
     status = IoCreateDriver( &nameW, harddisk_driver_entry );
 
     initialize_dbus();
     initialize_diskarbitration();
+
+#ifdef _WIN64
+    /* create a symlink so that the Wine port overrides key can be edited with 32-bit reg or regedit */
+    RegCreateKeyExW( HKEY_LOCAL_MACHINE, wow64_ports_keyW, 0, NULL, REG_OPTION_CREATE_LINK,
+                     KEY_SET_VALUE, NULL, &wow64_ports_key, NULL );
+    RegSetValueExW( wow64_ports_key, symbolic_link_valueW, 0, REG_LINK,
+                    (BYTE *)qualified_ports_keyW, sizeof(qualified_ports_keyW) );
+    RegCloseKey( wow64_ports_key );
+#endif
+
+    RtlInitUnicodeString( &nameW, driver_serialW );
+    IoCreateDriver( &nameW, serial_driver_entry );
+
+    RtlInitUnicodeString( &nameW, driver_parallelW );
+    IoCreateDriver( &nameW, parallel_driver_entry );
 
     return status;
 }

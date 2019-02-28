@@ -564,7 +564,7 @@ static HRESULT create_metadata_reader(const void *data, int data_size,
     }
 
     stream = create_stream(data, data_size);
-    IWICPersistStream_LoadEx(persist, stream, NULL, WICPersistOptionsDefault);
+    IWICPersistStream_LoadEx(persist, stream, NULL, WICPersistOptionDefault);
     IStream_Release(stream);
 
     IWICPersistStream_Release(persist);
@@ -795,7 +795,7 @@ static HRESULT WINAPI GifFrameDecode_CopyPixels(IWICBitmapFrameDecode *iface,
     const WICRect *prc, UINT cbStride, UINT cbBufferSize, BYTE *pbBuffer)
 {
     GifFrameDecode *This = impl_from_IWICBitmapFrameDecode(iface);
-    TRACE("(%p,%p,%u,%u,%p)\n", iface, prc, cbStride, cbBufferSize, pbBuffer);
+    TRACE("(%p,%s,%u,%u,%p)\n", iface, debug_wic_rect(prc), cbStride, cbBufferSize, pbBuffer);
 
     if (This->frame->ImageDesc.Interlace)
     {
@@ -821,7 +821,7 @@ static HRESULT WINAPI GifFrameDecode_GetMetadataQueryReader(IWICBitmapFrameDecod
     if (!ppIMetadataQueryReader)
         return E_INVALIDARG;
 
-    return MetadataQueryReader_CreateInstance(&This->IWICMetadataBlockReader_iface, ppIMetadataQueryReader);
+    return MetadataQueryReader_CreateInstance(&This->IWICMetadataBlockReader_iface, NULL, ppIMetadataQueryReader);
 }
 
 static HRESULT WINAPI GifFrameDecode_GetColorContexts(IWICBitmapFrameDecode *iface,
@@ -934,7 +934,7 @@ static HRESULT create_IMD_metadata_reader(GifFrameDecode *This, IWICMetadataRead
     }
 
     stream = create_stream(&IMD_data, sizeof(IMD_data));
-    IWICPersistStream_LoadEx(persist, stream, NULL, WICPersistOptionsDefault);
+    IWICPersistStream_LoadEx(persist, stream, NULL, WICPersistOptionDefault);
     IStream_Release(stream);
 
     IWICPersistStream_Release(persist);
@@ -1170,20 +1170,9 @@ static HRESULT WINAPI GifDecoder_GetContainerFormat(IWICBitmapDecoder *iface,
 static HRESULT WINAPI GifDecoder_GetDecoderInfo(IWICBitmapDecoder *iface,
     IWICBitmapDecoderInfo **ppIDecoderInfo)
 {
-    HRESULT hr;
-    IWICComponentInfo *compinfo;
-
     TRACE("(%p,%p)\n", iface, ppIDecoderInfo);
 
-    hr = CreateComponentInfo(&CLSID_WICGifDecoder, &compinfo);
-    if (FAILED(hr)) return hr;
-
-    hr = IWICComponentInfo_QueryInterface(compinfo, &IID_IWICBitmapDecoderInfo,
-        (void**)ppIDecoderInfo);
-
-    IWICComponentInfo_Release(compinfo);
-
-    return hr;
+    return get_decoder_info(&CLSID_WICGifDecoder, ppIDecoderInfo);
 }
 
 static HRESULT WINAPI GifDecoder_CopyPalette(IWICBitmapDecoder *iface, IWICPalette *palette)
@@ -1247,8 +1236,13 @@ static HRESULT WINAPI GifDecoder_CopyPalette(IWICBitmapDecoder *iface, IWICPalet
 static HRESULT WINAPI GifDecoder_GetMetadataQueryReader(IWICBitmapDecoder *iface,
     IWICMetadataQueryReader **ppIMetadataQueryReader)
 {
+    GifDecoder *This = impl_from_IWICBitmapDecoder(iface);
+
     TRACE("(%p,%p)\n", iface, ppIMetadataQueryReader);
-    return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+
+    if (!ppIMetadataQueryReader) return E_INVALIDARG;
+
+    return MetadataQueryReader_CreateInstance(&This->IWICMetadataBlockReader_iface, NULL, ppIMetadataQueryReader);
 }
 
 static HRESULT WINAPI GifDecoder_GetPreview(IWICBitmapDecoder *iface,

@@ -46,6 +46,7 @@ static inline ULONG get_refcount(IUnknown *iface)
 
 static const WCHAR crlfW[] = {'\r','\n',0};
 static const char utf16bom[] = {0xff,0xfe,0};
+static const WCHAR testfileW[] = {'t','e','s','t','.','t','x','t',0};
 
 #define GET_REFCOUNT(iface) \
     get_refcount((IUnknown*)iface)
@@ -239,7 +240,6 @@ static void test_createfolder(void)
 
 static void test_textstream(void)
 {
-    static const WCHAR testfileW[] = {'t','e','s','t','f','i','l','e','.','t','x','t',0};
     ITextStream *stream;
     VARIANT_BOOL b;
     DWORD written;
@@ -375,7 +375,7 @@ static void test_GetFileVersion(void)
     BSTR path, version;
     HRESULT hr;
 
-    GetSystemDirectoryW(pathW, sizeof(pathW)/sizeof(WCHAR));
+    GetSystemDirectoryW(pathW, ARRAY_SIZE(pathW));
 
     lstrcpyW(filenameW, pathW);
     lstrcatW(filenameW, k32W);
@@ -438,7 +438,7 @@ static void test_GetParentFolderName(void)
     hr = IFileSystem3_GetParentFolderName(fs3, NULL, NULL);
     ok(hr == E_POINTER, "GetParentFolderName returned %x, expected E_POINTER\n", hr);
 
-    for(i=0; i<sizeof(tests)/sizeof(tests[0]); i++) {
+    for(i=0; i < ARRAY_SIZE(tests); i++) {
         result = (BSTR)0xdeadbeef;
         path = tests[i].path ? SysAllocString(tests[i].path) : NULL;
         hr = IFileSystem3_GetParentFolderName(fs3, path, &result);
@@ -481,7 +481,7 @@ static void test_GetFileName(void)
     hr = IFileSystem3_GetFileName(fs3, NULL, NULL);
     ok(hr == E_POINTER, "GetFileName returned %x, expected E_POINTER\n", hr);
 
-    for(i=0; i<sizeof(tests)/sizeof(tests[0]); i++) {
+    for(i=0; i < ARRAY_SIZE(tests); i++) {
         result = (BSTR)0xdeadbeef;
         path = tests[i].path ? SysAllocString(tests[i].path) : NULL;
         hr = IFileSystem3_GetFileName(fs3, path, &result);
@@ -527,7 +527,7 @@ static void test_GetBaseName(void)
     hr = IFileSystem3_GetBaseName(fs3, NULL, NULL);
     ok(hr == E_POINTER, "GetBaseName returned %x, expected E_POINTER\n", hr);
 
-    for(i=0; i<sizeof(tests)/sizeof(tests[0]); i++) {
+    for(i=0; i < ARRAY_SIZE(tests); i++) {
         result = (BSTR)0xdeadbeef;
         path = tests[i].path ? SysAllocString(tests[i].path) : NULL;
         hr = IFileSystem3_GetBaseName(fs3, path, &result);
@@ -624,6 +624,7 @@ static void test_GetFile(void)
     HRESULT hr;
     HANDLE hf;
     BOOL ret;
+    DATE date;
 
     get_temp_path(NULL, pathW);
 
@@ -648,6 +649,14 @@ static void test_GetFile(void)
 
     hr = IFileSystem3_GetFile(fs3, path, &file);
     ok(hr == S_OK, "GetFile returned %x, expected S_OK\n", hr);
+
+    hr = IFile_get_DateLastModified(file, NULL);
+    ok(hr == E_POINTER, "got 0x%08x\n", hr);
+
+    date = 0.0;
+    hr = IFile_get_DateLastModified(file, &date);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(date > 0.0, "got %f\n", date);
 
     hr = IFile_get_Path(file, NULL);
     ok(hr == E_POINTER, "got 0x%08x\n", hr);
@@ -1397,6 +1406,17 @@ static void test_DriveCollection(void)
             ok(hr == S_OK, "got 0x%08x\n", hr);
             ok(ready == VARIANT_TRUE, "got %x\n", ready);
 
+            if (ready != VARIANT_TRUE) {
+                hr = IDrive_get_DriveLetter(drive, &str);
+                ok(hr == S_OK, "got 0x%08x\n", hr);
+
+                skip("Drive %s is not ready, skipping some tests\n", wine_dbgstr_w(str));
+
+                VariantClear(&var);
+                SysFreeString(str);
+                continue;
+            }
+
             V_VT(&size) = VT_EMPTY;
             hr = IDrive_get_TotalSize(drive, &size);
             ok(hr == S_OK, "got 0x%08x\n", hr);
@@ -1431,10 +1451,18 @@ static void test_DriveCollection(void)
     IDriveCollection_Release(drives);
 }
 
-static void test_CreateTextFile(void)
+static void get_temp_filepath(const WCHAR *filename, WCHAR *path, WCHAR *dir)
 {
     static const WCHAR scrrunW[] = {'s','c','r','r','u','n','\\',0};
-    static const WCHAR testfileW[] = {'t','e','s','t','.','t','x','t',0};
+
+    GetTempPathW(MAX_PATH, path);
+    lstrcatW(path, scrrunW);
+    lstrcpyW(dir, path);
+    lstrcatW(path, filename);
+}
+
+static void test_CreateTextFile(void)
+{
     WCHAR pathW[MAX_PATH], dirW[MAX_PATH], buffW[10];
     ITextStream *stream;
     BSTR nameW, str;
@@ -1442,10 +1470,7 @@ static void test_CreateTextFile(void)
     HRESULT hr;
     BOOL ret;
 
-    GetTempPathW(sizeof(pathW)/sizeof(WCHAR), pathW);
-    lstrcatW(pathW, scrrunW);
-    lstrcpyW(dirW, pathW);
-    lstrcatW(pathW, testfileW);
+    get_temp_filepath(testfileW, pathW, dirW);
 
     /* dir doesn't exist */
     nameW = SysAllocString(pathW);
@@ -1496,7 +1521,7 @@ static void test_CreateTextFile(void)
     /* File was created in Unicode mode, it contains 0xfffe BOM. Opening it in non-Unicode mode
        treats BOM like a valuable data with appropriate CP_ACP -> WCHAR conversion. */
     buffW[0] = 0;
-    MultiByteToWideChar(CP_ACP, 0, utf16bom, -1, buffW, sizeof(buffW)/sizeof(WCHAR));
+    MultiByteToWideChar(CP_ACP, 0, utf16bom, -1, buffW, ARRAY_SIZE(buffW));
 
     hr = IFileSystem3_OpenTextFile(fs3, nameW, ForReading, VARIANT_FALSE, TristateFalse, &stream);
     ok(hr == S_OK, "got 0x%08x\n", hr);
@@ -1513,8 +1538,6 @@ static void test_CreateTextFile(void)
 
 static void test_WriteLine(void)
 {
-    static const WCHAR scrrunW[] = {'s','c','r','r','u','n','\\',0};
-    static const WCHAR testfileW[] = {'t','e','s','t','.','t','x','t',0};
     WCHAR pathW[MAX_PATH], dirW[MAX_PATH];
     WCHAR buffW[MAX_PATH], buff2W[MAX_PATH];
     char buffA[MAX_PATH];
@@ -1525,10 +1548,7 @@ static void test_WriteLine(void)
     HRESULT hr;
     BOOL ret;
 
-    GetTempPathW(sizeof(pathW)/sizeof(WCHAR), pathW);
-    lstrcatW(pathW, scrrunW);
-    lstrcpyW(dirW, pathW);
-    lstrcatW(pathW, testfileW);
+    get_temp_filepath(testfileW, pathW, dirW);
 
     ret = CreateDirectoryW(dirW, NULL);
     ok(ret, "got %d, %d\n", ret, GetLastError());
@@ -1549,7 +1569,7 @@ static void test_WriteLine(void)
     ret = ReadFile(file, buffA, sizeof(buffA), &r, NULL);
     ok(ret && r, "read %d, got %d, %d\n", r, ret, GetLastError());
 
-    len = MultiByteToWideChar(CP_ACP, 0, buffA, r, buffW, sizeof(buffW)/sizeof(WCHAR));
+    len = MultiByteToWideChar(CP_ACP, 0, buffA, r, buffW, ARRAY_SIZE(buffW));
     buffW[len] = 0;
     lstrcpyW(buff2W, nameW);
     lstrcatW(buff2W, crlfW);
@@ -1587,8 +1607,6 @@ static void test_WriteLine(void)
 
 static void test_ReadAll(void)
 {
-    static const WCHAR scrrunW[] = {'s','c','r','r','u','n','\\',0};
-    static const WCHAR testfileW[] = {'t','e','s','t','.','t','x','t',0};
     static const WCHAR secondlineW[] = {'s','e','c','o','n','d',0};
     static const WCHAR aW[] = {'A',0};
     WCHAR pathW[MAX_PATH], dirW[MAX_PATH], buffW[500];
@@ -1598,10 +1616,7 @@ static void test_ReadAll(void)
     BOOL ret;
     BSTR str;
 
-    GetTempPathW(sizeof(pathW)/sizeof(WCHAR), pathW);
-    lstrcatW(pathW, scrrunW);
-    lstrcpyW(dirW, pathW);
-    lstrcatW(pathW, testfileW);
+    get_temp_filepath(testfileW, pathW, dirW);
 
     ret = CreateDirectoryW(dirW, NULL);
     ok(ret, "got %d, %d\n", ret, GetLastError());
@@ -1640,7 +1655,7 @@ static void test_ReadAll(void)
     hr = ITextStream_ReadAll(stream, &str);
     ok(hr == S_FALSE || broken(hr == S_OK) /* win2k */, "got 0x%08x\n", hr);
     buffW[0] = 0;
-    MultiByteToWideChar(CP_ACP, 0, utf16bom, -1, buffW, sizeof(buffW)/sizeof(WCHAR));
+    MultiByteToWideChar(CP_ACP, 0, utf16bom, -1, buffW, ARRAY_SIZE(buffW));
     ok(str[0] == buffW[0] && str[1] == buffW[1], "got %s, %d\n", wine_dbgstr_w(str), SysStringLen(str));
     SysFreeString(str);
     ITextStream_Release(stream);
@@ -1721,8 +1736,6 @@ todo_wine
 
 static void test_Read(void)
 {
-    static const WCHAR scrrunW[] = {'s','c','r','r','u','n','\\',0};
-    static const WCHAR testfileW[] = {'t','e','s','t','.','t','x','t',0};
     static const WCHAR secondlineW[] = {'s','e','c','o','n','d',0};
     static const WCHAR aW[] = {'A',0};
     WCHAR pathW[MAX_PATH], dirW[MAX_PATH], buffW[500];
@@ -1732,10 +1745,7 @@ static void test_Read(void)
     BOOL ret;
     BSTR str;
 
-    GetTempPathW(sizeof(pathW)/sizeof(WCHAR), pathW);
-    lstrcatW(pathW, scrrunW);
-    lstrcpyW(dirW, pathW);
-    lstrcatW(pathW, testfileW);
+    get_temp_filepath(testfileW, pathW, dirW);
 
     ret = CreateDirectoryW(dirW, NULL);
     ok(ret, "got %d, %d\n", ret, GetLastError());
@@ -1791,7 +1801,7 @@ static void test_Read(void)
     ok(hr == S_OK, "got 0x%08x\n", hr);
 
     buffW[0] = 0;
-    MultiByteToWideChar(CP_ACP, 0, utf16bom, -1, buffW, sizeof(buffW)/sizeof(WCHAR));
+    MultiByteToWideChar(CP_ACP, 0, utf16bom, -1, buffW, ARRAY_SIZE(buffW));
 
     ok(!lstrcmpW(str, buffW), "got %s, expected %s\n", wine_dbgstr_w(str), wine_dbgstr_w(buffW));
     ok(SysStringLen(str) == 2, "got %d\n", SysStringLen(str));
@@ -2141,7 +2151,7 @@ static void test_GetExtensionName(void)
     HRESULT hr;
     int i;
 
-    for (i = 0; i < sizeof(extension_tests)/sizeof(extension_tests[0]); i++) {
+    for (i = 0; i < ARRAY_SIZE(extension_tests); i++) {
 
        path = SysAllocString(extension_tests[i].path);
        ext = NULL;
@@ -2180,7 +2190,7 @@ static void test_GetSpecialFolder(void)
     ok(hr == S_OK, "got 0x%08x\n", hr);
     hr = IFolder_get_Path(folder, &path);
     ok(hr == S_OK, "got 0x%08x\n", hr);
-    GetWindowsDirectoryW(pathW, sizeof(pathW)/sizeof(WCHAR));
+    GetWindowsDirectoryW(pathW, ARRAY_SIZE(pathW));
     ok(!lstrcmpiW(pathW, path), "got %s, expected %s\n", wine_dbgstr_w(path), wine_dbgstr_w(pathW));
     SysFreeString(path);
     IFolder_Release(folder);
@@ -2189,7 +2199,7 @@ static void test_GetSpecialFolder(void)
     ok(hr == S_OK, "got 0x%08x\n", hr);
     hr = IFolder_get_Path(folder, &path);
     ok(hr == S_OK, "got 0x%08x\n", hr);
-    GetSystemDirectoryW(pathW, sizeof(pathW)/sizeof(WCHAR));
+    GetSystemDirectoryW(pathW, ARRAY_SIZE(pathW));
     ok(!lstrcmpiW(pathW, path), "got %s, expected %s\n", wine_dbgstr_w(path), wine_dbgstr_w(pathW));
     SysFreeString(path);
     IFolder_Release(folder);
@@ -2198,7 +2208,7 @@ static void test_GetSpecialFolder(void)
     ok(hr == S_OK, "got 0x%08x\n", hr);
     hr = IFolder_get_Path(folder, &path);
     ok(hr == S_OK, "got 0x%08x\n", hr);
-    ret = GetTempPathW(sizeof(pathW)/sizeof(WCHAR), pathW);
+    ret = GetTempPathW(ARRAY_SIZE(pathW), pathW);
     if (ret && pathW[ret-1] == '\\')
         pathW[ret-1] = 0;
 

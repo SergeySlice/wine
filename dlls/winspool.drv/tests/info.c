@@ -219,7 +219,7 @@ static struct monitor_entry * find_installed_monitor(void)
 
     if (entry) return entry;
 
-    num_tests = (sizeof(monitor_table)/sizeof(struct monitor_entry));
+    num_tests = ARRAY_SIZE(monitor_table);
 
     /* cleanup */
     DeleteMonitorA(NULL, env_x64, winetest);
@@ -434,7 +434,9 @@ static void test_AddMonitor(void)
     mi2a.pDLLName = entry->dllname;
     SetLastError(MAGIC_DEAD);
     res = AddMonitorA(NULL, 2, (LPBYTE) &mi2a);
-    ok(res, "returned %d with %d (expected '!= 0')\n", res, GetLastError());
+    /* Some apps depend on the result of GetLastError() also on success of AddMonitor */
+    ok(res && (GetLastError() == ERROR_SUCCESS),
+        "returned %d with %d (expected '!= 0' with ERROR_SUCCESS)\n", res, GetLastError());
 
     /* add a monitor twice */
     SetLastError(MAGIC_DEAD);

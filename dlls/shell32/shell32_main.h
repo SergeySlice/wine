@@ -35,6 +35,7 @@
 #include "undocshell.h"
 #include "shlobj.h"
 #include "shellapi.h"
+#include "wine/heap.h"
 #include "wine/unicode.h"
 #include "wine/list.h"
 
@@ -44,11 +45,14 @@
 extern HMODULE	huser32 DECLSPEC_HIDDEN;
 extern HINSTANCE shell32_hInstance DECLSPEC_HIDDEN;
 
+extern CLSID CLSID_ShellImageDataFactory;
+
 /* Iconcache */
 #define INVALID_INDEX -1
 void SIC_Destroy(void) DECLSPEC_HIDDEN;
 BOOL PidlToSicIndex (IShellFolder * sh, LPCITEMIDLIST pidl, BOOL bBigIcon, UINT uFlags, int * pIndex) DECLSPEC_HIDDEN;
 INT SIC_GetIconIndex (LPCWSTR sSourceFile, INT dwSourceIndex, DWORD dwFlags ) DECLSPEC_HIDDEN;
+HRESULT SIC_get_location( int list_idx, WCHAR *file, DWORD *size, int *res_idx ) DECLSPEC_HIDDEN;
 
 /* Classes Root */
 BOOL HCR_MapTypeToValueW(LPCWSTR szExtension, LPWSTR szFileType, LONG len, BOOL bPrependDot) DECLSPEC_HIDDEN;
@@ -105,6 +109,8 @@ HRESULT WINAPI CPanel_ExtractIconW(LPITEMIDLIST pidl, LPCWSTR pszFile, UINT nIco
 
 HRESULT WINAPI IAutoComplete_Constructor(IUnknown * pUnkOuter, REFIID riid, LPVOID * ppv) DECLSPEC_HIDDEN;
 HRESULT WINAPI ApplicationAssociationRegistration_Constructor(IUnknown *outer, REFIID riid, LPVOID *ppv) DECLSPEC_HIDDEN;
+
+HRESULT WINAPI ApplicationDestinations_Constructor(IUnknown *outer, REFIID riid, LPVOID *ppv) DECLSPEC_HIDDEN;
 
 HRESULT IShellLink_ConstructFromFile(IUnknown * pUnkOuter, REFIID riid, LPCITEMIDLIST pidl, IUnknown **ppv) DECLSPEC_HIDDEN;
 
@@ -222,5 +228,43 @@ enum tid_t {
 HRESULT get_typeinfo(enum tid_t, ITypeInfo**) DECLSPEC_HIDDEN;
 void release_typelib(void) DECLSPEC_HIDDEN;
 void release_desktop_folder(void) DECLSPEC_HIDDEN;
+
+static inline WCHAR *strdupW(const WCHAR *src)
+{
+    WCHAR *dest;
+    if (!src) return NULL;
+    dest = heap_alloc((lstrlenW(src) + 1) * sizeof(*dest));
+    if (dest)
+        lstrcpyW(dest, src);
+    return dest;
+}
+
+static inline WCHAR *strndupW(const WCHAR *src, DWORD len)
+{
+    WCHAR *dest;
+    if (!src) return NULL;
+    dest = heap_alloc((len + 1) * sizeof(*dest));
+    if (dest)
+    {
+        memcpy(dest, src, len * sizeof(WCHAR));
+        dest[len] = '\0';
+    }
+    return dest;
+}
+
+static inline WCHAR *strdupAtoW(const char *str)
+{
+    WCHAR *ret;
+    DWORD len;
+
+    if (!str) return NULL;
+
+    len = MultiByteToWideChar(CP_ACP, 0, str, -1, NULL, 0);
+    ret = heap_alloc(len * sizeof(WCHAR));
+    if (ret)
+        MultiByteToWideChar(CP_ACP, 0, str, -1, ret, len);
+
+    return ret;
+}
 
 #endif

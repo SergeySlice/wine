@@ -19,34 +19,19 @@
 #ifndef __WINE_SCHEDSVC_PRIVATE_H__
 #define __WINE_SCHEDSVC_PRIVATE_H__
 
+#include "wine/heap.h"
 #include "wine/unicode.h"
 
 void schedsvc_auto_start(void) DECLSPEC_HIDDEN;
-
-static void *heap_alloc_zero(SIZE_T size) __WINE_ALLOC_SIZE(1);
-static inline void *heap_alloc_zero(SIZE_T size)
-{
-    void *ptr = MIDL_user_allocate(size);
-    if (ptr) memset(ptr, 0, size);
-    return ptr;
-}
-
-static void *heap_alloc(SIZE_T size) __WINE_ALLOC_SIZE(1);
-static inline void *heap_alloc(SIZE_T size)
-{
-    return MIDL_user_allocate(size);
-}
-
-static void *heap_realloc(void *ptr, SIZE_T size) __WINE_ALLOC_SIZE(2);
-static inline void *heap_realloc(void *ptr, SIZE_T size)
-{
-    return HeapReAlloc(GetProcessHeap(), 0, ptr, size);
-}
-
-static inline void heap_free(void *ptr)
-{
-    MIDL_user_free(ptr);
-}
+void add_job(const WCHAR *name) DECLSPEC_HIDDEN;
+void remove_job(const WCHAR *name) DECLSPEC_HIDDEN;
+void check_task_state(void) DECLSPEC_HIDDEN;
+void add_process_to_queue(HANDLE hproc) DECLSPEC_HIDDEN;
+void update_process_status(DWORD pid) DECLSPEC_HIDDEN;
+BOOL get_next_runtime(LARGE_INTEGER *rt) DECLSPEC_HIDDEN;
+void check_task_time(void) DECLSPEC_HIDDEN;
+void load_at_tasks(void) DECLSPEC_HIDDEN;
+void check_missed_task_time(void) DECLSPEC_HIDDEN;
 
 static inline WCHAR *heap_strdupW(const WCHAR *src)
 {

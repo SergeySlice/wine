@@ -2,7 +2,7 @@
  * Unit tests for dc functions
  *
  * Copyright (c) 2005 Huw Davies
- * Copyright (c) 2005 Dmitry Timoshkov
+ * Copyright (c) 2005,2016 Dmitry Timoshkov
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -361,7 +361,7 @@ static void test_device_caps( HDC hdc, HDC ref_dc, const char *descr, int scale 
 
     if (GetObjectType( hdc ) == OBJ_METADC)
     {
-        for (i = 0; i < sizeof(caps)/sizeof(caps[0]); i++)
+        for (i = 0; i < ARRAY_SIZE(caps); i++)
             ok( GetDeviceCaps( hdc, caps[i] ) == (caps[i] == TECHNOLOGY ? DT_METAFILE : 0),
                 "wrong caps on %s for %u: %u\n", descr, caps[i],
                 GetDeviceCaps( hdc, caps[i] ) );
@@ -384,7 +384,7 @@ static void test_device_caps( HDC hdc, HDC ref_dc, const char *descr, int scale 
     }
     else
     {
-        for (i = 0; i < sizeof(caps)/sizeof(caps[0]); i++)
+        for (i = 0; i < ARRAY_SIZE(caps); i++)
         {
             INT precision = 0;
             INT hdc_caps = GetDeviceCaps( hdc, caps[i] );
@@ -399,6 +399,12 @@ static void test_device_caps( HDC hdc, HDC ref_dc, const char *descr, int scale 
             case LOGPIXELSX:
             case LOGPIXELSY:
                 hdc_caps *= scale;
+                break;
+            case VREFRESH:
+                if (GetDeviceCaps( hdc, TECHNOLOGY ) == DT_RASDISPLAY)
+                    ok( hdc_caps > 0, "expected a positive value on %s, got %d\n", descr, hdc_caps );
+                else
+                    ok( hdc_caps == 0, "expected 0 on %s, got %d\n", descr, hdc_caps );
                 break;
             }
 
@@ -465,6 +471,12 @@ static void test_device_caps( HDC hdc, HDC ref_dc, const char *descr, int scale 
         }
         else
         {
+            ok( GetDeviceCaps( ref_dc, DESKTOPHORZRES ) == GetDeviceCaps( ref_dc, HORZRES ),
+                "Got DESKTOPHORZRES %d on %s, expected %d\n",
+                GetDeviceCaps( ref_dc, DESKTOPHORZRES ), descr, GetDeviceCaps( ref_dc, HORZRES ));
+            ok( GetDeviceCaps( ref_dc, DESKTOPVERTRES ) == GetDeviceCaps( ref_dc, VERTRES ),
+                "Got DESKTOPVERTRES %d on %s, expected %d\n",
+                GetDeviceCaps( ref_dc, DESKTOPVERTRES ), descr, GetDeviceCaps( ref_dc, VERTRES ));
             SetRect( &ref_rect, 0, 0, GetDeviceCaps( ref_dc, DESKTOPHORZRES ),
                      GetDeviceCaps( ref_dc, DESKTOPVERTRES ) );
         }
@@ -500,7 +512,7 @@ static void test_device_caps( HDC hdc, HDC ref_dc, const char *descr, int scale 
         dib = CreateDIBSection( ref_dc, info, DIB_RGB_COLORS, NULL, NULL, 0 );
         old = SelectObject( hdc, dib );
 
-        for (i = 0; i < sizeof(caps)/sizeof(caps[0]); i++)
+        for (i = 0; i < ARRAY_SIZE(caps); i++)
             ok( GetDeviceCaps( hdc, caps[i] ) == GetDeviceCaps( ref_dc, caps[i] ),
                 "mismatched caps on %s and DIB for %u: %u/%u\n", descr, caps[i],
                 GetDeviceCaps( hdc, caps[i] ), GetDeviceCaps( ref_dc, caps[i] ) );
@@ -1363,6 +1375,119 @@ static void test_printer_dc(void)
     DeleteObject( bmp );
 }
 
+static void print_something(HDC hdc)
+{
+    static const char psadobe[10] = "%!PS-Adobe";
+    char buf[1024], *p;
+    char temp_path[MAX_PATH], file_name[MAX_PATH];
+    DOCINFOA di;
+    DWORD ret;
+    HANDLE hfile;
+
+    GetTempPathA(sizeof(temp_path), temp_path);
+    GetTempFileNameA(temp_path, "ps", 0, file_name);
+
+    di.cbSize = sizeof(di);
+    di.lpszDocName = "Let's dance";
+    di.lpszOutput = file_name;
+    di.lpszDatatype = NULL;
+    di.fwType = 0;
+    ret = StartDocA(hdc, &di);
+    ok(ret > 0, "StartDoc failed: %d\n", ret);
+
+    strcpy(buf + 2, "\n% ===> before DOWNLOADHEADER <===\n");
+    *(WORD *)buf = strlen(buf + 2);
+    ret = Escape(hdc, POSTSCRIPT_PASSTHROUGH, 0, buf, NULL);
+    ok(ret == *(WORD *)buf, "POSTSCRIPT_PASSTHROUGH failed: %d\n", ret);
+
+    strcpy(buf, "deadbeef");
+    ret = ExtEscape(hdc, DOWNLOADHEADER, 0, NULL, sizeof(buf), buf );
+    ok(ret == 1, "DOWNLOADHEADER failed\n");
+    ok(strcmp(buf, "deadbeef") != 0, "DOWNLOADHEADER failed\n");
+
+    strcpy(buf + 2, "\n% ===> after DOWNLOADHEADER <===\n");
+    *(WORD *)buf = strlen(buf + 2);
+    ret = Escape(hdc, POSTSCRIPT_PASSTHROUGH, 0, buf, NULL);
+    ok(ret == *(WORD *)buf, "POSTSCRIPT_PASSTHROUGH failed: %d\n", ret);
+
+    ret = EndDoc(hdc);
+    ok(ret == 1, "EndDoc failed\n");
+
+    hfile = CreateFileA(file_name, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, 0);
+    ok(hfile != INVALID_HANDLE_VALUE, "CreateFile failed\n");
+    memset(buf, 0, sizeof(buf));
+    ret = ReadFile(hfile, buf, sizeof(buf), &ret, NULL);
+    ok(ret, "ReadFile failed\n");
+    CloseHandle(hfile);
+
+    /* skip the HP PCL language selector */
+    buf[sizeof(buf) - 1] = 0;
+    p = buf;
+    while (*p)
+    {
+        if (!(p[0] == 0x1b && p[1] == '%') && memcmp(p, "@PJL", 4) != 0)
+            break;
+
+        p = strchr(p, '\n');
+        if (!p) break;
+
+        while (*p == '\r' || *p == '\n') p++;
+    }
+    ok(p && !memcmp(p, psadobe, sizeof(psadobe)), "wrong signature: %.14s\n", p ? p : buf);
+
+    DeleteFileA(file_name);
+}
+
+static void test_pscript_printer_dc(void)
+{
+    HDC hdc;
+    char buf[256];
+    DWORD query, ret;
+
+    hdc = create_printer_dc(100, FALSE);
+
+    if (!hdc) return;
+
+    if (!is_postscript_printer(hdc))
+    {
+        skip("Default printer is not a PostScript device\n");
+        DeleteDC( hdc );
+        return;
+    }
+
+    query = GETFACENAME;
+    ret = Escape(hdc, QUERYESCSUPPORT, sizeof(query), (LPCSTR)&query, NULL);
+    ok(!ret, "GETFACENAME is supported\n");
+
+    query = DOWNLOADFACE;
+    ret = Escape(hdc, QUERYESCSUPPORT, sizeof(query), (LPCSTR)&query, NULL);
+    ok(ret == 1, "DOWNLOADFACE is not supported\n");
+
+    query = OPENCHANNEL;
+    ret = Escape(hdc, QUERYESCSUPPORT, sizeof(query), (LPCSTR)&query, NULL);
+    ok(ret == 1, "OPENCHANNEL is not supported\n");
+
+    query = DOWNLOADHEADER;
+    ret = Escape(hdc, QUERYESCSUPPORT, sizeof(query), (LPCSTR)&query, NULL);
+    ok(ret == 1, "DOWNLOADHEADER is not supported\n");
+
+    query = CLOSECHANNEL;
+    ret = Escape(hdc, QUERYESCSUPPORT, sizeof(query), (LPCSTR)&query, NULL);
+    ok(ret == 1, "CLOSECHANNEL is not supported\n");
+
+    query = POSTSCRIPT_PASSTHROUGH;
+    ret = Escape(hdc, QUERYESCSUPPORT, sizeof(query), (LPCSTR)&query, NULL);
+    ok(ret == 1, "POSTSCRIPT_PASSTHROUGH is not supported\n");
+
+    ret = ExtEscape(hdc, GETFACENAME, 0, NULL, sizeof(buf), buf);
+    ok(ret == 1, "GETFACENAME failed\n");
+    trace("face name: %s\n", buf);
+
+    print_something(hdc);
+
+    DeleteDC(hdc);
+}
+
 START_TEST(dc)
 {
     pSetLayout = (void *)GetProcAddress( GetModuleHandleA("gdi32.dll"), "SetLayout");
@@ -1377,4 +1502,5 @@ START_TEST(dc)
     test_desktop_colorres();
     test_gamma();
     test_printer_dc();
+    test_pscript_printer_dc();
 }

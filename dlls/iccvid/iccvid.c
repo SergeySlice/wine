@@ -51,6 +51,7 @@
 #include "iccvid_private.h"
 
 #include "wine/debug.h"
+#include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(iccvid);
 
@@ -80,16 +81,6 @@ typedef struct _ICCVID_Info
     int           bits_per_pixel;
     cinepak_info *cvinfo;
 } ICCVID_Info;
-
-static inline LPVOID heap_alloc( size_t size )
-{
-    return HeapAlloc( GetProcessHeap(), 0, size );
-}
-
-static inline BOOL heap_free( LPVOID ptr )
-{
-    return HeapFree( GetProcessHeap(), 0, ptr );
-}
 
 
 /* ------------------------------------------------------------------------ */
@@ -962,8 +953,8 @@ static LRESULT ICCVID_GetInfo( ICCVID_Info *info, ICINFO *icinfo, DWORD dwSize )
     icinfo->dwVersion = ICVERSION;
     icinfo->dwVersionICM = ICVERSION;
 
-    LoadStringW(ICCVID_hModule, IDS_NAME, icinfo->szName, sizeof(icinfo->szName)/sizeof(WCHAR));
-    LoadStringW(ICCVID_hModule, IDS_DESCRIPTION, icinfo->szDescription, sizeof(icinfo->szDescription)/sizeof(WCHAR));
+    LoadStringW(ICCVID_hModule, IDS_NAME, icinfo->szName, ARRAY_SIZE(icinfo->szName));
+    LoadStringW(ICCVID_hModule, IDS_DESCRIPTION, icinfo->szDescription, ARRAY_SIZE(icinfo->szDescription));
     /* msvfw32 will fill icinfo->szDriver for us */
 
     return sizeof(ICINFO);

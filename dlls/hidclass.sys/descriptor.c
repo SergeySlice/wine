@@ -440,10 +440,8 @@ static void parse_io_feature(unsigned int bSize, int itemVal, int bTag,
 static void parse_collection(unsigned int bSize, int itemVal,
                              struct collection *collection)
 {
-    if (bSize <= 0)
-        return;
-    else
-     {
+    if (bSize)
+    {
         collection->type = itemVal;
 
         if (itemVal >= 0x07 && itemVal <= 0x7F) {
@@ -840,8 +838,7 @@ static WINE_HIDP_PREPARSED_DATA* build_PreparseData(
     if (features[0]->caps.ReportID != 0)
     {
         unsigned int *report_ids;
-        unsigned int cnt = max(i_count, o_count);
-        cnt = max(cnt, f_count);
+        unsigned int cnt = i_count + o_count + f_count;
         report_ids = HeapAlloc(GetProcessHeap(), 0 , sizeof(*report_ids) * cnt);
 
         if (i_count)

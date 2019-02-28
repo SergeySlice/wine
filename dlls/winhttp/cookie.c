@@ -17,24 +17,39 @@
  */
 
 #include "config.h"
+#include "ws2tcpip.h"
 #include <stdarg.h>
-
-#include "wine/debug.h"
-#include "wine/list.h"
 
 #include "windef.h"
 #include "winbase.h"
 #include "winhttp.h"
 
+#include "wine/debug.h"
+#include "wine/list.h"
 #include "winhttp_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(winhttp);
 
-static domain_t *add_domain( session_t *session, WCHAR *name )
+struct cookie
 {
-    domain_t *domain;
+    struct list entry;
+    WCHAR *name;
+    WCHAR *value;
+    WCHAR *path;
+};
 
-    if (!(domain = heap_alloc_zero( sizeof(domain_t) ))) return NULL;
+struct domain
+{
+    struct list entry;
+    WCHAR *name;
+    struct list cookies;
+};
+
+static struct domain *add_domain( struct session *session, WCHAR *name )
+{
+    struct domain *domain;
+
+    if (!(domain = heap_alloc_zero( sizeof(struct domain) ))) return NULL;
 
     list_init( &domain->entry );
     list_init( &domain->cookies );
@@ -46,14 +61,14 @@ static domain_t *add_domain( session_t *session, WCHAR *name )
     return domain;
 }
 
-static cookie_t *find_cookie( domain_t *domain, const WCHAR *path, const WCHAR *name )
+static struct cookie *find_cookie( struct domain *domain, const WCHAR *path, const WCHAR *name )
 {
     struct list *item;
-    cookie_t *cookie;
+    struct cookie *cookie;
 
     LIST_FOR_EACH( item, &domain->cookies )
     {
-        cookie = LIST_ENTRY( item, cookie_t, entry );
+        cookie = LIST_ENTRY( item, struct cookie, entry );
         if (!strcmpW( cookie->path, path ) && !strcmpW( cookie->name, name ))
         {
             TRACE("found %s=%s\n", debugstr_w(cookie->name), debugstr_w(cookie->value));
@@ -63,7 +78,7 @@ static cookie_t *find_cookie( domain_t *domain, const WCHAR *path, const WCHAR *
     return NULL;
 }
 
-static BOOL domain_match( const WCHAR *name, domain_t *domain, BOOL partial )
+static BOOL domain_match( const WCHAR *name, struct domain *domain, BOOL partial )
 {
     TRACE("comparing %s with %s\n", debugstr_w(name), debugstr_w(domain->name));
 
@@ -72,7 +87,7 @@ static BOOL domain_match( const WCHAR *name, domain_t *domain, BOOL partial )
     return TRUE;
 }
 
-static void free_cookie( cookie_t *cookie )
+static void free_cookie( struct cookie *cookie )
 {
     heap_free( cookie->name );
     heap_free( cookie->value );
@@ -80,20 +95,20 @@ static void free_cookie( cookie_t *cookie )
     heap_free( cookie );
 }
 
-static void delete_cookie( cookie_t *cookie )
+static void delete_cookie( struct cookie *cookie )
 {
     list_remove( &cookie->entry );
     free_cookie( cookie );
 }
 
-void delete_domain( domain_t *domain )
+static void delete_domain( struct domain *domain )
 {
-    cookie_t *cookie;
+    struct cookie *cookie;
     struct list *item, *next;
 
     LIST_FOR_EACH_SAFE( item, next, &domain->cookies )
     {
-        cookie = LIST_ENTRY( item, cookie_t, entry );
+        cookie = LIST_ENTRY( item, struct cookie, entry );
         delete_cookie( cookie );
     }
 
@@ -102,35 +117,51 @@ void delete_domain( domain_t *domain )
     heap_free( domain );
 }
 
-static BOOL add_cookie( session_t *session, cookie_t *cookie, WCHAR *domain_name, WCHAR *path )
+void destroy_cookies( struct session *session )
 {
-    domain_t *domain = NULL;
-    cookie_t *old_cookie;
+    struct list *item, *next;
+    struct domain *domain;
+
+    LIST_FOR_EACH_SAFE( item, next, &session->cookie_cache )
+    {
+        domain = LIST_ENTRY( item, struct domain, entry );
+        delete_domain( domain );
+    }
+}
+
+static BOOL add_cookie( struct session *session, struct cookie *cookie, WCHAR *domain_name, WCHAR *path )
+{
+    struct domain *domain = NULL;
+    struct cookie *old_cookie;
     struct list *item;
+
+    if (!(cookie->path = strdupW( path ))) return FALSE;
+
+    EnterCriticalSection( &session->cs );
 
     LIST_FOR_EACH( item, &session->cookie_cache )
     {
-        domain = LIST_ENTRY( item, domain_t, entry );
+        domain = LIST_ENTRY( item, struct domain, entry );
         if (domain_match( domain_name, domain, FALSE )) break;
         domain = NULL;
     }
-    if (!domain)
-    {
-        if (!(domain = add_domain( session, domain_name ))) return FALSE;
-    }
+    if (!domain) domain = add_domain( session, domain_name );
     else if ((old_cookie = find_cookie( domain, path, cookie->name ))) delete_cookie( old_cookie );
 
-    cookie->path = strdupW( path );
-    list_add_head( &domain->cookies, &cookie->entry );
+    if (domain)
+    {
+        list_add_head( &domain->cookies, &cookie->entry );
+        TRACE("domain %s path %s <- %s=%s\n", debugstr_w(domain_name), debugstr_w(cookie->path),
+              debugstr_w(cookie->name), debugstr_w(cookie->value));
+    }
 
-    TRACE("domain %s path %s <- %s=%s\n", debugstr_w(domain_name), debugstr_w(cookie->path),
-          debugstr_w(cookie->name), debugstr_w(cookie->value));
-    return TRUE;
+    LeaveCriticalSection( &session->cs );
+    return domain != NULL;
 }
 
-static cookie_t *parse_cookie( const WCHAR *string )
+static struct cookie *parse_cookie( const WCHAR *string )
 {
-    cookie_t *cookie;
+    struct cookie *cookie;
     const WCHAR *p;
     int len;
 
@@ -139,7 +170,7 @@ static cookie_t *parse_cookie( const WCHAR *string )
     while (len && string[len - 1] == ' ') len--;
     if (!len) return NULL;
 
-    if (!(cookie = heap_alloc_zero( sizeof(cookie_t) ))) return NULL;
+    if (!(cookie = heap_alloc_zero( sizeof(struct cookie) ))) return NULL;
     list_init( &cookie->entry );
 
     if (!(cookie->name = heap_alloc( (len + 1) * sizeof(WCHAR) )))
@@ -152,7 +183,7 @@ static cookie_t *parse_cookie( const WCHAR *string )
 
     if (*p++ == '=')
     {
-        while (*p && *p == ' ') p++;
+        while (*p == ' ') p++;
         len = strlenW( p );
         while (len && p[len - 1] == ' ') len--;
 
@@ -167,17 +198,79 @@ static cookie_t *parse_cookie( const WCHAR *string )
     return cookie;
 }
 
-BOOL set_cookies( request_t *request, const WCHAR *cookies )
+struct attr
+{
+    WCHAR *name;
+    WCHAR *value;
+};
+
+static void free_attr( struct attr *attr )
+{
+    if (!attr) return;
+    heap_free( attr->name );
+    heap_free( attr->value );
+    heap_free( attr );
+}
+
+static struct attr *parse_attr( const WCHAR *str, int *used )
+{
+    const WCHAR *p = str, *q;
+    struct attr *attr;
+    int len;
+
+    while (*p == ' ') p++;
+    q = p;
+    while (*q && *q != ' ' && *q != '=' && *q != ';') q++;
+    len = q - p;
+    if (!len) return NULL;
+
+    if (!(attr = heap_alloc( sizeof(struct attr) ))) return NULL;
+    if (!(attr->name = heap_alloc( (len + 1) * sizeof(WCHAR) )))
+    {
+        heap_free( attr );
+        return NULL;
+    }
+    memcpy( attr->name, p, len * sizeof(WCHAR) );
+    attr->name[len] = 0;
+    attr->value = NULL;
+
+    p = q;
+    while (*p == ' ') p++;
+    if (*p++ == '=')
+    {
+        while (*p == ' ') p++;
+        q = p;
+        while (*q && *q != ';') q++;
+        len = q - p;
+        while (len && p[len - 1] == ' ') len--;
+
+        if (!(attr->value = heap_alloc( (len + 1) * sizeof(WCHAR) )))
+        {
+            free_attr( attr );
+            return NULL;
+        }
+        memcpy( attr->value, p, len * sizeof(WCHAR) );
+        attr->value[len] = 0;
+    }
+
+    while (*q == ' ') q++;
+    if (*q == ';') q++;
+    *used = q - str;
+
+    return attr;
+}
+
+BOOL set_cookies( struct request *request, const WCHAR *cookies )
 {
     static const WCHAR pathW[] = {'p','a','t','h',0};
     static const WCHAR domainW[] = {'d','o','m','a','i','n',0};
-
     BOOL ret = FALSE;
-    WCHAR *buffer, *p, *q, *r;
+    WCHAR *buffer, *p;
     WCHAR *cookie_domain = NULL, *cookie_path = NULL;
-    session_t *session = request->connect->session;
-    cookie_t *cookie;
-    int len;
+    struct attr *attr, *domain = NULL, *path = NULL;
+    struct session *session = request->connect->session;
+    struct cookie *cookie;
+    int len, used;
 
     len = strlenW( cookies );
     if (!(buffer = heap_alloc( (len + 1) * sizeof(WCHAR) ))) return FALSE;
@@ -191,32 +284,26 @@ BOOL set_cookies( request_t *request, const WCHAR *cookies )
         heap_free( buffer );
         return FALSE;
     }
-    if ((q = strstrW( p, domainW ))) /* FIXME: do real attribute parsing */
+    len = strlenW( p );
+    while (len && (attr = parse_attr( p, &used )))
     {
-        while (*q && *q != '=') q++;
-        if (!*q) goto end;
-
-        r = ++q;
-        while (*r && *r != ';') r++;
-        len = r - q;
-
-        if (!(cookie_domain = heap_alloc( (len + 1) * sizeof(WCHAR) ))) goto end;
-        memcpy( cookie_domain, q, len * sizeof(WCHAR) );
-        cookie_domain[len] = 0;
-
-    }
-    if ((q = strstrW( p, pathW )))
-    {
-        while (*q && *q != '=') q++;
-        if (!*q) goto end;
-
-        r = ++q;
-        while (*r && *r != ';') r++;
-        len = r - q;
-
-        if (!(cookie_path = heap_alloc( (len + 1) * sizeof(WCHAR) ))) goto end;
-        memcpy( cookie_path, q, len * sizeof(WCHAR) );
-        cookie_path[len] = 0;
+        if (!strcmpiW( attr->name, domainW ))
+        {
+            domain = attr;
+            cookie_domain = attr->value;
+        }
+        else if (!strcmpiW( attr->name, pathW ))
+        {
+            path = attr;
+            cookie_path = attr->value;
+        }
+        else
+        {
+            FIXME( "unhandled attribute %s\n", debugstr_w(attr->name) );
+            free_attr( attr );
+        }
+        len -= used;
+        p += used;
     }
     if (!cookie_domain && !(cookie_domain = strdupW( request->connect->servername ))) goto end;
     if (!cookie_path && !(cookie_path = strdupW( request->path ))) goto end;
@@ -226,20 +313,24 @@ BOOL set_cookies( request_t *request, const WCHAR *cookies )
 
 end:
     if (!ret) free_cookie( cookie );
-    heap_free( cookie_domain );
-    heap_free( cookie_path );
+    if (domain) free_attr( domain );
+    else heap_free( cookie_domain );
+    if (path) free_attr( path );
+    else heap_free( cookie_path );
     heap_free( buffer );
     return ret;
 }
 
-BOOL add_cookie_headers( request_t *request )
+BOOL add_cookie_headers( struct request *request )
 {
     struct list *domain_cursor;
-    session_t *session = request->connect->session;
+    struct session *session = request->connect->session;
+
+    EnterCriticalSection( &session->cs );
 
     LIST_FOR_EACH( domain_cursor, &session->cookie_cache )
     {
-        domain_t *domain = LIST_ENTRY( domain_cursor, domain_t, entry );
+        struct domain *domain = LIST_ENTRY( domain_cursor, struct domain, entry );
         if (domain_match( request->connect->servername, domain, TRUE ))
         {
             struct list *cookie_cursor;
@@ -247,19 +338,23 @@ BOOL add_cookie_headers( request_t *request )
 
             LIST_FOR_EACH( cookie_cursor, &domain->cookies )
             {
-                cookie_t *cookie = LIST_ENTRY( cookie_cursor, cookie_t, entry );
+                struct cookie *cookie = LIST_ENTRY( cookie_cursor, struct cookie, entry );
 
                 TRACE("comparing path %s with %s\n", debugstr_w(request->path), debugstr_w(cookie->path));
 
                 if (strstrW( request->path, cookie->path ) == request->path)
                 {
-                    const WCHAR cookieW[] = {'C','o','o','k','i','e',':',' '};
-                    int len, len_cookie = sizeof(cookieW) / sizeof(cookieW[0]), len_name = strlenW( cookie->name );
+                    static const WCHAR cookieW[] = {'C','o','o','k','i','e',':',' '};
+                    int len, len_cookie = ARRAY_SIZE( cookieW ), len_name = strlenW( cookie->name );
                     WCHAR *header;
 
                     len = len_cookie + len_name;
                     if (cookie->value) len += strlenW( cookie->value ) + 1;
-                    if (!(header = heap_alloc( (len + 1) * sizeof(WCHAR) ))) return FALSE;
+                    if (!(header = heap_alloc( (len + 1) * sizeof(WCHAR) )))
+                    {
+                        LeaveCriticalSection( &session->cs );
+                        return FALSE;
+                    }
 
                     memcpy( header, cookieW, len_cookie * sizeof(WCHAR) );
                     strcpyW( header + len_cookie, cookie->name );
@@ -277,5 +372,7 @@ BOOL add_cookie_headers( request_t *request )
             }
         }
     }
+
+    LeaveCriticalSection( &session->cs );
     return TRUE;
 }

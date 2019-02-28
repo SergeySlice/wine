@@ -37,9 +37,42 @@ static unsigned int dd_mode_count;
 static unsigned int max_width;
 static unsigned int max_height;
 
-static const unsigned int widths[]  = {320, 320, 400, 512, 640, 640, 800, 1024, 1152, 1280, 1280, 1400, 1600};
-static const unsigned int heights[] = {200, 240, 300, 384, 400, 480, 600,  768,  864,  960, 1024, 1050, 1200};
-#define NUM_DESKTOP_MODES (sizeof(widths) / sizeof(widths[0]))
+static struct screen_size {
+    unsigned int width;
+    unsigned int height;
+} screen_sizes[] = {
+    /* 4:3 */
+    { 320,  240},
+    { 400,  300},
+    { 512,  384},
+    { 640,  480},
+    { 768,  576},
+    { 800,  600},
+    {1024,  768},
+    {1152,  864},
+    {1280,  960},
+    {1400, 1050},
+    {1600, 1200},
+    {2048, 1536},
+    /* 5:4 */
+    {1280, 1024},
+    {2560, 2048},
+    /* 16:9 */
+    {1280,  720},
+    {1366,  768},
+    {1600,  900},
+    {1920, 1080},
+    {2560, 1440},
+    {3840, 2160},
+    /* 16:10 */
+    { 320,  200},
+    { 640,  400},
+    {1280,  800},
+    {1440,  900},
+    {1680, 1050},
+    {1920, 1200},
+    {2560, 1600}
+};
 
 #define _NET_WM_STATE_REMOVE 0
 #define _NET_WM_STATE_ADD 1
@@ -54,15 +87,15 @@ static void make_modes(void)
 
     /* original specified desktop size */
     X11DRV_Settings_AddOneMode(screen_width, screen_height, 0, 60);
-    for (i=0; i<NUM_DESKTOP_MODES; i++)
+    for (i=0; i<ARRAY_SIZE(screen_sizes); i++)
     {
-        if ( (widths[i] <= max_width) && (heights[i] <= max_height) )
+        if ( (screen_sizes[i].width <= max_width) && (screen_sizes[i].height <= max_height) )
         {
-            if ( ( (widths[i] != max_width) || (heights[i] != max_height) ) &&
-                 ( (widths[i] != screen_width) || (heights[i] != screen_height) ) )
+            if ( ( (screen_sizes[i].width != max_width) || (screen_sizes[i].height != max_height) ) &&
+                 ( (screen_sizes[i].width != screen_width) || (screen_sizes[i].height != screen_height) ) )
             {
                 /* only add them if they are smaller than the root window and unique */
-                X11DRV_Settings_AddOneMode(widths[i], heights[i], 0, 60);
+                X11DRV_Settings_AddOneMode(screen_sizes[i].width, screen_sizes[i].height, 0, 60);
             }
         }
     }
@@ -126,7 +159,7 @@ void X11DRV_init_desktop( Window win, unsigned int width, unsigned int height )
     dd_modes = X11DRV_Settings_SetHandlers("desktop", 
                                            X11DRV_desktop_GetCurrentMode, 
                                            X11DRV_desktop_SetCurrentMode, 
-                                           NUM_DESKTOP_MODES+2, 1);
+                                           ARRAY_SIZE(screen_sizes)+2, 1);
     make_modes();
     X11DRV_Settings_AddDepthModes();
     dd_mode_count = X11DRV_Settings_GetModeCount();
@@ -140,12 +173,21 @@ void X11DRV_init_desktop( Window win, unsigned int width, unsigned int height )
  */
 BOOL CDECL X11DRV_create_desktop( UINT width, UINT height )
 {
+    static const WCHAR rootW[] = {'r','o','o','t',0};
     XSetWindowAttributes win_attr;
     Window win;
     Display *display = thread_init_display();
     RECT rect;
+    WCHAR name[MAX_PATH];
 
-    TRACE( "%u x %u\n", width, height );
+    if (!GetUserObjectInformationW( GetThreadDesktop( GetCurrentThreadId() ),
+                                    UOI_NAME, name, sizeof(name), NULL ))
+        name[0] = 0;
+
+    TRACE( "%s %ux%u\n", debugstr_w(name), width, height );
+
+    /* magic: desktop "root" means use the root window */
+    if (!lstrcmpiW( name, rootW )) return FALSE;
 
     /* Create window */
     win_attr.event_mask = ExposureMask | KeyPressMask | KeyReleaseMask | EnterWindowMask |
@@ -265,9 +307,7 @@ void X11DRV_resize_desktop( unsigned int width, unsigned int height )
 
     if (GetWindowThreadProcessId( hwnd, NULL ) != GetCurrentThreadId())
     {
-        SendMessageTimeoutW( hwnd, WM_X11DRV_RESIZE_DESKTOP, 0,
-                             MAKELPARAM( width, height ), SMTO_BLOCK, ~0U, NULL );
-        SendNotifyMessageW( HWND_BROADCAST, WM_DISPLAYCHANGE, screen_bpp, MAKELPARAM( width, height ) );
+        SendMessageW( hwnd, WM_X11DRV_RESIZE_DESKTOP, 0, MAKELPARAM( width, height ) );
     }
     else
     {
@@ -278,6 +318,8 @@ void X11DRV_resize_desktop( unsigned int width, unsigned int height )
                       resize_data.new_virtual_rect.bottom - resize_data.new_virtual_rect.top,
                       SWP_NOZORDER | SWP_NOACTIVATE | SWP_DEFERERASE );
         ungrab_clipping_window();
+        SendMessageTimeoutW( HWND_BROADCAST, WM_DISPLAYCHANGE, screen_bpp,
+                             MAKELPARAM( width, height ), SMTO_ABORTIFHUNG, 2000, NULL );
     }
 
     EnumWindows( update_windows_on_desktop_resize, (LPARAM)&resize_data );

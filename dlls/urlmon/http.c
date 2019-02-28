@@ -32,6 +32,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(urlmon);
 typedef struct {
     Protocol base;
 
+    IUnknown            IUnknown_outer;
     IInternetProtocolEx IInternetProtocolEx_iface;
     IInternetPriority   IInternetPriority_iface;
     IWinInetHttpInfo    IWinInetHttpInfo_iface;
@@ -41,7 +42,13 @@ typedef struct {
     WCHAR *full_header;
 
     LONG ref;
+    IUnknown *outer;
 } HttpProtocol;
+
+static inline HttpProtocol *impl_from_IUnknown(IUnknown *iface)
+{
+    return CONTAINING_RECORD(iface, HttpProtocol, IUnknown_outer);
+}
 
 static inline HttpProtocol *impl_from_IInternetProtocolEx(IInternetProtocolEx *iface)
 {
@@ -335,7 +342,7 @@ static HRESULT HttpProtocol_open_request(Protocol *prot, IUri *uri, DWORD reques
         CoTaskMemFree(rootdoc_url);
     }
 
-    num = sizeof(accept_mimes)/sizeof(accept_mimes[0])-1;
+    num = ARRAY_SIZE(accept_mimes) - 1;
     hres = IInternetBindInfo_GetBindString(bind_info, BINDSTRING_ACCEPT_MIMES, accept_mimes, num, &num);
     if(hres == INET_E_USE_DEFAULT_SETTING) {
         static const WCHAR default_accept_mimeW[] = {'*','/','*',0};
@@ -421,7 +428,7 @@ static HRESULT HttpProtocol_open_request(Protocol *prot, IUri *uri, DWORD reques
         WARN("IServiceProvider_QueryService IID_IHttpNegotiate2 failed: %08x\n", hres);
         /* No goto done as per native */
     }else {
-        len = sizeof(security_id)/sizeof(security_id[0]);
+        len = ARRAY_SIZE(security_id);
         hres = IHttpNegotiate2_GetRootSecurityId(http_negotiate2, security_id, &len, 0);
         IHttpNegotiate2_Release(http_negotiate2);
         if (hres != S_OK)
@@ -485,6 +492,18 @@ static HRESULT HttpProtocol_end_request(Protocol *protocol)
     return S_OK;
 }
 
+static BOOL is_redirect_response(DWORD status_code)
+{
+    switch(status_code) {
+    case HTTP_STATUS_REDIRECT:
+    case HTTP_STATUS_MOVED:
+    case HTTP_STATUS_REDIRECT_KEEP_VERB:
+    case HTTP_STATUS_REDIRECT_METHOD:
+        return TRUE;
+    }
+    return FALSE;
+}
+
 static HRESULT HttpProtocol_start_downloading(Protocol *prot)
 {
     HttpProtocol *This = impl_from_Protocol(prot);
@@ -505,7 +524,21 @@ static HRESULT HttpProtocol_start_downloading(Protocol *prot)
     res = HttpQueryInfoW(This->base.request, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER,
             &status_code, &len, NULL);
     if(res) {
-        LPWSTR response_headers = query_http_info(This, HTTP_QUERY_RAW_HEADERS_CRLF);
+        WCHAR *response_headers;
+
+        if((This->base.bind_info.dwOptions & BINDINFO_OPTIONS_DISABLEAUTOREDIRECTS) && is_redirect_response(status_code)) {
+            WCHAR *location;
+
+            TRACE("Got redirect with disabled auto redirects\n");
+
+            location = query_http_info(This, HTTP_QUERY_LOCATION);
+            This->base.flags |= FLAG_RESULT_REPORTED | FLAG_LAST_DATA_REPORTED;
+            IInternetProtocolSink_ReportResult(This->base.protocol_sink, INET_E_REDIRECT_FAILED, 0, location);
+            heap_free(location);
+            return INET_E_REDIRECT_FAILED;
+        }
+
+        response_headers = query_http_info(This, HTTP_QUERY_RAW_HEADERS_CRLF);
         if(response_headers) {
             hres = IHttpNegotiate_OnResponse(This->http_negotiate, status_code, response_headers,
                     NULL, NULL);
@@ -598,14 +631,13 @@ static const ProtocolVtbl AsyncProtocolVtbl = {
     HttpProtocol_on_error
 };
 
-static HRESULT WINAPI HttpProtocol_QueryInterface(IInternetProtocolEx *iface, REFIID riid, void **ppv)
+static HRESULT WINAPI HttpProtocolUnk_QueryInterface(IUnknown *iface, REFIID riid, void **ppv)
 {
-    HttpProtocol *This = impl_from_IInternetProtocolEx(iface);
+    HttpProtocol *This = impl_from_IUnknown(iface);
 
-    *ppv = NULL;
     if(IsEqualGUID(&IID_IUnknown, riid)) {
         TRACE("(%p)->(IID_IUnknown %p)\n", This, ppv);
-        *ppv = &This->IInternetProtocolEx_iface;
+        *ppv = &This->IUnknown_outer;
     }else if(IsEqualGUID(&IID_IInternetProtocolRoot, riid)) {
         TRACE("(%p)->(IID_IInternetProtocolRoot %p)\n", This, ppv);
         *ppv = &This->IInternetProtocolEx_iface;
@@ -624,28 +656,27 @@ static HRESULT WINAPI HttpProtocol_QueryInterface(IInternetProtocolEx *iface, RE
     }else if(IsEqualGUID(&IID_IWinInetHttpInfo, riid)) {
         TRACE("(%p)->(IID_IWinInetHttpInfo %p)\n", This, ppv);
         *ppv = &This->IWinInetHttpInfo_iface;
+    }else {
+        *ppv = NULL;
+        WARN("not supported interface %s\n", debugstr_guid(riid));
+        return E_NOINTERFACE;
     }
 
-    if(*ppv) {
-        IInternetProtocolEx_AddRef(iface);
-        return S_OK;
-    }
-
-    WARN("not supported interface %s\n", debugstr_guid(riid));
-    return E_NOINTERFACE;
+    IUnknown_AddRef((IUnknown*)*ppv);
+    return S_OK;
 }
 
-static ULONG WINAPI HttpProtocol_AddRef(IInternetProtocolEx *iface)
+static ULONG WINAPI HttpProtocolUnk_AddRef(IUnknown *iface)
 {
-    HttpProtocol *This = impl_from_IInternetProtocolEx(iface);
+    HttpProtocol *This = impl_from_IUnknown(iface);
     LONG ref = InterlockedIncrement(&This->ref);
     TRACE("(%p) ref=%d\n", This, ref);
     return ref;
 }
 
-static ULONG WINAPI HttpProtocol_Release(IInternetProtocolEx *iface)
+static ULONG WINAPI HttpProtocolUnk_Release(IUnknown *iface)
 {
-    HttpProtocol *This = impl_from_IInternetProtocolEx(iface);
+    HttpProtocol *This = impl_from_IUnknown(iface);
     LONG ref = InterlockedDecrement(&This->ref);
 
     TRACE("(%p) ref=%d\n", This, ref);
@@ -658,6 +689,33 @@ static ULONG WINAPI HttpProtocol_Release(IInternetProtocolEx *iface)
     }
 
     return ref;
+}
+
+static const IUnknownVtbl HttpProtocolUnkVtbl = {
+    HttpProtocolUnk_QueryInterface,
+    HttpProtocolUnk_AddRef,
+    HttpProtocolUnk_Release
+};
+
+static HRESULT WINAPI HttpProtocol_QueryInterface(IInternetProtocolEx *iface, REFIID riid, void **ppv)
+{
+    HttpProtocol *This = impl_from_IInternetProtocolEx(iface);
+    TRACE("(%p)->(%s %p)\n", This, debugstr_guid(riid), ppv);
+    return IUnknown_QueryInterface(This->outer, riid, ppv);
+}
+
+static ULONG WINAPI HttpProtocol_AddRef(IInternetProtocolEx *iface)
+{
+    HttpProtocol *This = impl_from_IInternetProtocolEx(iface);
+    TRACE("(%p)\n", This);
+    return IUnknown_AddRef(This->outer);
+}
+
+static ULONG WINAPI HttpProtocol_Release(IInternetProtocolEx *iface)
+{
+    HttpProtocol *This = impl_from_IInternetProtocolEx(iface);
+    TRACE("(%p)\n", This);
+    return IUnknown_Release(This->outer);
 }
 
 static HRESULT WINAPI HttpProtocol_Start(IInternetProtocolEx *iface, LPCWSTR szUrl,
@@ -886,11 +944,9 @@ static HRESULT WINAPI HttpInfo_QueryInfo(IWinInetHttpInfo *iface, DWORD dwOption
     if(!This->base.request)
         return E_FAIL;
 
-    if(!HttpQueryInfoW(This->base.request, dwOption, pBuffer, pcbBuffer, pdwFlags)) {
-        if(pBuffer)
-            memset(pBuffer, 0, *pcbBuffer);
-        return S_OK;
-    }
+    if(!HttpQueryInfoA(This->base.request, dwOption, pBuffer, pcbBuffer, pdwFlags))
+        return S_FALSE;
+
     return S_OK;
 }
 
@@ -902,7 +958,7 @@ static const IWinInetHttpInfoVtbl WinInetHttpInfoVtbl = {
     HttpInfo_QueryInfo
 };
 
-static HRESULT create_http_protocol(BOOL https, void **ppobj)
+static HRESULT create_http_protocol(BOOL https, IUnknown *outer, void **ppobj)
 {
     HttpProtocol *ret;
 
@@ -911,29 +967,31 @@ static HRESULT create_http_protocol(BOOL https, void **ppobj)
         return E_OUTOFMEMORY;
 
     ret->base.vtbl = &AsyncProtocolVtbl;
+    ret->IUnknown_outer.lpVtbl            = &HttpProtocolUnkVtbl;
     ret->IInternetProtocolEx_iface.lpVtbl = &HttpProtocolVtbl;
     ret->IInternetPriority_iface.lpVtbl   = &HttpPriorityVtbl;
     ret->IWinInetHttpInfo_iface.lpVtbl    = &WinInetHttpInfoVtbl;
 
     ret->https = https;
     ret->ref = 1;
+    ret->outer = outer ? outer : &ret->IUnknown_outer;
 
-    *ppobj = &ret->IInternetProtocolEx_iface;
+    *ppobj = &ret->IUnknown_outer;
 
     URLMON_LockModule();
     return S_OK;
 }
 
-HRESULT HttpProtocol_Construct(IUnknown *pUnkOuter, LPVOID *ppobj)
+HRESULT HttpProtocol_Construct(IUnknown *outer, void **ppv)
 {
-    TRACE("(%p %p)\n", pUnkOuter, ppobj);
+    TRACE("(%p %p)\n", outer, ppv);
 
-    return create_http_protocol(FALSE, ppobj);
+    return create_http_protocol(FALSE, outer, ppv);
 }
 
-HRESULT HttpSProtocol_Construct(IUnknown *pUnkOuter, LPVOID *ppobj)
+HRESULT HttpSProtocol_Construct(IUnknown *outer, void **ppv)
 {
-    TRACE("(%p %p)\n", pUnkOuter, ppobj);
+    TRACE("(%p %p)\n", outer, ppv);
 
-    return create_http_protocol(TRUE, ppobj);
+    return create_http_protocol(TRUE, outer, ppv);
 }

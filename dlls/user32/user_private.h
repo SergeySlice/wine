@@ -28,9 +28,12 @@
 #include "winuser.h"
 #include "winreg.h"
 #include "winternl.h"
+#include "wine/heap.h"
+#include "wine/unicode.h"
 
 #define GET_WORD(ptr)  (*(const WORD *)(ptr))
 #define GET_DWORD(ptr) (*(const DWORD *)(ptr))
+#define GET_LONG(ptr) (*(const LONG *)(ptr))
 
 #define WM_SYSTIMER	    0x0118
 #define WM_POPUPSYSTEMMENU  0x0313
@@ -48,7 +51,7 @@ enum wine_internal_message
     WM_WINE_SHOWWINDOW,
     WM_WINE_SETPARENT,
     WM_WINE_SETWINDOWLONG,
-    WM_WINE_ENABLEWINDOW,
+    WM_WINE_SETSTYLE,
     WM_WINE_SETACTIVEWINDOW,
     WM_WINE_KEYBOARD_LL_HOOK,
     WM_WINE_MOUSE_LL_HOOK,
@@ -173,14 +176,16 @@ struct user_thread_info
     WORD                          recursion_count;        /* SendMessage recursion counter */
     WORD                          message_count;          /* Get/PeekMessage loop counter */
     WORD                          hook_call_depth;        /* Number of recursively called hook procs */
-    BOOL                          hook_unicode;           /* Is current hook unicode? */
+    WORD                          hook_unicode;           /* Is current hook unicode? */
     HHOOK                         hook;                   /* Current hook */
+    UINT                          active_hooks;           /* Bitmap of active hooks */
+    DPI_AWARENESS                 dpi_awareness;          /* DPI awareness */
+    INPUT_MESSAGE_SOURCE          msg_source;             /* Message source for current message */
     struct received_message_info *receive_info;           /* Message being currently received */
     struct wm_char_mapping_data  *wmchar_data;            /* Data for WM_CHAR mappings */
     DWORD                         GetMessageTimeVal;      /* Value for GetMessageTime */
     DWORD                         GetMessagePosVal;       /* Value for GetMessagePos */
     ULONG_PTR                     GetMessageExtraInfoVal; /* Value for GetMessageExtraInfo */
-    UINT                          active_hooks;           /* Bitmap of active hooks */
     struct user_key_state_info   *key_state;              /* Cache of global key state */
     HWND                          top_window;             /* Desktop window */
     HWND                          msg_window;             /* HWND_MESSAGE parent window */
@@ -227,11 +232,15 @@ extern BOOL FOCUS_MouseActivate( HWND hwnd ) DECLSPEC_HIDDEN;
 extern BOOL set_capture_window( HWND hwnd, UINT gui_flags, HWND *prev_ret ) DECLSPEC_HIDDEN;
 extern void free_dce( struct dce *dce, HWND hwnd ) DECLSPEC_HIDDEN;
 extern void invalidate_dce( struct tagWND *win, const RECT *rect ) DECLSPEC_HIDDEN;
+extern HDC get_display_dc(void) DECLSPEC_HIDDEN;
+extern void release_display_dc( HDC hdc ) DECLSPEC_HIDDEN;
 extern void erase_now( HWND hwnd, UINT rdw_flags ) DECLSPEC_HIDDEN;
 extern void move_window_bits( HWND hwnd, struct window_surface *old_surface,
                               struct window_surface *new_surface,
                               const RECT *visible_rect, const RECT *old_visible_rect,
-                              const RECT *client_rect, const RECT *valid_rects ) DECLSPEC_HIDDEN;
+                              const RECT *window_rect, const RECT *valid_rects ) DECLSPEC_HIDDEN;
+extern void move_window_bits_parent( HWND hwnd, HWND parent, const RECT *window_rect,
+                                     const RECT *valid_rects ) DECLSPEC_HIDDEN;
 extern void *get_hook_proc( void *proc, const WCHAR *module, HMODULE *free_module ) DECLSPEC_HIDDEN;
 extern RECT get_virtual_screen_rect(void) DECLSPEC_HIDDEN;
 extern LRESULT call_current_hook( HHOOK hhook, INT code, WPARAM wparam, LPARAM lparam ) DECLSPEC_HIDDEN;
@@ -247,7 +256,7 @@ extern void SYSPARAMS_Init(void) DECLSPEC_HIDDEN;
 extern void USER_CheckNotLock(void) DECLSPEC_HIDDEN;
 extern BOOL USER_IsExitingThread( DWORD tid ) DECLSPEC_HIDDEN;
 
-extern BOOL USER_SetWindowPos( WINDOWPOS * winpos ) DECLSPEC_HIDDEN;
+extern BOOL USER_SetWindowPos( WINDOWPOS * winpos, int parent_x, int parent_y ) DECLSPEC_HIDDEN;
 
 typedef LRESULT (*winproc_callback_t)( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
                                        LRESULT *result, void *arg );
@@ -264,6 +273,9 @@ extern INT_PTR WINPROC_CallDlgProcA( DLGPROC func, HWND hwnd, UINT msg, WPARAM w
 extern INT_PTR WINPROC_CallDlgProcW( DLGPROC func, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam ) DECLSPEC_HIDDEN;
 extern BOOL WINPROC_call_window( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
                                  LRESULT *result, BOOL unicode, enum wm_char_mapping mapping ) DECLSPEC_HIDDEN;
+
+extern const WCHAR *CLASS_GetVersionedName(const WCHAR *classname, UINT *basename_offset,
+        WCHAR *combined, BOOL register_class) DECLSPEC_HIDDEN;
 
 /* message spy definitions */
 
@@ -345,5 +357,15 @@ extern BOOL get_icon_size( HICON handle, SIZE *size ) DECLSPEC_HIDDEN;
 #undef assert
 #define assert(expr) ((void)0)
 #endif
+
+static inline WCHAR *heap_strdupW(const WCHAR *src)
+{
+    WCHAR *dst;
+    unsigned len;
+    if (!src) return NULL;
+    len = (strlenW(src) + 1) * sizeof(WCHAR);
+    if ((dst = heap_alloc(len))) memcpy(dst, src, len);
+    return dst;
+}
 
 #endif /* __WINE_USER_PRIVATE_H */

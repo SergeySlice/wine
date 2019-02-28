@@ -126,61 +126,123 @@ static HRESULT WINAPI IDirectPlay8PeerImpl_Initialize(IDirectPlay8Peer *iface,
     return DPN_OK;
 }
 
-static HRESULT WINAPI IDirectPlay8PeerImpl_EnumServiceProviders(IDirectPlay8Peer *iface,
-        const GUID * const pguidServiceProvider, const GUID * const pguidApplication,
-        DPN_SERVICE_PROVIDER_INFO * const pSPInfoBuffer, DWORD * const pcbEnumData,
-        DWORD * const pcReturned, const DWORD dwFlags)
+HRESULT enum_services_providers(const GUID * const service, DPN_SERVICE_PROVIDER_INFO * const info_buffer,
+        DWORD * const buf_size, DWORD * const returned)
 {
-    static const WCHAR dp_providerW[] = {'D','i','r','e','c','t','P','l','a','y','8',' ','T','C','P','/','I','P',' ',
-                                         'S','e','r','v','i','c','e',' ','P','r','o','v','i','d','e','r','\0'};
+    static const WCHAR serviceproviders[] = {'S','O','F','T','W','A','R','E','\\','M','i','c','r','o','s','o','f','t','\\',
+                                      'D','i','r','e','c','t','P','l','a','y','8','\\',
+                                      'S','e','r','v','i','c','e',' ','P','r','o','v','i','d','e','r','s',0};
+    static const WCHAR friendly[] = {'F','r','i','e','n','d','l','y',' ','N','a','m','e',0};
     static const WCHAR dp_adapterW[] = {'L','o','c','a','l',' ','A','r','e','a',' ','C','o','n','n','e','c','t','i','o','n',
-                                        ' ','-',' ','I','P','v','4','\0'};
-
+                                        ' ','-',' ','I','P','v','4',0};
     static const GUID adapter_guid = {0x4ce725f6, 0xd3c0, 0xdade, {0xba, 0x6f, 0x11, 0xf9, 0x65, 0xbc, 0x42, 0x99}};
-    DWORD req_size;
+    DWORD req_size = 0;
+    LONG res;
+    HKEY key = NULL;
+    LONG next_key;
+    DWORD index = 0;
+    WCHAR provider[MAX_PATH];
+    DWORD size;
 
-    TRACE("(%p)->(%p,%p,%p,%p,%p,%x): stub\n", iface, pguidServiceProvider, pguidApplication, pSPInfoBuffer,
-                                               pcbEnumData, pcReturned, dwFlags);
-
-    if(!pcReturned || !pcbEnumData)
+    if(!returned || !buf_size)
         return E_POINTER;
 
-    if(!pguidServiceProvider)
+    if(!service)
     {
-        req_size = sizeof(DPN_SERVICE_PROVIDER_INFO) + sizeof(dp_providerW);
+        *returned = 0;
+
+        res = RegOpenKeyExW(HKEY_LOCAL_MACHINE, serviceproviders, 0, KEY_READ, &key);
+        if(res == ERROR_FILE_NOT_FOUND)
+            return DPNERR_DOESNOTEXIST;
+
+        next_key = RegEnumKeyW( key, index, provider, MAX_PATH);
+        while(next_key == ERROR_SUCCESS)
+        {
+            res = RegGetValueW(key, provider, friendly, RRF_RT_REG_SZ, NULL, NULL, &size);
+            if(res == ERROR_SUCCESS)
+            {
+                 req_size += sizeof(DPN_SERVICE_PROVIDER_INFO) + size;
+
+                 (*returned)++;
+            }
+
+            index++;
+            next_key = RegEnumKeyW( key, index, provider, MAX_PATH );
+        }
+
     }
-    else if(IsEqualGUID(pguidServiceProvider, &CLSID_DP8SP_TCPIP))
+    else if(IsEqualGUID(service, &CLSID_DP8SP_TCPIP))
     {
         req_size = sizeof(DPN_SERVICE_PROVIDER_INFO) + sizeof(dp_adapterW);
     }
     else
     {
         FIXME("Application requested a provider we don't handle (yet)\n");
-        *pcReturned = 0;
         return DPNERR_DOESNOTEXIST;
     }
 
-    if(*pcbEnumData < req_size)
+    if(*buf_size < req_size)
     {
-        *pcbEnumData = req_size;
+        RegCloseKey(key);
+
+        *buf_size = req_size;
         return DPNERR_BUFFERTOOSMALL;
     }
 
-    pSPInfoBuffer->pwszName = (LPWSTR)(pSPInfoBuffer + 1);
-
-    if(!pguidServiceProvider)
+    if(!service)
     {
-        lstrcpyW(pSPInfoBuffer->pwszName, dp_providerW);
-        pSPInfoBuffer->guid = CLSID_DP8SP_TCPIP;
+        int offset = 0;
+        int count = 0;
+        char *infoend = ((char *)info_buffer + (sizeof(DPN_SERVICE_PROVIDER_INFO) * (*returned)));
+
+        index = 0;
+        next_key = RegEnumKeyW( key, index, provider, MAX_PATH);
+        while(next_key == ERROR_SUCCESS)
+        {
+            res = RegGetValueW(key, provider, friendly, RRF_RT_REG_SZ, NULL, NULL, &size);
+            if(res == ERROR_SUCCESS)
+            {
+                info_buffer[count].guid = CLSID_DP8SP_TCPIP;
+                info_buffer[count].pwszName = (LPWSTR)(infoend + offset);
+
+                RegGetValueW(key, provider, friendly, RRF_RT_REG_SZ, NULL, info_buffer[count].pwszName, &size);
+
+                offset += size;
+                count++;
+            }
+
+            index++;
+            next_key = RegEnumKeyW(key, index, provider, MAX_PATH);
+        }
     }
     else
     {
-        lstrcpyW(pSPInfoBuffer->pwszName, dp_adapterW);
-        pSPInfoBuffer->guid = adapter_guid;
+        info_buffer->pwszName = (LPWSTR)(info_buffer + 1);
+        lstrcpyW(info_buffer->pwszName, dp_adapterW);
+        info_buffer->guid = adapter_guid;
+        *returned = 1;
     }
 
-    *pcReturned = 1;
+    RegCloseKey(key);
+
     return DPN_OK;
+}
+
+static HRESULT WINAPI IDirectPlay8PeerImpl_EnumServiceProviders(IDirectPlay8Peer *iface,
+        const GUID * const pguidServiceProvider, const GUID * const pguidApplication,
+        DPN_SERVICE_PROVIDER_INFO * const pSPInfoBuffer, DWORD * const pcbEnumData,
+        DWORD * const pcReturned, const DWORD dwFlags)
+{
+    TRACE("(%p)->(%s,%s,%p,%p,%p,%x)\n", iface, debugstr_guid(pguidServiceProvider), debugstr_guid(pguidApplication),
+                                             pSPInfoBuffer, pcbEnumData, pcReturned, dwFlags);
+
+    if(dwFlags)
+        FIXME("Unhandled flags %x\n", dwFlags);
+
+    if(pguidApplication)
+        FIXME("Application guid %s is currently being ignored\n", debugstr_guid(pguidApplication));
+
+    return enum_services_providers(pguidServiceProvider, pSPInfoBuffer, pcbEnumData, pcReturned);
 }
 
 static HRESULT WINAPI IDirectPlay8PeerImpl_CancelAsyncOperation(IDirectPlay8Peer *iface,
@@ -395,11 +457,22 @@ static HRESULT WINAPI IDirectPlay8PeerImpl_EnumHosts(IDirectPlay8Peer *iface,
         const DWORD dwUserEnumDataSize, const DWORD dwEnumCount, const DWORD dwRetryInterval,
         const DWORD dwTimeOut, void * const pvUserContext, DPNHANDLE * const pAsyncHandle, const DWORD dwFlags)
 {
+    IDirectPlay8PeerImpl* This = impl_from_IDirectPlay8Peer(iface);
+
     FIXME("(%p)->(%p,%p,%p,%p,%x,%x,%x,%x,%p,%p,%x): stub\n",
-            iface, pApplicationDesc, pAddrHost, pDeviceInfo, pUserEnumData, dwUserEnumDataSize, dwEnumCount,
+            This, pApplicationDesc, pAddrHost, pDeviceInfo, pUserEnumData, dwUserEnumDataSize, dwEnumCount,
             dwRetryInterval, dwTimeOut, pvUserContext, pAsyncHandle, dwFlags);
 
-    return DPNERR_GENERIC;
+    if(!This->msghandler)
+        return DPNERR_UNINITIALIZED;
+
+    if((dwFlags & DPNENUMHOSTS_SYNC) && pAsyncHandle)
+        return DPNERR_INVALIDPARAM;
+
+    if(dwUserEnumDataSize > This->spcaps.dwMaxEnumPayloadSize)
+        return DPNERR_ENUMQUERYTOOLARGE;
+
+    return (dwFlags & DPNENUMHOSTS_SYNC) ? DPN_OK : DPNSUCCESS_PENDING;
 }
 
 static HRESULT WINAPI IDirectPlay8PeerImpl_DestroyPeer(IDirectPlay8Peer *iface, const DPNID dpnidClient,
@@ -453,9 +526,17 @@ static HRESULT WINAPI IDirectPlay8PeerImpl_SetCaps(IDirectPlay8Peer *iface, cons
 static HRESULT WINAPI IDirectPlay8PeerImpl_SetSPCaps(IDirectPlay8Peer *iface, const GUID * const pguidSP,
         const DPN_SP_CAPS * const pdpspCaps, const DWORD dwFlags )
 {
-    FIXME("(%p)->(%p,%p,%x): stub\n", iface, pguidSP, pdpspCaps, dwFlags);
+    IDirectPlay8PeerImpl* This = impl_from_IDirectPlay8Peer(iface);
 
-    return DPNERR_GENERIC;
+    TRACE("(%p)->(%p,%p,%x): stub\n", iface, pguidSP, pdpspCaps, dwFlags);
+
+    if(!This->msghandler || pdpspCaps->dwSize != sizeof(DPN_SP_CAPS))
+        return DPNERR_INVALIDPARAM;
+
+    /* Only dwSystemBufferSize is set by this call. */
+    This->spcaps.dwSystemBufferSize = pdpspCaps->dwSystemBufferSize;
+
+    return DPN_OK;
 }
 
 static HRESULT WINAPI IDirectPlay8PeerImpl_GetSPCaps(IDirectPlay8Peer *iface, const GUID * const pguidSP,

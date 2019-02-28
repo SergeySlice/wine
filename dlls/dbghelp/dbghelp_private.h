@@ -227,6 +227,7 @@ struct symt_public
     struct symt                 symt;
     struct hash_table_elt       hash_elt;
     struct symt*                container;      /* compiland */
+    BOOL is_function;
     unsigned long               address;
     unsigned long               size;
 };
@@ -353,6 +354,7 @@ struct module
 {
     struct process*             process;
     IMAGEHLP_MODULEW64          module;
+    WCHAR                       modulename[64]; /* used for enumeration */
     struct module*              next;
     enum module_type		type : 16;
     unsigned short              is_virtual : 1;
@@ -402,6 +404,8 @@ struct process
 
     unsigned                    buffer_size;
     void*                       buffer;
+
+    BOOL                        is_64bit;
 };
 
 struct line_info
@@ -440,6 +444,7 @@ struct cpu_stack_walk
     HANDLE                      hProcess;
     HANDLE                      hThread;
     BOOL                        is32;
+    struct cpu *                cpu;
     union
     {
         struct
@@ -464,6 +469,12 @@ struct dump_memory
     ULONG64                             base;
     ULONG                               size;
     ULONG                               rva;
+};
+
+struct dump_memory64
+{
+    ULONG64                             base;
+    ULONG64                             size;
 };
 
 struct dump_module
@@ -504,8 +515,17 @@ struct dump_context
     struct dump_memory*                 mem;
     unsigned                            num_mem;
     unsigned                            alloc_mem;
+    struct dump_memory64*               mem64;
+    unsigned                            num_mem64;
+    unsigned                            alloc_mem64;
     /* callback information */
     MINIDUMP_CALLBACK_INFORMATION*      cb;
+};
+
+union ctx
+{
+    CONTEXT ctx;
+    WOW64_CONTEXT x86;
 };
 
 enum cpu_addr {cpu_addr_pc, cpu_addr_stack, cpu_addr_frame};
@@ -520,7 +540,8 @@ struct cpu
                             enum cpu_addr, ADDRESS64* addr);
 
     /* stack manipulation */
-    BOOL        (*stack_walk)(struct cpu_stack_walk* csw, LPSTACKFRAME64 frame, CONTEXT* context);
+    BOOL        (*stack_walk)(struct cpu_stack_walk *csw, STACKFRAME64 *frame,
+                              union ctx *ctx);
 
     /* module manipulation */
     void*       (*find_runtime_function)(struct module*, DWORD64 addr);
@@ -529,7 +550,7 @@ struct cpu
     unsigned    (*map_dwarf_register)(unsigned regno, BOOL eh_frame);
 
     /* context related manipulation */
-    void*       (*fetch_context_reg)(CONTEXT* context, unsigned regno, unsigned* size);
+    void *      (*fetch_context_reg)(union ctx *ctx, unsigned regno, unsigned *size);
     const char* (*fetch_regname)(unsigned regno);
 
     /* minidump per CPU extension */
@@ -538,6 +559,27 @@ struct cpu
 };
 
 extern struct cpu*      dbghelp_current_cpu DECLSPEC_HIDDEN;
+
+/* Abbreviated 32-bit PEB */
+typedef struct _PEB32
+{
+    BOOLEAN InheritedAddressSpace;
+    BOOLEAN ReadImageFileExecOptions;
+    BOOLEAN BeingDebugged;
+    BOOLEAN SpareBool;
+    DWORD   Mutant;
+    DWORD   ImageBaseAddress;
+    DWORD   LdrData;
+    DWORD   ProcessParameters;
+    DWORD   SubSystemData;
+    DWORD   ProcessHeap;
+    DWORD   FastPebLock;
+    DWORD   FastPebLockRoutine;
+    DWORD   FastPebUnlockRoutine;
+    ULONG   EnvironmentUpdateCount;
+    DWORD   KernelCallbackTable;
+    ULONG   Reserved[2];
+} PEB32;
 
 /* dbghelp.c */
 extern struct process* process_find_by_handle(HANDLE hProcess) DECLSPEC_HIDDEN;
@@ -567,7 +609,7 @@ extern int          elf_is_in_thunk_area(unsigned long addr, const struct elf_th
 /* macho_module.c */
 extern BOOL         macho_enum_modules(HANDLE hProc, enum_modules_cb, void*) DECLSPEC_HIDDEN;
 extern BOOL         macho_fetch_file_info(HANDLE process, const WCHAR* name, unsigned long load_addr, DWORD_PTR* base, DWORD* size, DWORD* checksum) DECLSPEC_HIDDEN;
-extern BOOL         macho_load_debug_info(struct module* module) DECLSPEC_HIDDEN;
+extern BOOL         macho_load_debug_info(struct process *pcs, struct module* module) DECLSPEC_HIDDEN;
 extern struct module*
                     macho_load_module(struct process* pcs, const WCHAR* name, unsigned long) DECLSPEC_HIDDEN;
 extern BOOL         macho_read_wine_loader_dbg_info(struct process* pcs) DECLSPEC_HIDDEN;
@@ -608,7 +650,7 @@ extern void         module_reset_debug_info(struct module* module) DECLSPEC_HIDD
 extern BOOL         module_remove(struct process* pcs,
                                   struct module* module) DECLSPEC_HIDDEN;
 extern void         module_set_module(struct module* module, const WCHAR* name) DECLSPEC_HIDDEN;
-extern const WCHAR *get_wine_loader_name(void) DECLSPEC_HIDDEN;
+extern WCHAR *      get_wine_loader_name(struct process *pcs) DECLSPEC_HIDDEN;
 
 /* msc.c */
 extern BOOL         pe_load_debug_directory(const struct process* pcs,
@@ -621,13 +663,13 @@ struct pdb_cmd_pair {
     const char*         name;
     DWORD*              pvalue;
 };
-extern BOOL         pdb_virtual_unwind(struct cpu_stack_walk* csw, DWORD_PTR ip,
-                                       CONTEXT* context, struct pdb_cmd_pair* cpair) DECLSPEC_HIDDEN;
+extern BOOL pdb_virtual_unwind(struct cpu_stack_walk *csw, DWORD_PTR ip,
+    union ctx *context, struct pdb_cmd_pair *cpair) DECLSPEC_HIDDEN;
 
 /* path.c */
-extern BOOL         path_find_symbol_file(const struct process* pcs, PCSTR full_path,
-                                          const GUID* guid, DWORD dw1, DWORD dw2, PSTR buffer,
-                                          BOOL* is_unmatched) DECLSPEC_HIDDEN;
+extern BOOL         path_find_symbol_file(const struct process* pcs, const struct module* module,
+                                          PCSTR full_path, const GUID* guid, DWORD dw1, DWORD dw2,
+                                          WCHAR *buffer, BOOL* is_unmatched) DECLSPEC_HIDDEN;
 
 /* pe_module.c */
 extern BOOL         pe_load_nt_header(HANDLE hProc, DWORD64 base, IMAGE_NT_HEADERS* nth) DECLSPEC_HIDDEN;
@@ -652,7 +694,7 @@ typedef void (*stabs_def_cb)(struct module* module, unsigned long load_offset,
                                 BOOL is_public, BOOL is_global, unsigned char other,
                                 struct symt_compiland* compiland, void* user);
 extern BOOL         stabs_parse(struct module* module, unsigned long load_offset,
-                                const void* stabs, int stablen,
+                                const char* stabs, int stablen,
                                 const char* strs, int strtablen,
                                 stabs_def_cb callback, void* user) DECLSPEC_HIDDEN;
 
@@ -660,8 +702,8 @@ extern BOOL         stabs_parse(struct module* module, unsigned long load_offset
 extern BOOL         dwarf2_parse(struct module* module, unsigned long load_offset,
                                  const struct elf_thunk_area* thunks,
                                  struct image_file_map* fmap) DECLSPEC_HIDDEN;
-extern BOOL         dwarf2_virtual_unwind(struct cpu_stack_walk* csw, DWORD_PTR ip,
-                                          CONTEXT* context, ULONG_PTR* cfa) DECLSPEC_HIDDEN;
+extern BOOL dwarf2_virtual_unwind(struct cpu_stack_walk *csw, DWORD_PTR ip,
+    union ctx *ctx, DWORD64 *cfa) DECLSPEC_HIDDEN;
 
 /* stack.c */
 extern BOOL         sw_read_mem(struct cpu_stack_walk* csw, DWORD64 addr, void* ptr, DWORD sz) DECLSPEC_HIDDEN;
@@ -684,7 +726,9 @@ extern struct symt_public*
                     symt_new_public(struct module* module, 
                                     struct symt_compiland* parent, 
                                     const char* typename,
-                                    unsigned long address, unsigned size) DECLSPEC_HIDDEN;
+                                    BOOL is_function,
+                                    unsigned long address,
+                                    unsigned size) DECLSPEC_HIDDEN;
 extern struct symt_data*
                     symt_new_global_variable(struct module* module, 
                                              struct symt_compiland* parent,

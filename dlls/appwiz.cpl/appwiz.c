@@ -67,6 +67,12 @@ typedef struct APPINFO
 
     LPWSTR publisher;
     LPWSTR version;
+    LPWSTR contact;
+    LPWSTR helplink;
+    LPWSTR helptelephone;
+    LPWSTR readme;
+    LPWSTR urlupdateinfo;
+    LPWSTR comments;
 
     HKEY regroot;
     WCHAR regkey[MAX_STRING_LEN];
@@ -84,21 +90,17 @@ static const WCHAR openW[] = {'o','p','e','n',0};
 static const WCHAR BackSlashW[] = { '\\', 0 };
 static const WCHAR DisplayNameW[] = {'D','i','s','p','l','a','y','N','a','m','e',0};
 static const WCHAR DisplayIconW[] = {'D','i','s','p','l','a','y','I','c','o','n',0};
-static const WCHAR DisplayVersionW[] = {'D','i','s','p','l','a','y','V','e','r',
-    's','i','o','n',0};
+static const WCHAR DisplayVersionW[] = {'D','i','s','p','l','a','y','V','e','r','s','i','o','n',0};
 static const WCHAR PublisherW[] = {'P','u','b','l','i','s','h','e','r',0};
 static const WCHAR ContactW[] = {'C','o','n','t','a','c','t',0};
 static const WCHAR HelpLinkW[] = {'H','e','l','p','L','i','n','k',0};
-static const WCHAR HelpTelephoneW[] = {'H','e','l','p','T','e','l','e','p','h',
-    'o','n','e',0};
+static const WCHAR HelpTelephoneW[] = {'H','e','l','p','T','e','l','e','p','h','o','n','e',0};
 static const WCHAR ModifyPathW[] = {'M','o','d','i','f','y','P','a','t','h',0};
 static const WCHAR NoModifyW[] = {'N','o','M','o','d','i','f','y',0};
 static const WCHAR ReadmeW[] = {'R','e','a','d','m','e',0};
-static const WCHAR URLUpdateInfoW[] = {'U','R','L','U','p','d','a','t','e','I',
-    'n','f','o',0};
+static const WCHAR URLUpdateInfoW[] = {'U','R','L','U','p','d','a','t','e','I','n','f','o',0};
 static const WCHAR CommentsW[] = {'C','o','m','m','e','n','t','s',0};
-static const WCHAR UninstallCommandlineW[] = {'U','n','i','n','s','t','a','l','l',
-    'S','t','r','i','n','g',0};
+static const WCHAR UninstallCommandlineW[] = {'U','n','i','n','s','t','a','l','l','S','t','r','i','n','g',0};
 static const WCHAR WindowsInstallerW[] = {'W','i','n','d','o','w','s','I','n','s','t','a','l','l','e','r',0};
 static const WCHAR SystemComponentW[] = {'S','y','s','t','e','m','C','o','m','p','o','n','e','n','t',0};
 
@@ -139,7 +141,25 @@ static void FreeAppInfo(APPINFO *info)
     HeapFree(GetProcessHeap(), 0, info->icon);
     HeapFree(GetProcessHeap(), 0, info->publisher);
     HeapFree(GetProcessHeap(), 0, info->version);
+    HeapFree(GetProcessHeap(), 0, info->contact);
+    HeapFree(GetProcessHeap(), 0, info->helplink);
+    HeapFree(GetProcessHeap(), 0, info->helptelephone);
+    HeapFree(GetProcessHeap(), 0, info->readme);
+    HeapFree(GetProcessHeap(), 0, info->urlupdateinfo);
+    HeapFree(GetProcessHeap(), 0, info->comments);
     HeapFree(GetProcessHeap(), 0, info);
+}
+
+static WCHAR *get_reg_str(HKEY hkey, const WCHAR *value)
+{
+    DWORD len, type;
+    WCHAR *ret = NULL;
+    if (!RegQueryValueExW(hkey, value, NULL, &type, NULL, &len) && type == REG_SZ)
+    {
+        if (!(ret = HeapAlloc(GetProcessHeap(), 0, len))) return NULL;
+        RegQueryValueExW(hkey, value, 0, 0, (BYTE *)ret, &len);
+    }
+    return ret;
 }
 
 /******************************************************************************
@@ -161,7 +181,7 @@ static BOOL ReadApplicationsFromRegistry(HKEY root)
     APPINFO *info = NULL;
     LPWSTR iconPtr;
 
-    sizeOfSubKeyName = sizeof(subKeyName) / sizeof(subKeyName[0]);
+    sizeOfSubKeyName = ARRAY_SIZE(subKeyName);
 
     for (i = 0; RegEnumKeyExW(root, i, subKeyName, &sizeOfSubKeyName, NULL,
         NULL, NULL, NULL) != ERROR_NO_MORE_ITEMS; ++i)
@@ -172,7 +192,7 @@ static BOOL ReadApplicationsFromRegistry(HKEY root)
             && dwType == REG_DWORD && value == 1)
         {
             RegCloseKey(hkeyApp);
-            sizeOfSubKeyName = sizeof(subKeyName) / sizeof(subKeyName[0]);
+            sizeOfSubKeyName = ARRAY_SIZE(subKeyName);
             continue;
         }
         displen = 0;
@@ -197,7 +217,7 @@ static BOOL ReadApplicationsFromRegistry(HKEY root)
             else
             {
                 RegCloseKey(hkeyApp);
-                sizeOfSubKeyName = sizeof(subKeyName) / sizeof(subKeyName[0]);
+                sizeOfSubKeyName = ARRAY_SIZE(subKeyName);
                 continue;
             }
 
@@ -238,30 +258,14 @@ static BOOL ReadApplicationsFromRegistry(HKEY root)
                 }
             }
 
-            /* publisher, version */
-            if (RegQueryValueExW(hkeyApp, PublisherW, 0, 0, NULL, &displen) ==
-                ERROR_SUCCESS)
-            {
-                info->publisher = HeapAlloc(GetProcessHeap(), 0, displen);
-
-                if (!info->publisher)
-                    goto err;
-
-                RegQueryValueExW(hkeyApp, PublisherW, 0, 0, (LPBYTE)info->publisher,
-                    &displen);
-            }
-
-            if (RegQueryValueExW(hkeyApp, DisplayVersionW, 0, 0, NULL, &displen) ==
-                ERROR_SUCCESS)
-            {
-                info->version = HeapAlloc(GetProcessHeap(), 0, displen);
-
-                if (!info->version)
-                    goto err;
-
-                RegQueryValueExW(hkeyApp, DisplayVersionW, 0, 0, (LPBYTE)info->version,
-                    &displen);
-            }
+            info->publisher = get_reg_str(hkeyApp, PublisherW);
+            info->version = get_reg_str(hkeyApp, DisplayVersionW);
+            info->contact = get_reg_str(hkeyApp, ContactW);
+            info->helplink = get_reg_str(hkeyApp, HelpLinkW);
+            info->helptelephone = get_reg_str(hkeyApp, HelpTelephoneW);
+            info->readme = get_reg_str(hkeyApp, ReadmeW);
+            info->urlupdateinfo = get_reg_str(hkeyApp, URLUpdateInfoW);
+            info->comments = get_reg_str(hkeyApp, CommentsW);
 
             /* Check if NoModify is set */
             dwType = REG_DWORD;
@@ -308,7 +312,7 @@ static BOOL ReadApplicationsFromRegistry(HKEY root)
         }
 
         RegCloseKey(hkeyApp);
-        sizeOfSubKeyName = sizeof(subKeyName) / sizeof(subKeyName[0]);
+        sizeOfSubKeyName = ARRAY_SIZE(subKeyName);
     }
 
     return TRUE;
@@ -450,10 +454,10 @@ static void InstallProgram(HWND hWnd)
     WCHAR FilterBufferW[MAX_PATH];
     WCHAR FileNameBufferW[MAX_PATH];
 
-    LoadStringW(hInst, IDS_CPL_TITLE, titleW, sizeof(titleW)/sizeof(WCHAR));
-    LoadStringW(hInst, IDS_FILTER_INSTALLS, filter_installs, sizeof(filter_installs)/sizeof(WCHAR));
-    LoadStringW(hInst, IDS_FILTER_PROGRAMS, filter_programs, sizeof(filter_programs)/sizeof(WCHAR));
-    LoadStringW(hInst, IDS_FILTER_ALL, filter_all, sizeof(filter_all)/sizeof(WCHAR));
+    LoadStringW(hInst, IDS_CPL_TITLE, titleW, ARRAY_SIZE(titleW));
+    LoadStringW(hInst, IDS_FILTER_INSTALLS, filter_installs, ARRAY_SIZE(filter_installs));
+    LoadStringW(hInst, IDS_FILTER_PROGRAMS, filter_programs, ARRAY_SIZE(filter_programs));
+    LoadStringW(hInst, IDS_FILTER_ALL, filter_all, ARRAY_SIZE(filter_all));
 
     snprintfW( FilterBufferW, MAX_PATH, filters, filter_installs, 0, 0,
                filter_programs, 0, 0, filter_all, 0, 0 );
@@ -501,7 +505,7 @@ static void UninstallProgram(int id, DWORD button)
     BOOL res;
 
     LoadStringW(hInst, IDS_UNINSTALL_FAILED, sUninstallFailed,
-        sizeof(sUninstallFailed) / sizeof(sUninstallFailed[0]));
+        ARRAY_SIZE(sUninstallFailed));
 
     LIST_FOR_EACH_ENTRY( iter, &app_list, APPINFO, entry )
     {
@@ -616,28 +620,16 @@ static INT_PTR CALLBACK SupportInfoDlgProc(HWND hWnd, UINT msg, WPARAM wParam, L
                     RegOpenKeyExW(iter->regroot, key, 0, KEY_READ, &hkey);
 
                     /* Load our "not specified" string */
-                    LoadStringW(hInst, IDS_NOT_SPECIFIED, notfound,
-                        sizeof(notfound) / sizeof(notfound[0]));
+                    LoadStringW(hInst, IDS_NOT_SPECIFIED, notfound, ARRAY_SIZE(notfound));
 
-                    /* Update the data for items already read into the structure */
-                    SetInfoDialogText(NULL, iter->publisher, notfound, hWnd,
-                        IDC_INFO_PUBLISHER);
-                    SetInfoDialogText(NULL, iter->version, notfound, hWnd,
-                        IDC_INFO_VERSION);
-
-                    /* And now update the data for those items in the registry */
-                    SetInfoDialogText(hkey, ContactW, notfound, hWnd,
-                        IDC_INFO_CONTACT);
-                    SetInfoDialogText(hkey, HelpLinkW, notfound, hWnd,
-                        IDC_INFO_SUPPORT);
-                    SetInfoDialogText(hkey, HelpTelephoneW, notfound, hWnd,
-                        IDC_INFO_PHONE);
-                    SetInfoDialogText(hkey, ReadmeW, notfound, hWnd,
-                        IDC_INFO_README);
-                    SetInfoDialogText(hkey, URLUpdateInfoW, notfound, hWnd,
-                        IDC_INFO_UPDATES);
-                    SetInfoDialogText(hkey, CommentsW, notfound, hWnd,
-                        IDC_INFO_COMMENTS);
+                    SetInfoDialogText(NULL, iter->publisher, notfound, hWnd, IDC_INFO_PUBLISHER);
+                    SetInfoDialogText(NULL, iter->version, notfound, hWnd, IDC_INFO_VERSION);
+                    SetInfoDialogText(hkey, iter->contact, notfound, hWnd, IDC_INFO_CONTACT);
+                    SetInfoDialogText(hkey, iter->helplink, notfound, hWnd, IDC_INFO_SUPPORT);
+                    SetInfoDialogText(hkey, iter->helptelephone, notfound, hWnd, IDC_INFO_PHONE);
+                    SetInfoDialogText(hkey, iter->readme, notfound, hWnd, IDC_INFO_README);
+                    SetInfoDialogText(hkey, iter->urlupdateinfo, notfound, hWnd, IDC_INFO_UPDATES);
+                    SetInfoDialogText(hkey, iter->comments, notfound, hWnd, IDC_INFO_COMMENTS);
 
                     /* Update the main label with the app name */
                     if (GetWindowTextW(GetDlgItem(hWnd, IDC_INFO_LABEL), oldtitle,
@@ -712,7 +704,7 @@ static BOOL AddListViewColumns(HWND hWnd)
     lvc.mask = LVCF_FMT | LVCF_TEXT | LVCF_SUBITEM | LVCF_WIDTH;
 
     /* Add the columns */
-    for (i = 0; i < sizeof(columns) / sizeof(columns[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(columns); i++)
     {
         lvc.iSubItem = i;
         lvc.pszText = buf;
@@ -721,7 +713,7 @@ static BOOL AddListViewColumns(HWND hWnd)
         lvc.cx = columns[i].width;
         lvc.fmt = columns[i].fmt;
 
-        LoadStringW(hInst, columns[i].title, buf, sizeof(buf) / sizeof(buf[0]));
+        LoadStringW(hInst, columns[i].title, buf, ARRAY_SIZE(buf));
 
         if (ListView_InsertColumnW(hWnd, i, &lvc) == -1)
             return FALSE;
@@ -831,6 +823,9 @@ static INT_PTR CALLBACK MainDlgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM l
     switch(msg)
     {
         case WM_INITDIALOG:
+            SendDlgItemMessageW(hWnd, IDL_PROGRAMS, LVM_SETEXTENDEDLISTVIEWSTYLE,
+                LVS_EX_FULLROWSELECT, LVS_EX_FULLROWSELECT);
+
             hImageList = ResetApplicationList(TRUE, hWnd, hImageList);
 
             if (!hImageList)
@@ -935,10 +930,10 @@ static void StartApplet(HWND hWnd)
     WCHAR tab_title[MAX_STRING_LEN], app_title[MAX_STRING_LEN];
 
     /* Load the strings we will use */
-    LoadStringW(hInst, IDS_TAB1_TITLE, tab_title, sizeof(tab_title) / sizeof(tab_title[0]));
-    LoadStringW(hInst, IDS_CPL_TITLE, app_title, sizeof(app_title) / sizeof(app_title[0]));
-    LoadStringW(hInst, IDS_REMOVE, btnRemove, sizeof(btnRemove) / sizeof(btnRemove[0]));
-    LoadStringW(hInst, IDS_MODIFY_REMOVE, btnModifyRemove, sizeof(btnModifyRemove) / sizeof(btnModifyRemove[0]));
+    LoadStringW(hInst, IDS_TAB1_TITLE, tab_title, ARRAY_SIZE(tab_title));
+    LoadStringW(hInst, IDS_CPL_TITLE, app_title, ARRAY_SIZE(app_title));
+    LoadStringW(hInst, IDS_REMOVE, btnRemove, ARRAY_SIZE(btnRemove));
+    LoadStringW(hInst, IDS_MODIFY_REMOVE, btnModifyRemove, ARRAY_SIZE(btnModifyRemove));
 
     /* Fill out the PROPSHEETPAGE */
     psp.dwSize = sizeof (PROPSHEETPAGEW);

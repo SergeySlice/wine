@@ -1,12 +1,21 @@
 MODULE    = d3d10.dll
 IMPORTLIB = d3d10
 IMPORTS   = dxguid uuid d3d10core d3dcompiler dxgi
+PARENTSRC = ../d3dcompiler_43
 
 C_SRCS = \
 	d3d10_main.c \
+	d3d10_utils.c \
 	effect.c \
+	reflection.c \
 	shader.c \
 	stateblock.c \
 	utils.c
+
+LEX_SRCS = \
+	hlsl.l
+
+BISON_SRCS = \
+	hlsl.y
 
 RC_SRCS = version.rc

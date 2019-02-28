@@ -30,6 +30,7 @@
 
 #include "wine/test.h"
 #include "mmsystem.h"
+#define COBJMACROS
 #include "dsound.h"
 #include "dsconf.h"
 #include "initguid.h"
@@ -61,7 +62,7 @@ static void IDirectSound_test(LPDIRECTSOUND dso, BOOL initialized,
     rc=IDirectSound_QueryInterface(dso,&IID_IUnknown,(LPVOID*)&unknown);
     ok(rc==DS_OK,"IDirectSound_QueryInterface(IID_IUnknown) failed: %08x\n", rc);
     if (rc==DS_OK)
-        IDirectSound_Release(unknown);
+        IUnknown_Release(unknown);
 
     rc=IDirectSound_QueryInterface(dso,&IID_IDirectSound,(LPVOID*)&ds);
     ok(rc==DS_OK,"IDirectSound_QueryInterface(IID_IDirectSound) failed: %08x\n", rc);
@@ -189,7 +190,7 @@ static void IDirectSound_tests(void)
        "failed: %08x\n", rc);
 
     /* COM aggregation */
-    rc=CoCreateInstance(&CLSID_DirectSound, (IUnknown*)&dso, CLSCTX_INPROC_SERVER,
+    rc=CoCreateInstance(&CLSID_DirectSound, (IUnknown*)0xdeadbeef, CLSCTX_INPROC_SERVER,
                         &IID_IDirectSound, (void**)&dso);
     ok(rc==CLASS_E_NOAGGREGATION || broken(rc==DSERR_INVALIDPARAM),
        "DirectMusicPerformance create failed: %08x, expected CLASS_E_NOAGGREGATION\n", rc);
@@ -337,7 +338,7 @@ static HRESULT test_dsound(LPGUID lpGuid)
            "buffer %08x\n",rc);
         if (rc==DS_OK && secondary!=NULL) {
             LPDIRECTSOUND3DBUFFER buffer3d;
-            rc=IDirectSound_QueryInterface(secondary, &IID_IDirectSound3DBuffer,
+            rc = IDirectSoundBuffer_QueryInterface(secondary, &IID_IDirectSound3DBuffer,
                                            (void **)&buffer3d);
             ok(rc==DS_OK && buffer3d!=NULL,"IDirectSound_QueryInterface() "
                "failed: %08x\n",rc);
@@ -464,6 +465,7 @@ static HRESULT test_primary(LPGUID lpGuid)
         trace("  No Primary\n");
     else if (rc==DS_OK && primary!=NULL) {
         LONG vol;
+        IDirectSoundNotify *notify;
 
         /* Try to create a second primary buffer */
         /* DSOUND: Error: The primary buffer already exists.
@@ -508,8 +510,10 @@ static HRESULT test_primary(LPGUID lpGuid)
         ok(ref==0,"IDirectSoundBuffer_Release() primary has %d references\n",ref);
 
         ref=IDirectSoundBuffer_Release(primary);
-        ok(ref==0,"IDirectSoundBuffer_Release() primary has %d references, "
-           "should have 0\n",ref);
+        ok(ref==0,"IDirectSoundBuffer_Release() primary has %d references\n",ref);
+
+        rc=IDirectSoundBuffer_QueryInterface(primary,&IID_IDirectSoundNotify,(void **)&notify);
+        ok(rc==E_NOINTERFACE,"IDirectSoundBuffer_QueryInterface() failed %08x\n",rc);
     }
 
     /* Set the CooperativeLevel back to normal */
@@ -570,8 +574,8 @@ static HRESULT test_primary_secondary(LPGUID lpGuid)
        "IDirectSound_CreateSoundBuffer() failed to create a primary buffer %08x\n",rc);
 
     if (rc==DS_OK && primary!=NULL) {
-        for (f=0;f<NB_FORMATS;f++) {
-          for (tag=0;tag<NB_TAGS;tag++) {
+        for (f = 0; f < ARRAY_SIZE(formats); f++) {
+          for (tag = 0; tag < ARRAY_SIZE(format_tags); tag++) {
             /* if float, we only want to test 32-bit */
             if ((format_tags[tag] == WAVE_FORMAT_IEEE_FLOAT) && (formats[f][1] != 32))
                 continue;
@@ -717,8 +721,8 @@ static HRESULT test_secondary(LPGUID lpGuid)
         if (rc!=DS_OK)
             goto EXIT1;
 
-        for (f=0;f<NB_FORMATS;f++) {
-          for (tag=0;tag<NB_TAGS;tag++) {
+        for (f = 0; f < ARRAY_SIZE(formats); f++) {
+          for (tag = 0; tag < ARRAY_SIZE(format_tags); tag++) {
             WAVEFORMATEXTENSIBLE wfxe;
 
             /* if float, we only want to test 32-bit */
@@ -1003,8 +1007,8 @@ static HRESULT test_frequency(LPGUID lpGuid)
         if (rc!=DS_OK)
             goto EXIT1;
 
-        for (f=0;f<sizeof(fmts)/sizeof(fmts[0]);f++) {
-        for (r=0;r<sizeof(rates)/sizeof(rates[0]);r++) {
+        for (f = 0; f < ARRAY_SIZE(fmts); f++) {
+        for (r = 0; r < ARRAY_SIZE(rates); r++) {
             init_format(&wfx,WAVE_FORMAT_PCM,11025,fmts[f].bits,
                         fmts[f].channels);
             secondary=NULL;
@@ -1134,7 +1138,7 @@ static HRESULT test_duplicate(LPGUID lpGuid)
             int i;
 
             /* Prepare notify events */
-            for (i=0;i<sizeof(event)/sizeof(event[0]);i++) {
+            for (i = 0; i < ARRAY_SIZE(event); i++) {
                 event[i] = CreateEventW(NULL, FALSE, FALSE, NULL);
             }
 
@@ -1173,8 +1177,7 @@ static HRESULT test_duplicate(LPGUID lpGuid)
                    "IDirectSound_DuplicateSoundBuffer failed %08x\n",rc);
 
                 trace("testing duplicated buffer without notifications.\n");
-                test_notify(duplicated,sizeof(event)/sizeof(event[0]),
-                            event,WAIT_TIMEOUT);
+                test_notify(duplicated, ARRAY_SIZE(event), event, WAIT_TIMEOUT);
 
                 rc=IDirectSoundBuffer_QueryInterface(duplicated,
                                                      &IID_IDirectSoundNotify,
@@ -1191,8 +1194,7 @@ static HRESULT test_duplicate(LPGUID lpGuid)
                        "failed %08x\n",rc);
 
                     trace("testing duplicated buffer with a notification.\n");
-                    test_notify(duplicated,sizeof(event)/sizeof(event[0]),
-                                event,WAIT_OBJECT_0+1);
+                    test_notify(duplicated, ARRAY_SIZE(event), event, WAIT_OBJECT_0 + 1);
 
                     ref=IDirectSoundNotify_Release(dup_notify);
                     ok(ref==0,"IDirectSoundNotify_Release() has %d references, "
@@ -1203,8 +1205,7 @@ static HRESULT test_duplicate(LPGUID lpGuid)
                    "should have 0\n",ref);
 
                 trace("testing original buffer with a notification.\n");
-                test_notify(original,sizeof(event)/sizeof(event[0]),
-                            event,WAIT_OBJECT_0);
+                test_notify(original, ARRAY_SIZE(event), event, WAIT_OBJECT_0);
 
                 ref=IDirectSoundBuffer_Release(duplicated);
                 ok(ref==0,"IDirectSoundBuffer_Release() has %d references, "
@@ -1559,6 +1560,19 @@ static void test_notifications(LPGUID lpGuid)
     wfx.nBlockAlign = wfx.nChannels * wfx.wBitsPerSample / 8;
     wfx.nAvgBytesPerSec = wfx.nSamplesPerSec * wfx.nBlockAlign;
     wfx.cbSize = 0;
+
+    ZeroMemory(&bufdesc, sizeof(bufdesc));
+    bufdesc.dwSize = sizeof(bufdesc);
+    bufdesc.dwFlags = DSBCAPS_GETCURRENTPOSITION2;
+    bufdesc.dwBufferBytes = wfx.nSamplesPerSec * wfx.nBlockAlign / 2; /* 0.5s */
+    bufdesc.lpwfxFormat = &wfx;
+    rc = IDirectSound_CreateSoundBuffer(dso, &bufdesc, &buf, NULL);
+    ok(rc == DS_OK && buf != NULL, "IDirectSound_CreateSoundBuffer() failed "
+           "to create a buffer %08x\n", rc);
+
+    rc = IDirectSoundBuffer_QueryInterface(buf, &IID_IDirectSoundNotify, (void**)&buf_notif);
+    ok(rc == E_NOINTERFACE, "QueryInterface(IID_IDirectSoundNotify): %08x\n", rc);
+    IDirectSoundBuffer_Release(buf);
 
     ZeroMemory(&bufdesc, sizeof(bufdesc));
     bufdesc.dwSize = sizeof(bufdesc);

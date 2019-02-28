@@ -487,7 +487,7 @@ static HRESULT json_quote(stringify_ctx_t *ctx, const WCHAR *ptr, size_t len)
             break;
         default:
             if(*ptr < ' ') {
-                const WCHAR formatW[] = {'\\','u','%','0','4','x',0};
+                static const WCHAR formatW[] = {'\\','u','%','0','4','x',0};
                 WCHAR buf[7];
                 sprintfW(buf, formatW, *ptr);
                 if(!append_string(ctx, buf))
@@ -545,15 +545,18 @@ static HRESULT stringify_array(stringify_ctx_t *ctx, jsdisp_t *obj)
         }
 
         hres = jsdisp_get_idx(obj, i, &val);
-        if(FAILED(hres))
+        if(SUCCEEDED(hres)) {
+            hres = stringify(ctx, val);
+            if(FAILED(hres))
+                return hres;
+            if(hres == S_FALSE && !append_string(ctx, nullW))
+                return E_OUTOFMEMORY;
+        }else if(hres == DISP_E_UNKNOWNNAME) {
+            if(!append_string(ctx, nullW))
+                return E_OUTOFMEMORY;
+        }else {
             return hres;
-
-        hres = stringify(ctx, val);
-        if(FAILED(hres))
-            return hres;
-
-        if(hres == S_FALSE && !append_string(ctx, nullW))
-            return E_OUTOFMEMORY;
+        }
     }
 
     if((length && *ctx->gap && !append_char(ctx, '\n')) || !append_char(ctx, ']'))
@@ -765,6 +768,12 @@ static HRESULT JSON_stringify(script_ctx_t *ctx, vdisp_t *jsthis, WORD flags, un
 
     TRACE("\n");
 
+    if(!argc) {
+        if(r)
+            *r = jsval_undefined();
+        return S_OK;
+    }
+
     if(argc >= 2 && is_object_instance(argv[1])) {
         FIXME("Replacer %s not yet supported\n", debugstr_jsval(argv[1]));
         return E_NOTIMPL;
@@ -827,7 +836,7 @@ static const builtin_prop_t JSON_props[] = {
 static const builtin_info_t JSON_info = {
     JSCLASS_JSON,
     {NULL, NULL, 0},
-    sizeof(JSON_props)/sizeof(*JSON_props),
+    ARRAY_SIZE(JSON_props),
     JSON_props,
     NULL,
     NULL

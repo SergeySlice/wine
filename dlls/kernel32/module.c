@@ -40,6 +40,7 @@
 #include "psapi.h"
 
 #include "wine/exception.h"
+#include "wine/list.h"
 #include "wine/debug.h"
 #include "wine/unicode.h"
 
@@ -47,7 +48,24 @@ WINE_DEFAULT_DEBUG_CHANNEL(module);
 
 #define NE_FFLAGS_LIBMODULE 0x8000
 
+struct dll_dir_entry
+{
+    struct list entry;
+    WCHAR       dir[1];
+};
+
+static struct list dll_dir_list = LIST_INIT( dll_dir_list );  /* extra dirs from AddDllDirectory */
 static WCHAR *dll_directory;  /* extra path for SetDllDirectoryW */
+static DWORD default_search_flags;  /* default flags set by SetDefaultDllDirectories */
+
+/* to keep track of LOAD_LIBRARY_AS_DATAFILE_EXCLUSIVE file handles */
+struct exclusive_datafile
+{
+    struct list entry;
+    HMODULE     module;
+    HANDLE      file;
+};
+static struct list exclusive_datafile_list = LIST_INIT( exclusive_datafile_list );
 
 static CRITICAL_SECTION dlldir_section;
 static CRITICAL_SECTION_DEBUG critsect_debug =
@@ -57,7 +75,6 @@ static CRITICAL_SECTION_DEBUG critsect_debug =
       0, 0, { (DWORD_PTR)(__FILE__ ": dlldir_section") }
 };
 static CRITICAL_SECTION dlldir_section = { &critsect_debug, -1, 0, 0, 0, 0 };
-
 
 /****************************************************************************
  *              GetDllDirectoryA   (KERNEL32.@)
@@ -112,10 +129,10 @@ DWORD WINAPI GetDllDirectoryW( DWORD buf_len, LPWSTR buffer )
  */
 BOOL WINAPI SetDllDirectoryA( LPCSTR dir )
 {
-    WCHAR *dirW;
+    WCHAR *dirW = NULL;
     BOOL ret;
 
-    if (!(dirW = FILE_name_AtoW( dir, TRUE ))) return FALSE;
+    if (dir && !(dirW = FILE_name_AtoW( dir, TRUE ))) return FALSE;
     ret = SetDllDirectoryW( dirW );
     HeapFree( GetProcessHeap(), 0, dirW );
     return ret;
@@ -149,6 +166,73 @@ BOOL WINAPI SetDllDirectoryW( LPCWSTR dir )
 
 
 /****************************************************************************
+ *              AddDllDirectory   (KERNEL32.@)
+ */
+DLL_DIRECTORY_COOKIE WINAPI AddDllDirectory( const WCHAR *dir )
+{
+    WCHAR path[MAX_PATH];
+    DWORD len;
+    struct dll_dir_entry *ptr;
+    DOS_PATHNAME_TYPE type = RtlDetermineDosPathNameType_U( dir );
+
+    if (type != ABSOLUTE_PATH && type != ABSOLUTE_DRIVE_PATH)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return NULL;
+    }
+    if (!(len = GetFullPathNameW( dir, MAX_PATH, path, NULL ))) return NULL;
+    if (GetFileAttributesW( path ) == INVALID_FILE_ATTRIBUTES) return NULL;
+
+    if (!(ptr = HeapAlloc( GetProcessHeap(), 0, offsetof(struct dll_dir_entry, dir[++len] )))) return NULL;
+    memcpy( ptr->dir, path, len * sizeof(WCHAR) );
+    TRACE( "%s\n", debugstr_w( ptr->dir ));
+
+    RtlEnterCriticalSection( &dlldir_section );
+    list_add_head( &dll_dir_list, &ptr->entry );
+    RtlLeaveCriticalSection( &dlldir_section );
+    return ptr;
+}
+
+
+/****************************************************************************
+ *              RemoveDllDirectory   (KERNEL32.@)
+ */
+BOOL WINAPI RemoveDllDirectory( DLL_DIRECTORY_COOKIE cookie )
+{
+    struct dll_dir_entry *ptr = cookie;
+
+    TRACE( "%s\n", debugstr_w( ptr->dir ));
+
+    RtlEnterCriticalSection( &dlldir_section );
+    list_remove( &ptr->entry );
+    HeapFree( GetProcessHeap(), 0, ptr );
+    RtlLeaveCriticalSection( &dlldir_section );
+    return TRUE;
+}
+
+
+/*************************************************************************
+ *           SetDefaultDllDirectories   (KERNEL32.@)
+ */
+BOOL WINAPI SetDefaultDllDirectories( DWORD flags )
+{
+    /* LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR doesn't make sense in default dirs */
+    const DWORD load_library_search_flags = (LOAD_LIBRARY_SEARCH_APPLICATION_DIR |
+                                             LOAD_LIBRARY_SEARCH_USER_DIRS |
+                                             LOAD_LIBRARY_SEARCH_SYSTEM32 |
+                                             LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+
+    if (!flags || (flags & ~load_library_search_flags))
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+    default_search_flags = flags;
+    return TRUE;
+}
+
+
+/****************************************************************************
  *              DisableThreadLibraryCalls (KERNEL32.@)
  *
  * Inform the module loader that thread notifications are not required for a dll.
@@ -174,227 +258,6 @@ BOOL WINAPI DisableThreadLibraryCalls( HMODULE hModule )
     return FALSE;
 }
 
-
-/* Check whether a file is an OS/2 or a very old Windows executable
- * by testing on import of KERNEL.
- *
- * FIXME: is reading the module imports the only way of discerning
- *        old Windows binaries from OS/2 ones ? At least it seems so...
- */
-static DWORD MODULE_Decide_OS2_OldWin(HANDLE hfile, const IMAGE_DOS_HEADER *mz, const IMAGE_OS2_HEADER *ne)
-{
-    DWORD currpos = SetFilePointer( hfile, 0, NULL, SEEK_CUR);
-    DWORD ret = BINARY_OS216;
-    LPWORD modtab = NULL;
-    LPSTR nametab = NULL;
-    DWORD len;
-    int i;
-
-    /* read modref table */
-    if ( (SetFilePointer( hfile, mz->e_lfanew + ne->ne_modtab, NULL, SEEK_SET ) == -1)
-      || (!(modtab = HeapAlloc( GetProcessHeap(), 0, ne->ne_cmod*sizeof(WORD))))
-      || (!(ReadFile(hfile, modtab, ne->ne_cmod*sizeof(WORD), &len, NULL)))
-      || (len != ne->ne_cmod*sizeof(WORD)) )
-	goto broken;
-
-    /* read imported names table */
-    if ( (SetFilePointer( hfile, mz->e_lfanew + ne->ne_imptab, NULL, SEEK_SET ) == -1)
-      || (!(nametab = HeapAlloc( GetProcessHeap(), 0, ne->ne_enttab - ne->ne_imptab)))
-      || (!(ReadFile(hfile, nametab, ne->ne_enttab - ne->ne_imptab, &len, NULL)))
-      || (len != ne->ne_enttab - ne->ne_imptab) )
-	goto broken;
-
-    for (i=0; i < ne->ne_cmod; i++)
-    {
-	LPSTR module = &nametab[modtab[i]];
-	TRACE("modref: %.*s\n", module[0], &module[1]);
-	if (!(strncmp(&module[1], "KERNEL", module[0])))
-	{ /* very old Windows file */
-	    MESSAGE("This seems to be a very old (pre-3.0) Windows executable. Expect crashes, especially if this is a real-mode binary !\n");
-            ret = BINARY_WIN16;
-	    goto good;
-	}
-    }
-
-broken:
-    ERR("Hmm, an error occurred. Is this binary file broken?\n");
-
-good:
-    HeapFree( GetProcessHeap(), 0, modtab);
-    HeapFree( GetProcessHeap(), 0, nametab);
-    SetFilePointer( hfile, currpos, NULL, SEEK_SET); /* restore filepos */
-    return ret;
-}
-
-/***********************************************************************
- *           MODULE_GetBinaryType
- */
-void MODULE_get_binary_info( HANDLE hfile, struct binary_info *info )
-{
-    union
-    {
-        struct
-        {
-            unsigned char magic[4];
-            unsigned char class;
-            unsigned char data;
-            unsigned char version;
-            unsigned char ignored[9];
-            unsigned short type;
-            unsigned short machine;
-        } elf;
-        struct
-        {
-            unsigned int magic;
-            unsigned int cputype;
-            unsigned int cpusubtype;
-            unsigned int filetype;
-        } macho;
-        IMAGE_DOS_HEADER mz;
-    } header;
-
-    DWORD len;
-
-    memset( info, 0, sizeof(*info) );
-
-    /* Seek to the start of the file and read the header information. */
-    if (SetFilePointer( hfile, 0, NULL, SEEK_SET ) == -1) return;
-    if (!ReadFile( hfile, &header, sizeof(header), &len, NULL ) || len != sizeof(header)) return;
-
-    if (!memcmp( header.elf.magic, "\177ELF", 4 ))
-    {
-        if (header.elf.class == 2) info->flags |= BINARY_FLAG_64BIT;
-#ifdef WORDS_BIGENDIAN
-        if (header.elf.data == 1)
-#else
-        if (header.elf.data == 2)
-#endif
-        {
-            header.elf.type = RtlUshortByteSwap( header.elf.type );
-            header.elf.machine = RtlUshortByteSwap( header.elf.machine );
-        }
-        switch(header.elf.type)
-        {
-        case 2: info->type = BINARY_UNIX_EXE; break;
-        case 3: info->type = BINARY_UNIX_LIB; break;
-        }
-        switch(header.elf.machine)
-        {
-        case 3:   info->arch = IMAGE_FILE_MACHINE_I386; break;
-        case 20:  info->arch = IMAGE_FILE_MACHINE_POWERPC; break;
-        case 40:  info->arch = IMAGE_FILE_MACHINE_ARMNT; break;
-        case 50:  info->arch = IMAGE_FILE_MACHINE_IA64; break;
-        case 62:  info->arch = IMAGE_FILE_MACHINE_AMD64; break;
-        case 183: info->arch = IMAGE_FILE_MACHINE_ARM64; break;
-        }
-    }
-    /* Mach-o File with Endian set to Big Endian or Little Endian */
-    else if (header.macho.magic == 0xfeedface || header.macho.magic == 0xcefaedfe ||
-             header.macho.magic == 0xfeedfacf || header.macho.magic == 0xcffaedfe)
-    {
-        if ((header.macho.cputype >> 24) == 1) info->flags |= BINARY_FLAG_64BIT;
-        if (header.macho.magic == 0xcefaedfe || header.macho.magic == 0xcffaedfe)
-        {
-            header.macho.filetype = RtlUlongByteSwap( header.macho.filetype );
-            header.macho.cputype = RtlUlongByteSwap( header.macho.cputype );
-        }
-        switch(header.macho.filetype)
-        {
-        case 2: info->type = BINARY_UNIX_EXE; break;
-        case 8: info->type = BINARY_UNIX_LIB; break;
-        }
-        switch(header.macho.cputype)
-        {
-        case 0x00000007: info->arch = IMAGE_FILE_MACHINE_I386; break;
-        case 0x01000007: info->arch = IMAGE_FILE_MACHINE_AMD64; break;
-        case 0x0000000c: info->arch = IMAGE_FILE_MACHINE_ARMNT; break;
-        case 0x0100000c: info->arch = IMAGE_FILE_MACHINE_ARM64; break;
-        case 0x00000012: info->arch = IMAGE_FILE_MACHINE_POWERPC; break;
-        }
-    }
-    /* Not ELF, try DOS */
-    else if (header.mz.e_magic == IMAGE_DOS_SIGNATURE)
-    {
-        union
-        {
-            IMAGE_OS2_HEADER os2;
-            IMAGE_NT_HEADERS32 nt;
-        } ext_header;
-
-        /* We do have a DOS image so we will now try to seek into
-         * the file by the amount indicated by the field
-         * "Offset to extended header" and read in the
-         * "magic" field information at that location.
-         * This will tell us if there is more header information
-         * to read or not.
-         */
-        info->type = BINARY_DOS;
-        info->arch = IMAGE_FILE_MACHINE_I386;
-        if (SetFilePointer( hfile, header.mz.e_lfanew, NULL, SEEK_SET ) == -1) return;
-        if (!ReadFile( hfile, &ext_header, sizeof(ext_header), &len, NULL ) || len < 4) return;
-
-        /* Reading the magic field succeeded so
-         * we will try to determine what type it is.
-         */
-        if (!memcmp( &ext_header.nt.Signature, "PE\0\0", 4 ))
-        {
-            if (len >= sizeof(ext_header.nt.FileHeader))
-            {
-                static const char fakedll_signature[] = "Wine placeholder DLL";
-                char buffer[sizeof(fakedll_signature)];
-
-                info->type = BINARY_PE;
-                info->arch = ext_header.nt.FileHeader.Machine;
-                if (ext_header.nt.FileHeader.Characteristics & IMAGE_FILE_DLL)
-                    info->flags |= BINARY_FLAG_DLL;
-                if (len < sizeof(ext_header.nt))  /* clear remaining part of header if missing */
-                    memset( (char *)&ext_header.nt + len, 0, sizeof(ext_header.nt) - len );
-                switch (ext_header.nt.OptionalHeader.Magic)
-                {
-                case IMAGE_NT_OPTIONAL_HDR32_MAGIC:
-                    info->res_start = (void *)(ULONG_PTR)ext_header.nt.OptionalHeader.ImageBase;
-                    info->res_end = (void *)((ULONG_PTR)ext_header.nt.OptionalHeader.ImageBase +
-                                                     ext_header.nt.OptionalHeader.SizeOfImage);
-                    break;
-                case IMAGE_NT_OPTIONAL_HDR64_MAGIC:
-                    info->flags |= BINARY_FLAG_64BIT;
-                    break;
-                }
-
-                if (header.mz.e_lfanew >= sizeof(header.mz) + sizeof(fakedll_signature) &&
-                    SetFilePointer( hfile, sizeof(header.mz), NULL, SEEK_SET ) == sizeof(header.mz) &&
-                    ReadFile( hfile, buffer, sizeof(fakedll_signature), &len, NULL ) &&
-                    len == sizeof(fakedll_signature) &&
-                    !memcmp( buffer, fakedll_signature, sizeof(fakedll_signature) ))
-                {
-                    info->flags |= BINARY_FLAG_FAKEDLL;
-                }
-            }
-        }
-        else if (!memcmp( &ext_header.os2.ne_magic, "NE", 2 ))
-        {
-            /* This is a Windows executable (NE) header.  This can
-             * mean either a 16-bit OS/2 or a 16-bit Windows or even a
-             * DOS program (running under a DOS extender).  To decide
-             * which, we'll have to read the NE header.
-             */
-            if (len >= sizeof(ext_header.os2))
-            {
-                if (ext_header.os2.ne_flags & NE_FFLAGS_LIBMODULE) info->flags |= BINARY_FLAG_DLL;
-                switch ( ext_header.os2.ne_exetyp )
-                {
-                case 1:  info->type = BINARY_OS216; break; /* OS/2 */
-                case 2:  info->type = BINARY_WIN16; break; /* Windows */
-                case 3:  info->type = BINARY_DOS; break; /* European MS-DOS 4.x */
-                case 4:  info->type = BINARY_WIN16; break; /* Windows 386; FIXME: is this 32bit??? */
-                case 5:  info->type = BINARY_DOS; break; /* BOSS, Borland Operating System Services */
-                /* other types, e.g. 0 is: "unknown" */
-                default: info->type = MODULE_Decide_OS2_OldWin(hfile, &header.mz, &ext_header.os2); break;
-                }
-            }
-        }
-    }
-}
 
 /***********************************************************************
  *             GetBinaryTypeW                     [KERNEL32.@]
@@ -430,76 +293,84 @@ void MODULE_get_binary_info( HANDLE hfile, struct binary_info *info )
  *  ".com" and ".pif" files are only recognized by their file name extension,
  *  as per native Windows.
  */
-BOOL WINAPI GetBinaryTypeW( LPCWSTR lpApplicationName, LPDWORD lpBinaryType )
+BOOL WINAPI GetBinaryTypeW( LPCWSTR name, LPDWORD type )
 {
-    BOOL ret = FALSE;
-    HANDLE hfile;
-    struct binary_info binary_info;
+    static const WCHAR comW[] = { '.','c','o','m',0 };
+    static const WCHAR pifW[] = { '.','p','i','f',0 };
+    HANDLE hfile, mapping;
+    NTSTATUS status;
+    const WCHAR *ptr;
 
-    TRACE("%s\n", debugstr_w(lpApplicationName) );
+    TRACE("%s\n", debugstr_w(name) );
 
-    /* Sanity check.
-     */
-    if ( lpApplicationName == NULL || lpBinaryType == NULL )
-        return FALSE;
+    if (type == NULL) return FALSE;
 
-    /* Open the file indicated by lpApplicationName for reading.
-     */
-    hfile = CreateFileW( lpApplicationName, GENERIC_READ, FILE_SHARE_READ,
-                         NULL, OPEN_EXISTING, 0, 0 );
+    hfile = CreateFileW( name, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, 0 );
     if ( hfile == INVALID_HANDLE_VALUE )
         return FALSE;
 
-    /* Check binary type
-     */
-    MODULE_get_binary_info( hfile, &binary_info );
-    switch (binary_info.type)
-    {
-    case BINARY_UNKNOWN:
-    {
-        static const WCHAR comW[] = { '.','C','O','M',0 };
-        static const WCHAR pifW[] = { '.','P','I','F',0 };
-        const WCHAR *ptr;
-
-        /* try to determine from file name */
-        ptr = strrchrW( lpApplicationName, '.' );
-        if (!ptr) break;
-        if (!strcmpiW( ptr, comW ))
-        {
-            *lpBinaryType = SCS_DOS_BINARY;
-            ret = TRUE;
-        }
-        else if (!strcmpiW( ptr, pifW ))
-        {
-            *lpBinaryType = SCS_PIF_BINARY;
-            ret = TRUE;
-        }
-        break;
-    }
-    case BINARY_PE:
-        *lpBinaryType = (binary_info.flags & BINARY_FLAG_64BIT) ? SCS_64BIT_BINARY : SCS_32BIT_BINARY;
-        ret = TRUE;
-        break;
-    case BINARY_WIN16:
-        *lpBinaryType = SCS_WOW_BINARY;
-        ret = TRUE;
-        break;
-    case BINARY_OS216:
-        *lpBinaryType = SCS_OS216_BINARY;
-        ret = TRUE;
-        break;
-    case BINARY_DOS:
-        *lpBinaryType = SCS_DOS_BINARY;
-        ret = TRUE;
-        break;
-    case BINARY_UNIX_EXE:
-    case BINARY_UNIX_LIB:
-        ret = FALSE;
-        break;
-    }
-
+    status = NtCreateSection( &mapping, STANDARD_RIGHTS_REQUIRED | SECTION_QUERY,
+                              NULL, NULL, PAGE_READONLY, SEC_IMAGE, hfile );
     CloseHandle( hfile );
-    return ret;
+
+    switch (status)
+    {
+    case STATUS_SUCCESS:
+        {
+            SECTION_IMAGE_INFORMATION info;
+
+            status = NtQuerySection( mapping, SectionImageInformation, &info, sizeof(info), NULL );
+            CloseHandle( mapping );
+            if (status) return FALSE;
+            switch (info.Machine)
+            {
+            case IMAGE_FILE_MACHINE_I386:
+            case IMAGE_FILE_MACHINE_ARM:
+            case IMAGE_FILE_MACHINE_THUMB:
+            case IMAGE_FILE_MACHINE_ARMNT:
+            case IMAGE_FILE_MACHINE_POWERPC:
+                *type = SCS_32BIT_BINARY;
+                return TRUE;
+            case IMAGE_FILE_MACHINE_AMD64:
+            case IMAGE_FILE_MACHINE_ARM64:
+                *type = SCS_64BIT_BINARY;
+                return TRUE;
+            }
+            return FALSE;
+        }
+    case STATUS_INVALID_IMAGE_WIN_16:
+        *type = SCS_WOW_BINARY;
+        return TRUE;
+    case STATUS_INVALID_IMAGE_WIN_32:
+        *type = SCS_32BIT_BINARY;
+        return TRUE;
+    case STATUS_INVALID_IMAGE_WIN_64:
+        *type = SCS_64BIT_BINARY;
+        return TRUE;
+    case STATUS_INVALID_IMAGE_NE_FORMAT:
+        *type = SCS_OS216_BINARY;
+        return TRUE;
+    case STATUS_INVALID_IMAGE_PROTECT:
+        *type = SCS_DOS_BINARY;
+        return TRUE;
+    case STATUS_INVALID_IMAGE_NOT_MZ:
+        if ((ptr = strrchrW( name, '.' )))
+        {
+            if (!strcmpiW( ptr, comW ))
+            {
+                *type = SCS_DOS_BINARY;
+                return TRUE;
+            }
+            if (!strcmpiW( ptr, pifW ))
+            {
+                *type = SCS_PIF_BINARY;
+                return TRUE;
+            }
+        }
+        return FALSE;
+    default:
+        return FALSE;
+    }
 }
 
 /***********************************************************************
@@ -728,13 +599,11 @@ static const WCHAR *get_dll_system_path(void)
     if (!cached_path)
     {
         WCHAR *p, *path;
-        int len = 3;
+        int len = 1;
 
         len += 2 * GetSystemDirectoryW( NULL, 0 );
         len += GetWindowsDirectoryW( NULL, 0 );
         p = path = HeapAlloc( GetProcessHeap(), 0, len * sizeof(WCHAR) );
-        *p++ = '.';
-        *p++ = ';';
         GetSystemDirectoryW( p, path + len - p);
         p += strlenW(p);
         /* if system directory ends in "32" add 16-bit version too */
@@ -749,6 +618,52 @@ static const WCHAR *get_dll_system_path(void)
         cached_path = path;
     }
     return cached_path;
+}
+
+/***********************************************************************
+ *           get_dll_safe_mode
+ */
+static BOOL get_dll_safe_mode(void)
+{
+    static const WCHAR keyW[] = {'\\','R','e','g','i','s','t','r','y','\\',
+                                 'M','a','c','h','i','n','e','\\',
+                                 'S','y','s','t','e','m','\\',
+                                 'C','u','r','r','e','n','t','C','o','n','t','r','o','l','S','e','t','\\',
+                                 'C','o','n','t','r','o','l','\\',
+                                 'S','e','s','s','i','o','n',' ','M','a','n','a','g','e','r',0};
+    static const WCHAR valueW[] = {'S','a','f','e','D','l','l','S','e','a','r','c','h','M','o','d','e',0};
+
+    static int safe_mode = -1;
+
+    if (safe_mode == -1)
+    {
+        char buffer[offsetof(KEY_VALUE_PARTIAL_INFORMATION, Data[sizeof(DWORD)])];
+        KEY_VALUE_PARTIAL_INFORMATION *info = (KEY_VALUE_PARTIAL_INFORMATION *)buffer;
+        OBJECT_ATTRIBUTES attr;
+        UNICODE_STRING nameW;
+        HANDLE hkey;
+        DWORD size = sizeof(buffer);
+
+        attr.Length = sizeof(attr);
+        attr.RootDirectory = 0;
+        attr.ObjectName = &nameW;
+        attr.Attributes = 0;
+        attr.SecurityDescriptor = NULL;
+        attr.SecurityQualityOfService = NULL;
+
+        safe_mode = 1;
+        RtlInitUnicodeString( &nameW, keyW );
+        if (!NtOpenKey( &hkey, KEY_READ, &attr ))
+        {
+            RtlInitUnicodeString( &nameW, valueW );
+            if (!NtQueryValueKey( hkey, &nameW, KeyValuePartialInformation, buffer, size, &size ) &&
+                info->Type == REG_DWORD && info->DataLength == sizeof(DWORD))
+                safe_mode = !!*(DWORD *)info->Data;
+            NtClose( hkey );
+        }
+        if (!safe_mode) TRACE( "SafeDllSearchMode disabled through the registry\n" );
+    }
+    return safe_mode;
 }
 
 /******************************************************************
@@ -770,15 +685,42 @@ static inline const WCHAR *get_module_path_end(const WCHAR *module)
     return mod_end;
 }
 
+
+/******************************************************************
+ *		append_path_len
+ *
+ * Append a counted string to the load path. Helper for MODULE_get_dll_load_path.
+ */
+static inline WCHAR *append_path_len( WCHAR *p, const WCHAR *str, DWORD len )
+{
+    if (!len) return p;
+    memcpy( p, str, len * sizeof(WCHAR) );
+    p[len] = ';';
+    return p + len + 1;
+}
+
+
+/******************************************************************
+ *		append_path
+ *
+ * Append a string to the load path. Helper for MODULE_get_dll_load_path.
+ */
+static inline WCHAR *append_path( WCHAR *p, const WCHAR *str )
+{
+    return append_path_len( p, str, strlenW(str) );
+}
+
+
 /******************************************************************
  *		MODULE_get_dll_load_path
  *
  * Compute the load path to use for a given dll.
  * Returned pointer must be freed by caller.
  */
-WCHAR *MODULE_get_dll_load_path( LPCWSTR module )
+WCHAR *MODULE_get_dll_load_path( LPCWSTR module, int safe_mode )
 {
     static const WCHAR pathW[] = {'P','A','T','H',0};
+    static const WCHAR dotW[] = {'.',0};
 
     const WCHAR *system_path = get_dll_system_path();
     const WCHAR *mod_end = NULL;
@@ -811,28 +753,23 @@ WCHAR *MODULE_get_dll_load_path( LPCWSTR module )
         path_len = value.Length;
 
     RtlEnterCriticalSection( &dlldir_section );
+    if (safe_mode == -1) safe_mode = get_dll_safe_mode();
     if (dll_directory) len += strlenW(dll_directory) + 1;
+    else len += 2;  /* current directory */
     if ((p = ret = HeapAlloc( GetProcessHeap(), 0, path_len + len * sizeof(WCHAR) )))
     {
-        if (module)
-        {
-            memcpy( ret, module, (mod_end - module) * sizeof(WCHAR) );
-            p += (mod_end - module);
-            *p++ = ';';
-        }
-        if (dll_directory)
-        {
-            strcpyW( p, dll_directory );
-            p += strlenW(p);
-            *p++ = ';';
-        }
+        if (module) p = append_path_len( p, module, mod_end - module );
+
+        if (dll_directory) p = append_path( p, dll_directory );
+        else if (!safe_mode) p = append_path( p, dotW );
+
+        p = append_path( p, system_path );
+
+        if (!dll_directory && safe_mode) p = append_path( p, dotW );
     }
     RtlLeaveCriticalSection( &dlldir_section );
     if (!ret) return NULL;
 
-    strcpyW( p, system_path );
-    p += strlenW(p);
-    *p++ = ';';
     value.Buffer = p;
     value.MaximumLength = path_len;
 
@@ -857,43 +794,131 @@ WCHAR *MODULE_get_dll_load_path( LPCWSTR module )
 
 
 /******************************************************************
+ *		get_dll_load_path_search_flags
+ */
+static WCHAR *get_dll_load_path_search_flags( LPCWSTR module, DWORD flags )
+{
+    const WCHAR *image = NULL, *mod_end, *image_end;
+    struct dll_dir_entry *dir;
+    WCHAR *p, *ret;
+    int len = 1;
+
+    if (flags & LOAD_LIBRARY_SEARCH_DEFAULT_DIRS)
+        flags |= (LOAD_LIBRARY_SEARCH_APPLICATION_DIR |
+                  LOAD_LIBRARY_SEARCH_USER_DIRS |
+                  LOAD_LIBRARY_SEARCH_SYSTEM32);
+
+    if (flags & LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR)
+    {
+        DWORD type = RtlDetermineDosPathNameType_U( module );
+        if (type != ABSOLUTE_DRIVE_PATH && type != ABSOLUTE_PATH)
+        {
+            SetLastError( ERROR_INVALID_PARAMETER );
+            return NULL;
+        }
+        mod_end = get_module_path_end( module );
+        len += (mod_end - module) + 1;
+    }
+    else module = NULL;
+
+    RtlEnterCriticalSection( &dlldir_section );
+
+    if (flags & LOAD_LIBRARY_SEARCH_APPLICATION_DIR)
+    {
+        image = NtCurrentTeb()->Peb->ProcessParameters->ImagePathName.Buffer;
+        image_end = get_module_path_end( image );
+        len += (image_end - image) + 1;
+    }
+
+    if (flags & LOAD_LIBRARY_SEARCH_USER_DIRS)
+    {
+        LIST_FOR_EACH_ENTRY( dir, &dll_dir_list, struct dll_dir_entry, entry )
+            len += strlenW( dir->dir ) + 1;
+        if (dll_directory) len += strlenW(dll_directory) + 1;
+    }
+
+    if (flags & LOAD_LIBRARY_SEARCH_SYSTEM32) len += GetSystemDirectoryW( NULL, 0 );
+
+    if ((p = ret = HeapAlloc( GetProcessHeap(), 0, len * sizeof(WCHAR) )))
+    {
+        if (module) p = append_path_len( p, module, mod_end - module );
+        if (image) p = append_path_len( p, image, image_end - image );
+        if (flags & LOAD_LIBRARY_SEARCH_USER_DIRS)
+        {
+            LIST_FOR_EACH_ENTRY( dir, &dll_dir_list, struct dll_dir_entry, entry )
+                p = append_path( p, dir->dir );
+            if (dll_directory) p = append_path( p, dll_directory );
+        }
+        if (flags & LOAD_LIBRARY_SEARCH_SYSTEM32) GetSystemDirectoryW( p, ret + len - p );
+        else
+        {
+            if (p > ret) p--;
+            *p = 0;
+        }
+    }
+
+    RtlLeaveCriticalSection( &dlldir_section );
+    return ret;
+}
+
+
+/******************************************************************
  *		load_library_as_datafile
  */
-static BOOL load_library_as_datafile( LPCWSTR name, HMODULE* hmod)
+static BOOL load_library_as_datafile( LPCWSTR name, HMODULE *hmod, DWORD flags )
 {
     static const WCHAR dotDLL[] = {'.','d','l','l',0};
 
     WCHAR filenameW[MAX_PATH];
     HANDLE hFile = INVALID_HANDLE_VALUE;
     HANDLE mapping;
-    HMODULE module;
+    HMODULE module = 0;
+    DWORD protect = PAGE_READONLY;
+    DWORD sharing = FILE_SHARE_READ | FILE_SHARE_DELETE;
 
     *hmod = 0;
 
-    if (SearchPathW( NULL, name, dotDLL, sizeof(filenameW) / sizeof(filenameW[0]),
-                     filenameW, NULL ))
+    if (flags & LOAD_LIBRARY_AS_IMAGE_RESOURCE) protect |= SEC_IMAGE;
+
+    if (SearchPathW( NULL, name, dotDLL, ARRAY_SIZE( filenameW ), filenameW, NULL ))
     {
-        hFile = CreateFileW( filenameW, GENERIC_READ, FILE_SHARE_READ,
-                             NULL, OPEN_EXISTING, 0, 0 );
+        hFile = CreateFileW( filenameW, GENERIC_READ, sharing, NULL, OPEN_EXISTING, 0, 0 );
     }
     if (hFile == INVALID_HANDLE_VALUE) return FALSE;
 
-    mapping = CreateFileMappingW( hFile, NULL, PAGE_READONLY, 0, 0, NULL );
-    CloseHandle( hFile );
-    if (!mapping) return FALSE;
+    mapping = CreateFileMappingW( hFile, NULL, protect, 0, 0, NULL );
+    if (!mapping) goto failed;
 
     module = MapViewOfFile( mapping, FILE_MAP_READ, 0, 0, 0 );
     CloseHandle( mapping );
-    if (!module) return FALSE;
+    if (!module) goto failed;
 
-    /* make sure it's a valid PE file */
-    if (!RtlImageNtHeader(module))
+    if (!(flags & LOAD_LIBRARY_AS_IMAGE_RESOURCE))
     {
-        UnmapViewOfFile( module );
-        return FALSE;
+        /* make sure it's a valid PE file */
+        if (!RtlImageNtHeader( module )) goto failed;
+        *hmod = (HMODULE)((char *)module + 1); /* set bit 0 for data file module */
+
+        if (flags & LOAD_LIBRARY_AS_DATAFILE_EXCLUSIVE)
+        {
+            struct exclusive_datafile *file = HeapAlloc( GetProcessHeap(), 0, sizeof(*file) );
+            if (!file) goto failed;
+            file->module = *hmod;
+            file->file   = hFile;
+            list_add_head( &exclusive_datafile_list, &file->entry );
+            TRACE( "delaying close %p for module %p\n", file->file, file->module );
+            return TRUE;
+        }
     }
-    *hmod = (HMODULE)((char *)module + 1);  /* set low bit of handle to indicate datafile module */
+    else *hmod = (HMODULE)((char *)module + 2); /* set bit 1 for image resource module */
+
+    CloseHandle( hFile );
     return TRUE;
+
+failed:
+    if (module) UnmapViewOfFile( module );
+    CloseHandle( hFile );
+    return FALSE;
 }
 
 
@@ -907,23 +932,26 @@ static HMODULE load_library( const UNICODE_STRING *libname, DWORD flags )
     NTSTATUS nts;
     HMODULE hModule;
     WCHAR *load_path;
-    static const DWORD unsupported_flags = 
-        LOAD_IGNORE_CODE_AUTHZ_LEVEL |
-        LOAD_LIBRARY_AS_IMAGE_RESOURCE |
-        LOAD_LIBRARY_AS_DATAFILE_EXCLUSIVE |
-        LOAD_LIBRARY_REQUIRE_SIGNED_TARGET |
-        LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR |
-        LOAD_LIBRARY_SEARCH_APPLICATION_DIR |
-        LOAD_LIBRARY_SEARCH_USER_DIRS |
-        LOAD_LIBRARY_SEARCH_SYSTEM32 |
-        LOAD_LIBRARY_SEARCH_DEFAULT_DIRS;
+    const DWORD load_library_search_flags = (LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR |
+                                             LOAD_LIBRARY_SEARCH_APPLICATION_DIR |
+                                             LOAD_LIBRARY_SEARCH_USER_DIRS |
+                                             LOAD_LIBRARY_SEARCH_SYSTEM32 |
+                                             LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+    const DWORD unsupported_flags = (LOAD_IGNORE_CODE_AUTHZ_LEVEL |
+                                     LOAD_LIBRARY_REQUIRE_SIGNED_TARGET);
+
+    if (!(flags & load_library_search_flags)) flags |= default_search_flags;
 
     if( flags & unsupported_flags)
         FIXME("unsupported flag(s) used (flags: 0x%08x)\n", flags);
 
-    load_path = MODULE_get_dll_load_path( flags & LOAD_WITH_ALTERED_SEARCH_PATH ? libname->Buffer : NULL );
+    if (flags & load_library_search_flags)
+        load_path = get_dll_load_path_search_flags( libname->Buffer, flags );
+    else
+        load_path = MODULE_get_dll_load_path( flags & LOAD_WITH_ALTERED_SEARCH_PATH ? libname->Buffer : NULL, -1 );
+    if (!load_path) return 0;
 
-    if (flags & LOAD_LIBRARY_AS_DATAFILE)
+    if (flags & (LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_DATAFILE_EXCLUSIVE | LOAD_LIBRARY_AS_IMAGE_RESOURCE))
     {
         ULONG_PTR magic;
 
@@ -934,12 +962,12 @@ static HMODULE load_library( const UNICODE_STRING *libname, DWORD flags )
             LdrUnlockLoaderLock( 0, magic );
             goto done;
         }
+        if (load_library_as_datafile( libname->Buffer, &hModule, flags ))
+        {
+            LdrUnlockLoaderLock( 0, magic );
+            goto done;
+        }
         LdrUnlockLoaderLock( 0, magic );
-
-        /* The method in load_library_as_datafile allows searching for the
-         * 'native' libraries only
-         */
-        if (load_library_as_datafile( libname->Buffer, &hModule )) goto done;
         flags |= DONT_RESOLVE_DLL_REFERENCES; /* Just in case */
         /* Fallback to normal behaviour */
     }
@@ -1072,11 +1100,26 @@ BOOL WINAPI DECLSPEC_HOTPATCH FreeLibrary(HINSTANCE hLibModule)
         return FALSE;
     }
 
-    if ((ULONG_PTR)hLibModule & 1)
+    if ((ULONG_PTR)hLibModule & 3) /* this is a datafile module */
     {
-        /* this is a LOAD_LIBRARY_AS_DATAFILE module */
-        char *ptr = (char *)hLibModule - 1;
-        return UnmapViewOfFile( ptr );
+        if ((ULONG_PTR)hLibModule & 1)
+        {
+            struct exclusive_datafile *file;
+            ULONG_PTR magic;
+
+            LdrLockLoaderLock( 0, NULL, &magic );
+            LIST_FOR_EACH_ENTRY( file, &exclusive_datafile_list, struct exclusive_datafile, entry )
+            {
+                if (file->module != hLibModule) continue;
+                TRACE( "closing %p for module %p\n", file->file, file->module );
+                CloseHandle( file->file );
+                list_remove( &file->entry );
+                HeapFree( GetProcessHeap(), 0, file );
+                break;
+            }
+            LdrUnlockLoaderLock( 0, magic );
+        }
+        return UnmapViewOfFile( (void *)((ULONG_PTR)hLibModule & ~3) );
     }
 
     if ((nts = LdrUnloadDll( hLibModule )) == STATUS_SUCCESS) retv = TRUE;
@@ -1098,7 +1141,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH FreeLibrary(HINSTANCE hLibModule)
  *  Success: A pointer to the symbol in the process address space.
  *  Failure: NULL. Use GetLastError() to determine the cause.
  */
-FARPROC WINAPI GetProcAddress( HMODULE hModule, LPCSTR function )
+FARPROC get_proc_address( HMODULE hModule, LPCSTR function )
 {
     NTSTATUS    nts;
     FARPROC     fp;
@@ -1122,6 +1165,54 @@ FARPROC WINAPI GetProcAddress( HMODULE hModule, LPCSTR function )
     return fp;
 }
 
+#ifdef __x86_64__
+/*
+ * Work around a Delphi bug on x86_64.  When delay loading a symbol,
+ * Delphi saves rcx, rdx, r8 and r9 to the stack.  It then calls
+ * GetProcAddress(), pops the saved registers and calls the function.
+ * This works fine if all of the parameters are ints.  However, since
+ * it does not save xmm0 - 3, it relies on GetProcAddress() preserving
+ * these registers if the function takes floating point parameters.
+ * This wrapper saves xmm0 - 3 to the stack.
+ */
+extern FARPROC get_proc_address_wrapper( HMODULE module, LPCSTR function );
+
+__ASM_GLOBAL_FUNC( get_proc_address_wrapper,
+                   "pushq %rbp\n\t"
+                   __ASM_CFI(".cfi_adjust_cfa_offset 8\n\t")
+                   __ASM_CFI(".cfi_rel_offset %rbp,0\n\t")
+                   "movq %rsp,%rbp\n\t"
+                   __ASM_CFI(".cfi_def_cfa_register %rbp\n\t")
+                   "subq $0x40,%rsp\n\t"
+                   "movaps %xmm0,-0x10(%rbp)\n\t"
+                   "movaps %xmm1,-0x20(%rbp)\n\t"
+                   "movaps %xmm2,-0x30(%rbp)\n\t"
+                   "movaps %xmm3,-0x40(%rbp)\n\t"
+                   "call " __ASM_NAME("get_proc_address") "\n\t"
+                   "movaps -0x40(%rbp), %xmm3\n\t"
+                   "movaps -0x30(%rbp), %xmm2\n\t"
+                   "movaps -0x20(%rbp), %xmm1\n\t"
+                   "movaps -0x10(%rbp), %xmm0\n\t"
+                   "movq %rbp,%rsp\n\t"
+                   __ASM_CFI(".cfi_def_cfa_register %rsp\n\t")
+                   "popq %rbp\n\t"
+                   __ASM_CFI(".cfi_adjust_cfa_offset -8\n\t")
+                   __ASM_CFI(".cfi_same_value %rbp\n\t")
+                   "ret" )
+#else /* __x86_64__ */
+
+static inline FARPROC get_proc_address_wrapper( HMODULE module, LPCSTR function )
+{
+    return get_proc_address( module, function );
+}
+
+#endif /* __x86_64__ */
+
+FARPROC WINAPI GetProcAddress( HMODULE hModule, LPCSTR function )
+{
+    return get_proc_address_wrapper( hModule, function );
+}
+
 /***********************************************************************
  *           DelayLoadFailureHook  (KERNEL32.@)
  */
@@ -1139,10 +1230,56 @@ FARPROC WINAPI DelayLoadFailureHook( LPCSTR name, LPCSTR function )
     return NULL;
 }
 
+typedef struct _PEB32
+{
+    BOOLEAN InheritedAddressSpace;
+    BOOLEAN ReadImageFileExecOptions;
+    BOOLEAN BeingDebugged;
+    BOOLEAN SpareBool;
+    DWORD   Mutant;
+    DWORD   ImageBaseAddress;
+    DWORD   LdrData;
+} PEB32;
+
+typedef struct _LIST_ENTRY32
+{
+  DWORD Flink;
+  DWORD Blink;
+} LIST_ENTRY32;
+
+typedef struct _PEB_LDR_DATA32
+{
+    ULONG        Length;
+    BOOLEAN      Initialized;
+    DWORD        SsHandle;
+    LIST_ENTRY32 InLoadOrderModuleList;
+} PEB_LDR_DATA32;
+
+typedef struct _UNICODE_STRING32
+{
+  USHORT Length;
+  USHORT MaximumLength;
+  DWORD  Buffer;
+} UNICODE_STRING32;
+
+typedef struct _LDR_MODULE32
+{
+    LIST_ENTRY32        InLoadOrderModuleList;
+    LIST_ENTRY32        InMemoryOrderModuleList;
+    LIST_ENTRY32        InInitializationOrderModuleList;
+    DWORD               BaseAddress;
+    DWORD               EntryPoint;
+    ULONG               SizeOfImage;
+    UNICODE_STRING32    FullDllName;
+    UNICODE_STRING32    BaseDllName;
+} LDR_MODULE32;
+
 typedef struct {
     HANDLE process;
     PLIST_ENTRY head, current;
     LDR_MODULE ldr_module;
+    BOOL wow64;
+    LDR_MODULE32 ldr_module32;
 } MODULE_ITERATOR;
 
 static BOOL init_module_iterator(MODULE_ITERATOR *iter, HANDLE process)
@@ -1151,6 +1288,9 @@ static BOOL init_module_iterator(MODULE_ITERATOR *iter, HANDLE process)
     PPEB_LDR_DATA ldr_data;
     NTSTATUS status;
 
+    if (!IsWow64Process(process, &iter->wow64))
+        return FALSE;
+
     /* Get address of PEB */
     status = NtQueryInformationProcess(process, ProcessBasicInformation,
                                        &pbi, sizeof(pbi), NULL);
@@ -1158,6 +1298,30 @@ static BOOL init_module_iterator(MODULE_ITERATOR *iter, HANDLE process)
     {
         SetLastError(RtlNtStatusToDosError(status));
         return FALSE;
+    }
+
+    if (sizeof(void *) == 8 && iter->wow64)
+    {
+        PEB_LDR_DATA32 *ldr_data32_ptr;
+        DWORD ldr_data32, first_module;
+        PEB32 *peb32;
+
+        peb32 = (PEB32 *)(DWORD_PTR)pbi.PebBaseAddress;
+
+        if (!ReadProcessMemory(process, &peb32->LdrData, &ldr_data32,
+                               sizeof(ldr_data32), NULL))
+            return FALSE;
+        ldr_data32_ptr = (PEB_LDR_DATA32 *)(DWORD_PTR) ldr_data32;
+
+        if (!ReadProcessMemory(process,
+                               &ldr_data32_ptr->InLoadOrderModuleList.Flink,
+                               &first_module, sizeof(first_module), NULL))
+            return FALSE;
+        iter->head = (LIST_ENTRY *)&ldr_data32_ptr->InLoadOrderModuleList;
+        iter->current = (LIST_ENTRY *)(DWORD_PTR) first_module;
+        iter->process = process;
+
+        return TRUE;
     }
 
     /* Read address of LdrData from PEB */
@@ -1181,6 +1345,19 @@ static int module_iterator_next(MODULE_ITERATOR *iter)
 {
     if (iter->current == iter->head)
         return 0;
+
+    if (sizeof(void *) == 8 && iter->wow64)
+    {
+        LIST_ENTRY32 *entry32 = (LIST_ENTRY32 *)iter->current;
+
+        if (!ReadProcessMemory(iter->process,
+                               CONTAINING_RECORD(entry32, LDR_MODULE32, InLoadOrderModuleList),
+                               &iter->ldr_module32, sizeof(iter->ldr_module32), NULL))
+            return -1;
+
+        iter->current = (LIST_ENTRY *)(DWORD_PTR) iter->ldr_module32.InLoadOrderModuleList.Flink;
+        return 1;
+    }
 
     if (!ReadProcessMemory(iter->process,
                            CONTAINING_RECORD(iter->current, LDR_MODULE, InLoadOrderModuleList),
@@ -1214,6 +1391,29 @@ static BOOL get_ldr_module(HANDLE process, HMODULE module, LDR_MODULE *ldr_modul
     return FALSE;
 }
 
+static BOOL get_ldr_module32(HANDLE process, HMODULE module, LDR_MODULE32 *ldr_module)
+{
+    MODULE_ITERATOR iter;
+    INT ret;
+
+    if (!init_module_iterator(&iter, process))
+        return FALSE;
+
+    while ((ret = module_iterator_next(&iter)) > 0)
+        /* When hModule is NULL we return the process image - which will be
+         * the first module since our iterator uses InLoadOrderModuleList */
+        if (!module || (DWORD)(DWORD_PTR) module == iter.ldr_module32.BaseAddress)
+        {
+            *ldr_module = iter.ldr_module32;
+            return TRUE;
+        }
+
+    if (ret == 0)
+        SetLastError(ERROR_INVALID_HANDLE);
+
+    return FALSE;
+}
+
 /***********************************************************************
  *           K32EnumProcessModules (KERNEL32.@)
  *
@@ -1224,28 +1424,37 @@ BOOL WINAPI K32EnumProcessModules(HANDLE process, HMODULE *lphModule,
                                   DWORD cb, DWORD *needed)
 {
     MODULE_ITERATOR iter;
+    DWORD size = 0;
     INT ret;
 
     if (!init_module_iterator(&iter, process))
         return FALSE;
 
-    if ((cb && !lphModule) || !needed)
+    if (cb && !lphModule)
     {
         SetLastError(ERROR_NOACCESS);
         return FALSE;
     }
 
-    *needed = 0;
-
     while ((ret = module_iterator_next(&iter)) > 0)
     {
         if (cb >= sizeof(HMODULE))
         {
-            *lphModule++ = iter.ldr_module.BaseAddress;
+            if (sizeof(void *) == 8 && iter.wow64)
+                *lphModule++ = (HMODULE) (DWORD_PTR)iter.ldr_module32.BaseAddress;
+            else
+                *lphModule++ = iter.ldr_module.BaseAddress;
             cb -= sizeof(HMODULE);
         }
-        *needed += sizeof(HMODULE);
+        size += sizeof(HMODULE);
     }
+
+    if (!needed)
+    {
+        SetLastError(ERROR_NOACCESS);
+        return FALSE;
+    }
+    *needed = size;
 
     return ret == 0;
 }
@@ -1271,14 +1480,33 @@ DWORD WINAPI K32GetModuleBaseNameW(HANDLE process, HMODULE module,
                                    LPWSTR base_name, DWORD size)
 {
     LDR_MODULE ldr_module;
+    BOOL wow64;
 
-    if (!get_ldr_module(process, module, &ldr_module))
+    if (!IsWow64Process(process, &wow64))
         return 0;
 
-    size = min(ldr_module.BaseDllName.Length / sizeof(WCHAR), size);
-    if (!ReadProcessMemory(process, ldr_module.BaseDllName.Buffer,
-                           base_name, size * sizeof(WCHAR), NULL))
-        return 0;
+    if (sizeof(void *) == 8 && wow64)
+    {
+        LDR_MODULE32 ldr_module32;
+
+        if (!get_ldr_module32(process, module, &ldr_module32))
+            return 0;
+
+        size = min(ldr_module32.BaseDllName.Length / sizeof(WCHAR), size);
+        if (!ReadProcessMemory(process, (void *)(DWORD_PTR)ldr_module32.BaseDllName.Buffer,
+                               base_name, size * sizeof(WCHAR), NULL))
+            return 0;
+    }
+    else
+    {
+        if (!get_ldr_module(process, module, &ldr_module))
+            return 0;
+
+        size = min(ldr_module.BaseDllName.Length / sizeof(WCHAR), size);
+        if (!ReadProcessMemory(process, ldr_module.BaseDllName.Buffer,
+                               base_name, size * sizeof(WCHAR), NULL))
+            return 0;
+    }
 
     base_name[size] = 0;
     return size;
@@ -1321,17 +1549,36 @@ DWORD WINAPI K32GetModuleFileNameExW(HANDLE process, HMODULE module,
                                      LPWSTR file_name, DWORD size)
 {
     LDR_MODULE ldr_module;
+    BOOL wow64;
     DWORD len;
 
     if (!size) return 0;
 
-    if(!get_ldr_module(process, module, &ldr_module))
+    if (!IsWow64Process(process, &wow64))
         return 0;
 
-    len = ldr_module.FullDllName.Length / sizeof(WCHAR);
-    if (!ReadProcessMemory(process, ldr_module.FullDllName.Buffer,
-                           file_name, min( len, size ) * sizeof(WCHAR), NULL))
-        return 0;
+    if (sizeof(void *) == 8 && wow64)
+    {
+        LDR_MODULE32 ldr_module32;
+
+        if (!get_ldr_module32(process, module, &ldr_module32))
+            return 0;
+
+        len = ldr_module32.FullDllName.Length / sizeof(WCHAR);
+        if (!ReadProcessMemory(process, (void *)(DWORD_PTR)ldr_module32.FullDllName.Buffer,
+                               file_name, min( len, size ) * sizeof(WCHAR), NULL))
+            return 0;
+    }
+    else
+    {
+        if (!get_ldr_module(process, module, &ldr_module))
+            return 0;
+
+        len = ldr_module.FullDllName.Length / sizeof(WCHAR);
+        if (!ReadProcessMemory(process, ldr_module.FullDllName.Buffer,
+                               file_name, min( len, size ) * sizeof(WCHAR), NULL))
+            return 0;
+    }
 
     if (len < size)
     {
@@ -1397,6 +1644,7 @@ BOOL WINAPI K32GetModuleInformation(HANDLE process, HMODULE module,
                                     MODULEINFO *modinfo, DWORD cb)
 {
     LDR_MODULE ldr_module;
+    BOOL wow64;
 
     if (cb < sizeof(MODULEINFO))
     {
@@ -1404,12 +1652,29 @@ BOOL WINAPI K32GetModuleInformation(HANDLE process, HMODULE module,
         return FALSE;
     }
 
-    if (!get_ldr_module(process, module, &ldr_module))
+    if (!IsWow64Process(process, &wow64))
         return FALSE;
 
-    modinfo->lpBaseOfDll = ldr_module.BaseAddress;
-    modinfo->SizeOfImage = ldr_module.SizeOfImage;
-    modinfo->EntryPoint  = ldr_module.EntryPoint;
+    if (sizeof(void *) == 8 && wow64)
+    {
+        LDR_MODULE32 ldr_module32;
+
+        if (!get_ldr_module32(process, module, &ldr_module32))
+            return FALSE;
+
+        modinfo->lpBaseOfDll = (void *)(DWORD_PTR)ldr_module32.BaseAddress;
+        modinfo->SizeOfImage = ldr_module32.SizeOfImage;
+        modinfo->EntryPoint  = (void *)(DWORD_PTR)ldr_module32.EntryPoint;
+    }
+    else
+    {
+        if (!get_ldr_module(process, module, &ldr_module))
+            return FALSE;
+
+        modinfo->lpBaseOfDll = ldr_module.BaseAddress;
+        modinfo->SizeOfImage = ldr_module.SizeOfImage;
+        modinfo->EntryPoint  = ldr_module.EntryPoint;
+    }
     return TRUE;
 }
 

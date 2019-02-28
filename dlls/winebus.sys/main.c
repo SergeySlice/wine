@@ -17,7 +17,7 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
-
+#include "config.h"
 #include <stdarg.h>
 
 #define NONAMELESSUNION
@@ -42,6 +42,24 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(plugplay);
 WINE_DECLARE_DEBUG_CHANNEL(hid_report);
+
+#define VID_MICROSOFT 0x045e
+
+static const WORD PID_XBOX_CONTROLLERS[] =  {
+    0x0202, /* Xbox Controller */
+    0x0285, /* Xbox Controller S */
+    0x0289, /* Xbox Controller S */
+    0x028e, /* Xbox360 Controller */
+    0x028f, /* Xbox360 Wireless Controller */
+    0x02d1, /* Xbox One Controller */
+    0x02dd, /* Xbox One Controller (Covert Forces/Firmware 2015) */
+    0x02e0, /* Xbox One X Controller */
+    0x02e3, /* Xbox One Elite Controller */
+    0x02e6, /* Wireless XBox Controller Dongle */
+    0x02ea, /* Xbox One S Controller */
+    0x02fd, /* Xbox One S Controller (Firmware 2017) */
+    0x0719, /* Xbox 360 Wireless Adapter */
+};
 
 struct pnp_device
 {
@@ -287,6 +305,28 @@ DEVICE_OBJECT *bus_find_hid_device(const platform_vtbl *vtbl, void *platform_dev
     return ret;
 }
 
+DEVICE_OBJECT* bus_enumerate_hid_devices(const platform_vtbl *vtbl, enum_func function, void* context)
+{
+    struct pnp_device *dev;
+    DEVICE_OBJECT *ret = NULL;
+
+    TRACE("(%p)\n", vtbl);
+
+    EnterCriticalSection(&device_list_cs);
+    LIST_FOR_EACH_ENTRY(dev, &pnp_devset, struct pnp_device, entry)
+    {
+        struct device_extension *ext = (struct device_extension *)dev->device->DeviceExtension;
+        if (ext->vtbl != vtbl) continue;
+        if (function(dev->device, context) == 0)
+        {
+            ret = dev->device;
+            break;
+        }
+    }
+    LeaveCriticalSection(&device_list_cs);
+    return ret;
+}
+
 void bus_remove_hid_device(DEVICE_OBJECT *device)
 {
     struct device_extension *ext = (struct device_extension *)device->DeviceExtension;
@@ -320,6 +360,57 @@ void bus_remove_hid_device(DEVICE_OBJECT *device)
 
     /* pnp_device must be released after the device is gone */
     HeapFree(GetProcessHeap(), 0, pnp_device);
+}
+
+static NTSTATUS build_device_relations(DEVICE_RELATIONS **devices)
+{
+    int i;
+    struct pnp_device *ptr;
+
+    EnterCriticalSection(&device_list_cs);
+    *devices = HeapAlloc(GetProcessHeap(), 0, sizeof(DEVICE_RELATIONS) +
+        list_count(&pnp_devset) * sizeof (void *));
+
+    if (!*devices)
+    {
+        LeaveCriticalSection(&device_list_cs);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    i = 0;
+    LIST_FOR_EACH_ENTRY(ptr, &pnp_devset, struct pnp_device, entry)
+    {
+        (*devices)->Objects[i] = (DEVICE_OBJECT*)ptr->device;
+        i++;
+    }
+    LeaveCriticalSection(&device_list_cs);
+    (*devices)->Count = i;
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS handle_IRP_MN_QUERY_DEVICE_RELATIONS(IRP *irp)
+{
+    NTSTATUS status = irp->IoStatus.u.Status;
+    IO_STACK_LOCATION *irpsp = IoGetCurrentIrpStackLocation( irp );
+
+    TRACE("IRP_MN_QUERY_DEVICE_RELATIONS\n");
+    switch (irpsp->Parameters.QueryDeviceRelations.Type)
+    {
+        case EjectionRelations:
+        case RemovalRelations:
+        case TargetDeviceRelation:
+        case PowerRelations:
+            FIXME("Unhandled Device Relation %x\n",irpsp->Parameters.QueryDeviceRelations.Type);
+            break;
+        case BusRelations:
+            status = build_device_relations((DEVICE_RELATIONS**)&irp->IoStatus.Information);
+            break;
+        default:
+            FIXME("Unknown Device Relation %x\n",irpsp->Parameters.QueryDeviceRelations.Type);
+            break;
+    }
+
+    return status;
 }
 
 static NTSTATUS handle_IRP_MN_QUERY_ID(DEVICE_OBJECT *device, IRP *irp)
@@ -366,6 +457,8 @@ NTSTATUS WINAPI common_pnp_dispatch(DEVICE_OBJECT *device, IRP *irp)
     {
         case IRP_MN_QUERY_DEVICE_RELATIONS:
             TRACE("IRP_MN_QUERY_DEVICE_RELATIONS\n");
+            status = handle_IRP_MN_QUERY_DEVICE_RELATIONS(irp);
+            irp->IoStatus.u.Status = status;
             break;
         case IRP_MN_QUERY_ID:
             TRACE("IRP_MN_QUERY_ID\n");
@@ -603,9 +696,6 @@ void process_hid_report(DEVICE_OBJECT *device, BYTE *report, DWORD length)
             ext->buffer_size = length;
     }
 
-    if (!ext->last_report_read)
-        ERR_(hid_report)("Device reports coming in too fast, last report not read yet!\n");
-
     memcpy(ext->last_report, report, length);
     ext->last_report_size = length;
     ext->last_report_read = FALSE;
@@ -625,17 +715,74 @@ void process_hid_report(DEVICE_OBJECT *device, BYTE *report, DWORD length)
     LeaveCriticalSection(&ext->report_cs);
 }
 
+DWORD check_bus_option(UNICODE_STRING *registry_path, const UNICODE_STRING *option, DWORD default_value)
+{
+    OBJECT_ATTRIBUTES attr;
+    HANDLE key;
+    DWORD output = default_value;
+
+    InitializeObjectAttributes(&attr, registry_path, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
+    if (NtOpenKey(&key, KEY_ALL_ACCESS, &attr) == STATUS_SUCCESS)
+    {
+        DWORD size;
+        char buffer[FIELD_OFFSET(KEY_VALUE_PARTIAL_INFORMATION, Data[sizeof(DWORD)])];
+
+        KEY_VALUE_PARTIAL_INFORMATION *info = (KEY_VALUE_PARTIAL_INFORMATION*)buffer;
+
+        if (NtQueryValueKey(key, option, KeyValuePartialInformation, info, sizeof(buffer), &size) == STATUS_SUCCESS)
+        {
+            if (info->Type == REG_DWORD)
+                output = *(DWORD*)info->Data;
+        }
+
+        NtClose(key);
+    }
+
+    return output;
+}
+
+BOOL is_xbox_gamepad(WORD vid, WORD pid)
+{
+    int i;
+
+    if (vid != VID_MICROSOFT)
+        return FALSE;
+
+    for (i = 0; i < ARRAY_SIZE(PID_XBOX_CONTROLLERS); i++)
+        if (pid == PID_XBOX_CONTROLLERS[i]) return TRUE;
+
+    return FALSE;
+}
+
+static void WINAPI driver_unload(DRIVER_OBJECT *driver)
+{
+    udev_driver_unload();
+    iohid_driver_unload();
+    sdl_driver_unload();
+}
+
 NTSTATUS WINAPI DriverEntry( DRIVER_OBJECT *driver, UNICODE_STRING *path )
 {
     static const WCHAR udevW[] = {'\\','D','r','i','v','e','r','\\','U','D','E','V',0};
     static UNICODE_STRING udev = {sizeof(udevW) - sizeof(WCHAR), sizeof(udevW), (WCHAR *)udevW};
     static const WCHAR iohidW[] = {'\\','D','r','i','v','e','r','\\','I','O','H','I','D',0};
     static UNICODE_STRING iohid = {sizeof(iohidW) - sizeof(WCHAR), sizeof(iohidW), (WCHAR *)iohidW};
+    static const WCHAR sdlW[] = {'\\','D','r','i','v','e','r','\\','S','D','L','J','O','Y',0};
+    static UNICODE_STRING sdl = {sizeof(sdlW) - sizeof(WCHAR), sizeof(sdlW), (WCHAR *)sdlW};
+    static const WCHAR SDL_enabledW[] = {'E','n','a','b','l','e',' ','S','D','L',0};
+    static const UNICODE_STRING SDL_enabled = {sizeof(SDL_enabledW) - sizeof(WCHAR), sizeof(SDL_enabledW), (WCHAR*)SDL_enabledW};
 
     TRACE( "(%p, %s)\n", driver, debugstr_w(path->Buffer) );
 
+    if (check_bus_option(path, &SDL_enabled, 1))
+    {
+        if (IoCreateDriver(&sdl, sdl_driver_init) == STATUS_SUCCESS)
+            return STATUS_SUCCESS;
+    }
     IoCreateDriver(&udev, udev_driver_init);
     IoCreateDriver(&iohid, iohid_driver_init);
+
+    driver->DriverUnload = driver_unload;
 
     return STATUS_SUCCESS;
 }

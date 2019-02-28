@@ -31,7 +31,6 @@
 #include "wine/debug.h"
 #include "wine/wgl.h"
 #include "wine/wgl_driver.h"
-#include "wine/wglext.h"
 
 #define __gl_h_
 #define __gltypes_h_
@@ -329,7 +328,7 @@ static const char* debugstr_attrib(int attrib, int value)
     const char *attrib_name = NULL;
     const char *value_name = NULL;
 
-    for (i = 0; i < sizeof(attrib_names) / sizeof(attrib_names[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(attrib_names); i++)
     {
         if (attrib_names[i].attrib == attrib)
         {
@@ -387,7 +386,7 @@ static CGOpenGLDisplayMask active_displays_mask(void)
     uint32_t count, i;
     CGOpenGLDisplayMask mask;
 
-    err = CGGetActiveDisplayList(sizeof(displays) / sizeof(displays[0]), displays, &count);
+    err = CGGetActiveDisplayList(ARRAY_SIZE(displays), displays, &count);
     if (err != kCGErrorSuccess)
     {
         displays[0] = CGMainDisplayID();
@@ -474,7 +473,7 @@ static void dump_renderer(const renderer_properties* renderer)
     TRACE("    Double buffer: %s\n", (renderer->buffer_modes & kCGLDoubleBufferBit) ? "YES" : "NO");
 
     TRACE("Color buffer modes:\n");
-    for (i = 0; i < sizeof(color_modes)/sizeof(color_modes[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(color_modes); i++)
     {
         if (renderer->color_modes & color_modes[i].mode)
         {
@@ -486,7 +485,7 @@ static void dump_renderer(const renderer_properties* renderer)
     }
 
     TRACE("Accumulation buffer sizes: { ");
-    for (i = 0; i < sizeof(color_modes)/sizeof(color_modes[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(color_modes); i++)
     {
         if (renderer->accum_modes & color_modes[i].mode)
             TRACE("%d, ", color_modes[i].color_bits);
@@ -494,7 +493,7 @@ static void dump_renderer(const renderer_properties* renderer)
     TRACE("}\n");
 
     TRACE("Depth buffer sizes: { ");
-    for (i = 0; i < sizeof(depth_stencil_modes)/sizeof(depth_stencil_modes[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(depth_stencil_modes); i++)
     {
         if (renderer->depth_modes & depth_stencil_modes[i].mode)
             TRACE("%d, ", depth_stencil_modes[i].bits);
@@ -502,7 +501,7 @@ static void dump_renderer(const renderer_properties* renderer)
     TRACE("}\n");
 
     TRACE("Stencil buffer sizes: { ");
-    for (i = 0; i < sizeof(depth_stencil_modes)/sizeof(depth_stencil_modes[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(depth_stencil_modes); i++)
     {
         if (renderer->stencil_modes & depth_stencil_modes[i].mode)
             TRACE("%d, ", depth_stencil_modes[i].bits);
@@ -566,7 +565,7 @@ static unsigned int best_color_mode(GLint modes, GLint color_size, GLint alpha_s
     int best = -1;
     int i;
 
-    for (i = 0; i < sizeof(color_modes)/sizeof(color_modes[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(color_modes); i++)
     {
         if ((modes & color_modes[i].mode) &&
             color_modes[i].color_bits >= color_size &&
@@ -594,7 +593,7 @@ static unsigned int best_color_mode(GLint modes, GLint color_size, GLint alpha_s
     if (best < 0)
     {
         /* Couldn't find a match.  Return first one that renderer supports. */
-        for (i = 0; i < sizeof(color_modes)/sizeof(color_modes[0]); i++)
+        for (i = 0; i < ARRAY_SIZE(color_modes); i++)
         {
             if (modes & color_modes[i].mode)
                 return i;
@@ -610,7 +609,7 @@ static unsigned int best_accum_mode(GLint modes, GLint accum_size)
     int best = -1;
     int i;
 
-    for (i = 0; i < sizeof(color_modes)/sizeof(color_modes[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(color_modes); i++)
     {
         if ((modes & color_modes[i].mode) && color_modes[i].color_bits >= accum_size)
         {
@@ -634,7 +633,7 @@ static unsigned int best_accum_mode(GLint modes, GLint accum_size)
     if (best < 0)
     {
         /* Couldn't find a match.  Return last one that renderer supports. */
-        for (i = sizeof(color_modes)/sizeof(color_modes[0]) - 1; i >= 0; i--)
+        for (i = ARRAY_SIZE(color_modes) - 1; i >= 0; i--)
         {
             if (modes & color_modes[i].mode)
                 return i;
@@ -702,7 +701,7 @@ static void enum_renderer_pixel_formats(renderer_properties renderer, CFMutableA
             request.aux_buffers = aux;
 
             n_stack[++n_stack_idx] = n;
-            for (color_mode = 0; color_mode < sizeof(color_modes)/sizeof(color_modes[0]); color_mode++)
+            for (color_mode = 0; color_mode < ARRAY_SIZE(color_modes); color_mode++)
             {
                 unsigned int depth_mode;
 
@@ -720,7 +719,7 @@ static void enum_renderer_pixel_formats(renderer_properties renderer, CFMutableA
                 request.color_mode = color_mode;
 
                 n_stack[++n_stack_idx] = n;
-                for (depth_mode = 0; depth_mode < sizeof(depth_stencil_modes)/sizeof(depth_stencil_modes[0]); depth_mode++)
+                for (depth_mode = 0; depth_mode < ARRAY_SIZE(depth_stencil_modes); depth_mode++)
                 {
                     unsigned int stencil_mode;
 
@@ -734,7 +733,7 @@ static void enum_renderer_pixel_formats(renderer_properties renderer, CFMutableA
                     request.depth_bits = depth_stencil_modes[depth_mode].bits;
 
                     n_stack[++n_stack_idx] = n;
-                    for (stencil_mode = 0; stencil_mode < sizeof(depth_stencil_modes)/sizeof(depth_stencil_modes[0]); stencil_mode++)
+                    for (stencil_mode = 0; stencil_mode < ARRAY_SIZE(depth_stencil_modes); stencil_mode++)
                     {
                         unsigned int stereo;
 
@@ -768,7 +767,7 @@ static void enum_renderer_pixel_formats(renderer_properties renderer, CFMutableA
 
                             /* Starts at -1 for a 0 accum size */
                             n_stack[++n_stack_idx] = n;
-                            for (accum_mode = -1; accum_mode < (int)(sizeof(color_modes)/sizeof(color_modes[0])); accum_mode++)
+                            for (accum_mode = -1; accum_mode < (int) ARRAY_SIZE(color_modes); accum_mode++)
                             {
                                 unsigned int target_pass;
 
@@ -1540,8 +1539,7 @@ static BOOL create_context(struct wgl_context *context, CGLContextObj share, uns
     }
     context->major = major;
 
-    if (allow_vsync)
-        InterlockedExchange(&context->update_swap_interval, TRUE);
+    InterlockedExchange(&context->update_swap_interval, TRUE);
 
     TRACE("created context %p/%p/%p\n", context, context->context, context->cglcontext);
 
@@ -1743,7 +1741,9 @@ static void sync_swap_interval(struct wgl_context *context)
     {
         int interval;
 
-        if (context->draw_hwnd)
+        if (!allow_vsync)
+            interval = 0;
+        else if (context->draw_hwnd)
         {
             struct macdrv_win_data *data = get_win_data(context->draw_hwnd);
             if (data)
@@ -3479,7 +3479,7 @@ static int macdrv_wglGetSwapIntervalEXT(void)
         release_win_data(data);
 
         if (InterlockedCompareExchange(&context->update_swap_interval, FALSE, TRUE))
-            set_swap_interval(context, value);
+            set_swap_interval(context, allow_vsync ? value : 0);
     }
     else
     {
@@ -3544,8 +3544,8 @@ static BOOL macdrv_wglMakeContextCurrentARB(HDC draw_hdc, HDC read_hdc, struct w
             return FALSE;
         }
 
-        if (allow_vsync && (InterlockedCompareExchange(&context->update_swap_interval, FALSE, TRUE) || hwnd != context->draw_hwnd))
-            set_swap_interval(context, data->swap_interval);
+        if (InterlockedCompareExchange(&context->update_swap_interval, FALSE, TRUE) || hwnd != context->draw_hwnd)
+            set_swap_interval(context, allow_vsync ? data->swap_interval : 0);
 
         context->draw_hwnd = hwnd;
         context->draw_view = data->client_cocoa_view;
@@ -3570,8 +3570,7 @@ static BOOL macdrv_wglMakeContextCurrentARB(HDC draw_hdc, HDC read_hdc, struct w
                 return FALSE;
             }
 
-            if (allow_vsync &&
-                (InterlockedCompareExchange(&context->update_swap_interval, FALSE, TRUE) || pbuffer != context->draw_pbuffer))
+            if (InterlockedCompareExchange(&context->update_swap_interval, FALSE, TRUE) || pbuffer != context->draw_pbuffer)
                 set_swap_interval(context, 0);
         }
         else
@@ -4116,6 +4115,9 @@ static BOOL macdrv_wglSwapIntervalEXT(int interval)
     else /* pbuffer */
         interval = 0;
 
+    if (!allow_vsync)
+        interval = 0;
+
     InterlockedExchange(&context->update_swap_interval, FALSE);
     if (!set_swap_interval(context, interval))
     {
@@ -4266,7 +4268,7 @@ static BOOL init_opengl(void)
         return FALSE;
     }
 
-    for (i = 0; i < sizeof(opengl_func_names)/sizeof(opengl_func_names[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(opengl_func_names); i++)
     {
         if (!(((void **)&opengl_funcs.gl)[i] = wine_dlsym(opengl_handle, opengl_func_names[i], NULL, 0)))
         {
@@ -4434,7 +4436,7 @@ static struct wgl_context *macdrv_wglCreateContext(HDC hdc)
 /***********************************************************************
  *              macdrv_wglDeleteContext
  */
-static void macdrv_wglDeleteContext(struct wgl_context *context)
+static BOOL macdrv_wglDeleteContext(struct wgl_context *context)
 {
     TRACE("deleting context %p/%p/%p\n", context, context->context, context->cglcontext);
 
@@ -4443,7 +4445,7 @@ static void macdrv_wglDeleteContext(struct wgl_context *context)
     LeaveCriticalSection(&context_section);
 
     macdrv_dispose_opengl_context(context->context);
-    HeapFree(GetProcessHeap(), 0, context);
+    return HeapFree(GetProcessHeap(), 0, context);
 }
 
 /***********************************************************************

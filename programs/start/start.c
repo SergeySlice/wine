@@ -100,8 +100,7 @@ static void fatal_string_error(int which, DWORD error_code, const WCHAR *filenam
 {
 	WCHAR msg[2048];
 
-	if (!LoadStringW(GetModuleHandleW(NULL), which,
-					msg, sizeof(msg)/sizeof(WCHAR)))
+	if (!LoadStringW(GetModuleHandleW(NULL), which, msg, ARRAY_SIZE(msg)))
 		WINE_ERR("LoadString failed, error %d\n", GetLastError());
 
 	fatal_error(msg, error_code, filename);
@@ -111,8 +110,7 @@ static void fatal_string(int which)
 {
 	WCHAR msg[2048];
 
-	if (!LoadStringW(GetModuleHandleW(NULL), which,
-					msg, sizeof(msg)/sizeof(WCHAR)))
+	if (!LoadStringW(GetModuleHandleW(NULL), which, msg, ARRAY_SIZE(msg)))
 		WINE_ERR("LoadString failed, error %d\n", GetLastError());
 
 	output(msg);
@@ -224,7 +222,8 @@ int wmain (int argc, WCHAR *argv[])
 	 * flags start with / and are case insensitive.
 	 */
 	for (i=1; i<argc; i++) {
-		if (argv[i][0] == '"') {
+                /* parse first quoted argument as console title */
+                if (!title && argv[i][0] == '"') {
 			title = argv[i];
 			continue;
 		}
@@ -404,7 +403,55 @@ int wmain (int argc, WCHAR *argv[])
 	}
 
         if (!ShellExecuteExW(&sei))
-            fatal_string_error(STRING_EXECFAIL, GetLastError(), sei.lpFile);
+        {
+            static const WCHAR pathextW[] = {'P','A','T','H','E','X','T',0};
+            const WCHAR *filename = sei.lpFile;
+            DWORD size, filename_len;
+            WCHAR *name, *env;
+
+            size = GetEnvironmentVariableW(pathextW, NULL, 0);
+            if (size)
+            {
+                WCHAR *start, *ptr;
+
+                env = HeapAlloc(GetProcessHeap(), 0, size * sizeof(WCHAR));
+                if (!env)
+                    fatal_string_error(STRING_EXECFAIL, ERROR_OUTOFMEMORY, sei.lpFile);
+                GetEnvironmentVariableW(pathextW, env, size);
+
+                filename_len = strlenW(filename);
+                name = HeapAlloc(GetProcessHeap(), 0, (filename_len + size) * sizeof(WCHAR));
+                if (!name)
+                    fatal_string_error(STRING_EXECFAIL, ERROR_OUTOFMEMORY, sei.lpFile);
+
+                sei.lpFile = name;
+                start = env;
+                while ((ptr = strchrW(start, ';')))
+                {
+                    if (start == ptr)
+                    {
+                        start = ptr + 1;
+                        continue;
+                    }
+
+                    strcpyW(name, filename);
+                    memcpy(&name[filename_len], start, (ptr - start) * sizeof(WCHAR));
+                    name[filename_len + (ptr - start)] = 0;
+
+                    if (ShellExecuteExW(&sei))
+                    {
+                        HeapFree(GetProcessHeap(), 0, name);
+                        HeapFree(GetProcessHeap(), 0, env);
+                        goto done;
+                    }
+
+                    start = ptr + 1;
+                }
+
+            }
+
+            fatal_string_error(STRING_EXECFAIL, GetLastError(), filename);
+        }
 
 done:
 	HeapFree( GetProcessHeap(), 0, args );

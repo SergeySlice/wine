@@ -25,7 +25,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "opengl_ext.h"
 #include "windef.h"
 #include "winbase.h"
 #include "winuser.h"
@@ -34,16 +33,13 @@
 #include "winternl.h"
 #include "winnt.h"
 
-#define WGL_WGLEXT_PROTOTYPES
-#include "wine/wglext.h"
+#include "opengl_ext.h"
 #include "wine/gdi_driver.h"
-#include "wine/wgl_driver.h"
+#include "wine/glu.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(wgl);
 WINE_DECLARE_DEBUG_CHANNEL(fps);
-
-extern struct opengl_funcs null_opengl_funcs;
 
 /* handle management */
 
@@ -62,6 +58,9 @@ struct opengl_context
     DWORD               tid;           /* thread that the context is current in */
     HDC                 draw_dc;       /* current drawing DC */
     HDC                 read_dc;       /* current reading DC */
+    void     (CALLBACK *debug_callback)(GLenum, GLenum, GLuint, GLenum,
+                                        GLsizei, const GLchar *, const void *); /* debug callback */
+    const void         *debug_user;    /* debug user parameter */
     GLubyte            *extensions;    /* extension string */
     GLuint             *disabled_exts; /* indices of disabled extensions */
     struct wgl_context *drv_ctx;       /* driver context */
@@ -93,13 +92,6 @@ static CRITICAL_SECTION_DEBUG critsect_debug =
 static CRITICAL_SECTION wgl_section = { &critsect_debug, -1, 0, 0, 0, 0 };
 
 static const MAT2 identity = { {0,1},{0,0},{0,0},{0,1} };
-
-static inline struct opengl_funcs *get_dc_funcs( HDC hdc )
-{
-    struct opengl_funcs *funcs = __wine_get_wgl_driver( hdc, WINE_WGL_DRIVER_VERSION );
-    if (funcs == (void *)-1) funcs = &null_opengl_funcs;
-    return funcs;
-}
 
 static inline HANDLE next_handle( struct wgl_handle *ptr, enum wgl_handle_type type )
 {
@@ -516,6 +508,8 @@ INT WINAPI wglChoosePixelFormat(HDC hdc, const PIXELFORMATDESCRIPTOR* ppfd)
 
             if (bestDBuffer != -1 && (format.dwFlags & PFD_DOUBLEBUFFER) != bestDBuffer) continue;
         }
+        else if (!best_format)
+            goto found;
 
         /* Stereo, see the comments above. */
         if (!(ppfd->dwFlags & PFD_STEREO_DONTCARE))
@@ -526,6 +520,8 @@ INT WINAPI wglChoosePixelFormat(HDC hdc, const PIXELFORMATDESCRIPTOR* ppfd)
 
             if (bestStereo != -1 && (format.dwFlags & PFD_STEREO) != bestStereo) continue;
         }
+        else if (!best_format)
+            goto found;
 
         /* Below we will do a number of checks to select the 'best' pixelformat.
          * We assume the precedence cColorBits > cAlphaBits > cDepthBits > cStencilBits -> cAuxBuffers.
@@ -614,7 +610,11 @@ INT WINAPI wglChoosePixelFormat(HDC hdc, const PIXELFORMATDESCRIPTOR* ppfd)
 INT WINAPI wglGetPixelFormat(HDC hdc)
 {
     struct opengl_funcs *funcs = get_dc_funcs( hdc );
-    if (!funcs) return 0;
+    if (!funcs)
+    {
+        SetLastError( ERROR_INVALID_PIXEL_FORMAT );
+        return 0;
+    }
     return funcs->wgl.p_wglGetPixelFormat( hdc );
 }
 
@@ -894,7 +894,7 @@ PROC WINAPI wglGetProcAddress( LPCSTR name )
                 { "glVertexAttribDivisor", "glVertexAttribDivisorARB"},  /* needed by Caffeine */
             };
 
-            for (i = 0; i < sizeof(alternatives)/sizeof(alternatives[0]); i++)
+            for (i = 0; i < ARRAY_SIZE(alternatives); i++)
             {
                 if (strcmp( name, alternatives[i].name )) continue;
                 WARN("Extension %s required for %s not supported, trying %s\n",
@@ -961,31 +961,6 @@ BOOL WINAPI wglSwapLayerBuffers(HDC hdc,
 }
 
 /***********************************************************************
- *		wglAllocateMemoryNV
- *
- * Provided by the WGL_NV_vertex_array_range extension.
- */
-void * WINAPI wglAllocateMemoryNV( GLsizei size, GLfloat readfreq, GLfloat writefreq, GLfloat priority )
-{
-    const struct opengl_funcs *funcs = NtCurrentTeb()->glTable;
-
-    if (!funcs->ext.p_wglAllocateMemoryNV) return NULL;
-    return funcs->ext.p_wglAllocateMemoryNV( size, readfreq, writefreq, priority );
-}
-
-/***********************************************************************
- *		wglFreeMemoryNV
- *
- * Provided by the WGL_NV_vertex_array_range extension.
- */
-void WINAPI wglFreeMemoryNV( void *pointer )
-{
-    const struct opengl_funcs *funcs = NtCurrentTeb()->glTable;
-
-    if (funcs->ext.p_wglFreeMemoryNV) funcs->ext.p_wglFreeMemoryNV( pointer );
-}
-
-/***********************************************************************
  *		wglBindTexImageARB
  *
  * Provided by the WGL_ARB_render_texture extension.
@@ -1031,48 +1006,6 @@ BOOL WINAPI wglSetPbufferAttribARB( HPBUFFERARB handle, const int *attribs )
     ret = ptr->funcs->ext.p_wglSetPbufferAttribARB( ptr->u.pbuffer, attribs );
     release_handle_ptr( ptr );
     return ret;
-}
-
-/***********************************************************************
- *		wglChoosePixelFormatARB
- *
- * Provided by the WGL_ARB_pixel_format extension.
- */
-BOOL WINAPI wglChoosePixelFormatARB( HDC hdc, const int *iattribs, const FLOAT *fattribs,
-                                     UINT max, int *formats, UINT *count )
-{
-    const struct opengl_funcs *funcs = get_dc_funcs( hdc );
-
-    if (!funcs || !funcs->ext.p_wglChoosePixelFormatARB) return FALSE;
-    return funcs->ext.p_wglChoosePixelFormatARB( hdc, iattribs, fattribs, max, formats, count );
-}
-
-/***********************************************************************
- *		wglGetPixelFormatAttribivARB
- *
- * Provided by the WGL_ARB_pixel_format extension.
- */
-BOOL WINAPI wglGetPixelFormatAttribivARB( HDC hdc, int format, int layer, UINT count, const int *attribs,
-                                          int *values )
-{
-    const struct opengl_funcs *funcs = get_dc_funcs( hdc );
-
-    if (!funcs || !funcs->ext.p_wglGetPixelFormatAttribivARB) return FALSE;
-    return funcs->ext.p_wglGetPixelFormatAttribivARB( hdc, format, layer, count, attribs, values );
-}
-
-/***********************************************************************
- *		wglGetPixelFormatAttribfvARB
- *
- * Provided by the WGL_ARB_pixel_format extension.
- */
-BOOL WINAPI wglGetPixelFormatAttribfvARB( HDC hdc, int format, int layer, UINT count, const int *attribs,
-                                          FLOAT *values )
-{
-    const struct opengl_funcs *funcs = get_dc_funcs( hdc );
-
-    if (!funcs || !funcs->ext.p_wglGetPixelFormatAttribfvARB) return FALSE;
-    return funcs->ext.p_wglGetPixelFormatAttribfvARB( hdc, format, layer, count, attribs, values );
 }
 
 /***********************************************************************
@@ -1154,123 +1087,6 @@ BOOL WINAPI wglQueryPbufferARB( HPBUFFERARB handle, int attrib, int *value )
     ret = ptr->funcs->ext.p_wglQueryPbufferARB( ptr->u.pbuffer, attrib, value );
     release_handle_ptr( ptr );
     return ret;
-}
-
-/***********************************************************************
- *		wglGetExtensionsStringARB
- *
- * Provided by the WGL_ARB_extensions_string extension.
- */
-const char * WINAPI wglGetExtensionsStringARB( HDC hdc )
-{
-    const struct opengl_funcs *funcs = get_dc_funcs( hdc );
-
-    if (!funcs || !funcs->ext.p_wglGetExtensionsStringARB) return NULL;
-    return (const char *)funcs->ext.p_wglGetExtensionsStringARB( hdc );
-}
-
-/***********************************************************************
- *		wglGetExtensionsStringEXT
- *
- * Provided by the WGL_EXT_extensions_string extension.
- */
-const char * WINAPI wglGetExtensionsStringEXT(void)
-{
-    const struct opengl_funcs *funcs = NtCurrentTeb()->glTable;
-
-    if (!funcs->ext.p_wglGetExtensionsStringEXT) return NULL;
-    return (const char *)funcs->ext.p_wglGetExtensionsStringEXT();
-}
-
-/***********************************************************************
- *		wglSwapIntervalEXT
- *
- * Provided by the WGL_EXT_swap_control extension.
- */
-BOOL WINAPI wglSwapIntervalEXT( int interval )
-{
-    const struct opengl_funcs *funcs = NtCurrentTeb()->glTable;
-
-    if (!funcs->ext.p_wglSwapIntervalEXT) return FALSE;
-    return funcs->ext.p_wglSwapIntervalEXT( interval );
-}
-
-/***********************************************************************
- *		wglGetSwapIntervalEXT
- *
- * Provided by the WGL_EXT_swap_control extension.
- */
-int WINAPI wglGetSwapIntervalEXT(void)
-{
-    const struct opengl_funcs *funcs = NtCurrentTeb()->glTable;
-
-    if (!funcs->ext.p_wglGetSwapIntervalEXT) return FALSE;
-    return funcs->ext.p_wglGetSwapIntervalEXT();
-}
-
-/***********************************************************************
- *		wglSetPixelFormatWINE
- *
- * Provided by the WGL_WINE_pixel_format_passthrough extension.
- */
-BOOL WINAPI wglSetPixelFormatWINE( HDC hdc, int format )
-{
-    const struct opengl_funcs *funcs = get_dc_funcs( hdc );
-
-    if (!funcs || !funcs->ext.p_wglSetPixelFormatWINE) return FALSE;
-    return funcs->ext.p_wglSetPixelFormatWINE( hdc, format );
-}
-
-/***********************************************************************
- *              wglQueryCurrentRendererIntegerWINE
- *
- * Provided by the WGL_WINE_query_renderer extension.
- */
-BOOL WINAPI wglQueryCurrentRendererIntegerWINE( GLenum attribute, GLuint *value )
-{
-    const struct opengl_funcs *funcs = NtCurrentTeb()->glTable;
-
-    if (!funcs->ext.p_wglQueryCurrentRendererIntegerWINE) return FALSE;
-    return funcs->ext.p_wglQueryCurrentRendererIntegerWINE( attribute, value );
-}
-
-/***********************************************************************
- *              wglQueryCurrentRendererStringWINE
- *
- * Provided by the WGL_WINE_query_renderer extension.
- */
-const GLchar * WINAPI wglQueryCurrentRendererStringWINE( GLenum attribute )
-{
-    const struct opengl_funcs *funcs = NtCurrentTeb()->glTable;
-
-    if (!funcs->ext.p_wglQueryCurrentRendererStringWINE) return NULL;
-    return funcs->ext.p_wglQueryCurrentRendererStringWINE( attribute );
-}
-
-/***********************************************************************
- *              wglQueryRendererIntegerWINE
- *
- * Provided by the WGL_WINE_query_renderer extension.
- */
-BOOL WINAPI wglQueryRendererIntegerWINE( HDC dc, GLint renderer, GLenum attribute, GLuint *value )
-{
-    const struct opengl_funcs *funcs = get_dc_funcs( dc );
-
-    if (!funcs || !funcs->ext.p_wglQueryRendererIntegerWINE) return FALSE;
-    return funcs->ext.p_wglQueryRendererIntegerWINE( dc, renderer, attribute, value );
-}
-
-/***********************************************************************
- *              wglQueryRendererStringWINE
- *
- * Provided by the WGL_WINE_query_renderer extension.
- */
-const GLchar * WINAPI wglQueryRendererStringWINE( HDC dc, GLint renderer, GLenum attribute )
-{
-    const struct opengl_funcs *funcs = get_dc_funcs( dc );
-
-    if (!funcs || !funcs->ext.p_wglQueryRendererStringWINE) return NULL;
-    return funcs->ext.p_wglQueryRendererStringWINE( dc, renderer, attribute );
 }
 
 /***********************************************************************
@@ -1392,55 +1208,6 @@ BOOL WINAPI wglUseFontBitmapsA(HDC hdc, DWORD first, DWORD count, DWORD listBase
 BOOL WINAPI wglUseFontBitmapsW(HDC hdc, DWORD first, DWORD count, DWORD listBase)
 {
     return wglUseFontBitmaps_common( hdc, first, count, listBase, TRUE );
-}
-
-/* FIXME: should probably have a glu.h header */
-
-typedef struct GLUtesselator GLUtesselator;
-typedef void (WINAPI *_GLUfuncptr)(void);
-
-#define GLU_TESS_BEGIN  100100
-#define GLU_TESS_VERTEX 100101
-#define GLU_TESS_END    100102
-
-static GLUtesselator * (WINAPI *pgluNewTess)(void);
-static void (WINAPI *pgluDeleteTess)(GLUtesselator *tess);
-static void (WINAPI *pgluTessNormal)(GLUtesselator *tess, GLdouble x, GLdouble y, GLdouble z);
-static void (WINAPI *pgluTessBeginPolygon)(GLUtesselator *tess, void *polygon_data);
-static void (WINAPI *pgluTessEndPolygon)(GLUtesselator *tess);
-static void (WINAPI *pgluTessCallback)(GLUtesselator *tess, GLenum which, _GLUfuncptr fn);
-static void (WINAPI *pgluTessBeginContour)(GLUtesselator *tess);
-static void (WINAPI *pgluTessEndContour)(GLUtesselator *tess);
-static void (WINAPI *pgluTessVertex)(GLUtesselator *tess, GLdouble *location, GLvoid* data);
-
-static HMODULE load_libglu(void)
-{
-    static const WCHAR glu32W[] = {'g','l','u','3','2','.','d','l','l',0};
-    static BOOL already_loaded;
-    static HMODULE module;
-
-    if (already_loaded) return module;
-    already_loaded = TRUE;
-
-    TRACE("Trying to load GLU library\n");
-    module = LoadLibraryW( glu32W );
-    if (!module)
-    {
-        WARN("Failed to load glu32\n");
-        return NULL;
-    }
-#define LOAD_FUNCPTR(f) p##f = (void *)GetProcAddress( module, #f )
-    LOAD_FUNCPTR(gluNewTess);
-    LOAD_FUNCPTR(gluDeleteTess);
-    LOAD_FUNCPTR(gluTessBeginContour);
-    LOAD_FUNCPTR(gluTessNormal);
-    LOAD_FUNCPTR(gluTessBeginPolygon);
-    LOAD_FUNCPTR(gluTessCallback);
-    LOAD_FUNCPTR(gluTessEndContour);
-    LOAD_FUNCPTR(gluTessEndPolygon);
-    LOAD_FUNCPTR(gluTessVertex);
-#undef LOAD_FUNCPTR
-    return module;
 }
 
 static void fixed_to_double(POINTFX fixed, UINT em_size, GLdouble vertex[3])
@@ -1569,17 +1336,15 @@ static BOOL wglUseFontOutlines_common(HDC hdc,
 
     if(format == WGL_FONT_POLYGONS)
     {
-        if (!load_libglu())
+        tess = gluNewTess();
+        if(!tess)
         {
             ERR("glu32 is required for this function but isn't available\n");
             return FALSE;
         }
-
-        tess = pgluNewTess();
-        if(!tess) return FALSE;
-        pgluTessCallback(tess, GLU_TESS_VERTEX, (_GLUfuncptr)tess_callback_vertex);
-        pgluTessCallback(tess, GLU_TESS_BEGIN, (_GLUfuncptr)tess_callback_begin);
-        pgluTessCallback(tess, GLU_TESS_END, tess_callback_end);
+        gluTessCallback(tess, GLU_TESS_VERTEX, (void *)tess_callback_vertex);
+        gluTessCallback(tess, GLU_TESS_BEGIN, (void *)tess_callback_begin);
+        gluTessCallback(tess, GLU_TESS_END, tess_callback_end);
     }
 
     GetObjectW(GetCurrentObject(hdc, OBJ_FONT), sizeof(lf), &lf);
@@ -1637,8 +1402,8 @@ static BOOL wglUseFontOutlines_common(HDC hdc,
         if(format == WGL_FONT_POLYGONS)
         {
             funcs->gl.p_glNormal3d(0.0, 0.0, 1.0);
-            pgluTessNormal(tess, 0, 0, 1);
-            pgluTessBeginPolygon(tess, NULL);
+            gluTessNormal(tess, 0, 0, 1);
+            gluTessBeginPolygon(tess, NULL);
         }
 
         while(!vertices)
@@ -1657,7 +1422,7 @@ static BOOL wglUseFontOutlines_common(HDC hdc,
                     TRACE("\tstart %d, %d\n", pph->pfxStart.x.value, pph->pfxStart.y.value);
 
                 if(format == WGL_FONT_POLYGONS)
-                    pgluTessBeginContour(tess);
+                    gluTessBeginContour(tess);
                 else
                     funcs->gl.p_glBegin(GL_LINE_LOOP);
 
@@ -1665,7 +1430,7 @@ static BOOL wglUseFontOutlines_common(HDC hdc,
                 {
                     fixed_to_double(pph->pfxStart, em_size, vertices);
                     if(format == WGL_FONT_POLYGONS)
-                        pgluTessVertex(tess, vertices, vertices);
+                        gluTessVertex(tess, vertices, vertices);
                     else
                         funcs->gl.p_glVertex3d(vertices[0], vertices[1], vertices[2]);
                     vertices += 3;
@@ -1688,7 +1453,7 @@ static BOOL wglUseFontOutlines_common(HDC hdc,
                                       ppc->apfx[i].x.value, ppc->apfx[i].y.value);
                                 fixed_to_double(ppc->apfx[i], em_size, vertices);
                                 if(format == WGL_FONT_POLYGONS)
-                                    pgluTessVertex(tess, vertices, vertices);
+                                    gluTessVertex(tess, vertices, vertices);
                                 else
                                     funcs->gl.p_glVertex3d(vertices[0], vertices[1], vertices[2]);
                                 vertices += 3;
@@ -1736,7 +1501,7 @@ static BOOL wglUseFontOutlines_common(HDC hdc,
                                     vertices[1] = points[j].y;
                                     vertices[2] = 0.0;
                                     if(format == WGL_FONT_POLYGONS)
-                                        pgluTessVertex(tess, vertices, vertices);
+                                        gluTessVertex(tess, vertices, vertices);
                                     else
                                         funcs->gl.p_glVertex3d(vertices[0], vertices[1], vertices[2]);
                                     vertices += 3;
@@ -1750,7 +1515,7 @@ static BOOL wglUseFontOutlines_common(HDC hdc,
                     default:
                         ERR("\t\tcurve type = %d\n", ppc->wType);
                         if(format == WGL_FONT_POLYGONS)
-                            pgluTessEndContour(tess);
+                            gluTessEndContour(tess);
                         else
                             funcs->gl.p_glEnd();
                         goto error_in_list;
@@ -1760,7 +1525,7 @@ static BOOL wglUseFontOutlines_common(HDC hdc,
                                          (ppc->cpfx - 1) * sizeof(POINTFX));
                 }
                 if(format == WGL_FONT_POLYGONS)
-                    pgluTessEndContour(tess);
+                    gluTessEndContour(tess);
                 else
                     funcs->gl.p_glEnd();
                 pph = (TTPOLYGONHEADER*)((char*)pph + pph->cb);
@@ -1769,7 +1534,7 @@ static BOOL wglUseFontOutlines_common(HDC hdc,
 
 error_in_list:
         if(format == WGL_FONT_POLYGONS)
-            pgluTessEndPolygon(tess);
+            gluTessEndPolygon(tess);
         funcs->gl.p_glTranslated((GLdouble)gm.gmCellIncX / em_size, (GLdouble)gm.gmCellIncY / em_size, 0.0);
         funcs->gl.p_glEndList();
         HeapFree(GetProcessHeap(), 0, buf);
@@ -1779,7 +1544,7 @@ error_in_list:
  error:
     DeleteObject(SelectObject(hdc, old_font));
     if(format == WGL_FONT_POLYGONS)
-        pgluDeleteTess(tess);
+        gluDeleteTess(tess);
     return TRUE;
 
 }
@@ -1982,6 +1747,60 @@ const GLubyte * WINAPI glGetString( GLenum name )
             ret = ptr->u.context->extensions;
     }
     return ret;
+}
+
+/* wrapper for glDebugMessageCallback* functions */
+static void gl_debug_message_callback( GLenum source, GLenum type, GLuint id, GLenum severity,
+                                       GLsizei length, const GLchar *message,const void *userParam )
+{
+    struct wgl_handle *ptr = (struct wgl_handle *)userParam;
+    if (!ptr->u.context->debug_callback) return;
+    ptr->u.context->debug_callback( source, type, id, severity, length, message, ptr->u.context->debug_user );
+}
+
+/***********************************************************************
+ *      glDebugMessageCallback
+ */
+void WINAPI glDebugMessageCallback( GLDEBUGPROC callback, const void *userParam )
+{
+    struct wgl_handle *ptr = get_current_context_ptr();
+    const struct opengl_funcs *funcs = NtCurrentTeb()->glTable;
+
+    TRACE( "(%p, %p)\n", callback, userParam );
+
+    ptr->u.context->debug_callback = callback;
+    ptr->u.context->debug_user     = userParam;
+    funcs->ext.p_glDebugMessageCallback( gl_debug_message_callback, ptr );
+}
+
+/***********************************************************************
+ *      glDebugMessageCallbackAMD
+ */
+void WINAPI glDebugMessageCallbackAMD( GLDEBUGPROCAMD callback, void *userParam )
+{
+    struct wgl_handle *ptr = get_current_context_ptr();
+    const struct opengl_funcs *funcs = NtCurrentTeb()->glTable;
+
+    TRACE( "(%p, %p)\n", callback, userParam );
+
+    ptr->u.context->debug_callback = callback;
+    ptr->u.context->debug_user     = userParam;
+    funcs->ext.p_glDebugMessageCallbackAMD( gl_debug_message_callback, ptr );
+}
+
+/***********************************************************************
+ *      glDebugMessageCallbackARB
+ */
+void WINAPI glDebugMessageCallbackARB( GLDEBUGPROCARB callback, const void *userParam )
+{
+    struct wgl_handle *ptr = get_current_context_ptr();
+    const struct opengl_funcs *funcs = NtCurrentTeb()->glTable;
+
+    TRACE( "(%p, %p)\n", callback, userParam );
+
+    ptr->u.context->debug_callback = callback;
+    ptr->u.context->debug_user     = userParam;
+    funcs->ext.p_glDebugMessageCallbackARB( gl_debug_message_callback, ptr );
 }
 
 /***********************************************************************

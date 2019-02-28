@@ -28,14 +28,11 @@
 #include "winternl.h"
 #include "dlgs.h"
 #include "user_private.h"
+#include "resources.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dialog);
 WINE_DECLARE_DEBUG_CHANNEL(msgbox);
-
-#define MSGBOX_IDICON stc1
-#define MSGBOX_IDTEXT 100
-#define IDS_ERROR     2
 
 struct ThreadWindows
 {
@@ -261,8 +258,8 @@ static void MSGBOX_OnInit(HWND hwnd, LPMSGBOXPARAMSW lpmb)
     /* Get the text size */
     GetClientRect(GetDlgItem(hwnd, MSGBOX_IDTEXT), &rect);
     rect.top = rect.left = rect.bottom = 0;
-    DrawTextW( hdc, lpszText, -1, &rect,
-	       DT_LEFT | DT_EXPANDTABS | DT_WORDBREAK | DT_CALCRECT);
+    DrawTextW(hdc, lpszText, -1, &rect,
+              DT_LEFT | DT_EXPANDTABS | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
     /* Min text width corresponds to space for the buttons */
     tleft = ileft;
     if (iwidth) tleft += ileft + iwidth;
@@ -297,7 +294,7 @@ static void MSGBOX_OnInit(HWND hwnd, LPMSGBOXPARAMSW lpmb)
 
     /* Position the buttons */
     bpos = (wwidth - (bw + bspace) * buttons + bspace) / 2;
-    for (buttons = i = 0; i < (sizeof(buttonOrder) / sizeof(buttonOrder[0])); i++) {
+    for (buttons = i = 0; i < ARRAY_SIZE(buttonOrder); i++) {
 
 	/* Convert the button order to ID* value to order for the buttons */
 	hItem = GetDlgItem(hwnd, buttonOrder[i]);

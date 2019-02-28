@@ -40,11 +40,11 @@
 @ stdcall CertEnumPhysicalStore(ptr long ptr ptr)
 @ stdcall CertEnumSystemStore(long ptr ptr ptr)
 @ stdcall CertFindAttribute(str long ptr)
-@ stdcall CertFindChainInStore(ptr long long long ptr ptr)
 @ stdcall CertFindCRLInStore(ptr long long long ptr ptr)
 @ stdcall CertFindCTLInStore(ptr long long long ptr ptr)
-@ stdcall CertFindCertificateInStore(ptr long long long ptr ptr)
 @ stdcall CertFindCertificateInCRL(ptr ptr long ptr ptr)
+@ stdcall CertFindCertificateInStore(ptr long long long ptr ptr)
+@ stdcall CertFindChainInStore(ptr long long long ptr ptr)
 @ stdcall CertFindExtension(str long ptr)
 @ stdcall CertFindRDNAttr(str ptr)
 @ stub CertFindSubjectInCTL
@@ -92,21 +92,21 @@
 @ stdcall CertSetStoreProperty(ptr long long ptr)
 @ stdcall CertStrToNameA(long str long ptr ptr ptr ptr)
 @ stdcall CertStrToNameW(long wstr long ptr ptr ptr ptr)
-@ stdcall CertVerifyCertificateChainPolicy(str ptr ptr ptr)
+@ stdcall CertUnregisterPhysicalStore(ptr long wstr)
+@ stdcall CertUnregisterSystemStore(ptr long)
 @ stdcall CertVerifyCRLRevocation(long ptr long ptr)
 @ stdcall CertVerifyCRLTimeValidity(ptr ptr)
 @ stdcall CertVerifyCTLUsage(long long ptr ptr long ptr ptr)
+@ stdcall CertVerifyCertificateChainPolicy(str ptr ptr ptr)
 @ stdcall CertVerifyRevocation(long long long ptr long ptr ptr)
 @ stdcall CertVerifySubjectCertificateContext(ptr ptr ptr)
 @ stdcall CertVerifyTimeValidity(ptr ptr)
 @ stdcall CertVerifyValidityNesting(ptr ptr)
 @ stdcall CreateFileU(wstr long long ptr long long ptr) kernel32.CreateFileW
+@ stdcall CryptAcquireCertificatePrivateKey(ptr long ptr ptr ptr ptr)
+@ stdcall CryptAcquireContextU(ptr wstr wstr long long) advapi32.CryptAcquireContextW
 @ stdcall CryptBinaryToStringA(ptr long long ptr ptr)
 @ stdcall CryptBinaryToStringW(ptr long long ptr ptr)
-@ stdcall CryptStringToBinaryA(str long long ptr ptr ptr ptr)
-@ stdcall CryptStringToBinaryW (wstr long long ptr ptr ptr ptr)
-@ stdcall CryptAcquireContextU(ptr wstr wstr long long) advapi32.CryptAcquireContextW
-@ stdcall CryptAcquireCertificatePrivateKey(ptr long ptr ptr ptr ptr)
 @ stub CryptCloseAsyncHandle
 @ stub CryptCreateAsyncHandle
 @ stub CryptDecodeMessage
@@ -136,12 +136,14 @@
 @ stdcall CryptGetOIDFunctionAddress(long long str long ptr ptr)
 @ stdcall CryptGetOIDFunctionValue(long str str wstr ptr ptr ptr)
 @ stdcall CryptHashCertificate(long long long ptr long ptr ptr)
+@ stdcall CryptHashCertificate2(wstr long ptr ptr long ptr ptr)
 @ stdcall CryptHashMessage(ptr long long ptr ptr ptr ptr ptr ptr)
 @ stdcall CryptHashPublicKeyInfo(long long long long ptr ptr ptr)
 @ stdcall CryptHashToBeSigned(ptr long ptr long ptr ptr)
 @ stub CryptImportPKCS8
 @ stdcall CryptImportPublicKeyInfo(long long ptr ptr)
 @ stdcall CryptImportPublicKeyInfoEx(long long ptr long long ptr ptr)
+@ stdcall CryptImportPublicKeyInfoEx2(long ptr long ptr ptr)
 @ stdcall CryptInitOIDFunctionSet(str long)
 @ stdcall CryptInstallOIDFunctionAddress(ptr long str long ptr long)
 @ stub CryptLoadSip
@@ -177,8 +179,10 @@
 @ stdcall CryptSIPRemoveProvider(ptr)
 @ stdcall CryptSIPRemoveSignedDataMsg(ptr long)
 @ stdcall CryptSIPRetrieveSubjectGuid(wstr long ptr)
+@ stdcall CryptSIPRetrieveSubjectGuidForCatalogFile(wstr long ptr)
 @ stdcall CryptSIPVerifyIndirectData(ptr ptr)
 @ stub CryptSetAsyncParam
+@ stdcall CryptSetKeyIdentifierProperty(ptr long long wstr ptr ptr)
 @ stdcall CryptSetOIDFunctionValue(long str str wstr long ptr long)
 @ stub CryptSetProviderU
 @ stdcall CryptSignAndEncodeCertificate(long long long str ptr ptr ptr ptr ptr)
@@ -187,12 +191,13 @@
 @ stub CryptSignHashU
 @ stdcall CryptSignMessage(ptr long long ptr ptr ptr ptr)
 @ stub CryptSignMessageWithKey
+@ stdcall CryptStringToBinaryA(str long long ptr ptr ptr ptr)
+@ stdcall CryptStringToBinaryW (wstr long long ptr ptr ptr ptr)
 @ stdcall CryptUnprotectData(ptr ptr ptr ptr ptr long ptr)
 @ stdcall CryptUnprotectMemory(ptr long long)
 @ stdcall CryptUnregisterDefaultOIDFunction(long str wstr)
 @ stdcall CryptUnregisterOIDFunction(long str str)
-@ stdcall CertUnregisterSystemStore(ptr long)
-@ stub CryptUnregisterOIDInfo
+@ stdcall CryptUnregisterOIDInfo(ptr)
 @ stdcall CryptVerifyCertificateSignature(long long ptr long ptr)
 @ stdcall CryptVerifyCertificateSignatureEx(long long long ptr long ptr long ptr)
 @ stdcall CryptVerifyDetachedMessageHash(ptr ptr long long ptr ptr ptr ptr)

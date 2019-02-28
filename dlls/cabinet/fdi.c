@@ -2496,7 +2496,7 @@ BOOL __cdecl FDICopy(
   fdin.psz2 = (CAB(mii).nextinfo) ? CAB(mii).nextinfo : &emptystring;
   fdin.psz3 = pszCabPath;
 
-  if (((*pfnfdin)(fdintCABINET_INFO, &fdin))) {
+  if (pfnfdin(fdintCABINET_INFO, &fdin) == -1) {
     set_error( fdi, FDIERROR_USER_ABORT, 0 );
     goto bail_and_fail;
   }
@@ -2623,7 +2623,7 @@ BOOL __cdecl FDICopy(
       fdin.psz2 = (CAB(mii).prevname) ? CAB(mii).prevname : &emptystring;
       fdin.psz3 = (CAB(mii).previnfo) ? CAB(mii).previnfo : &emptystring;
 
-      if (((*pfnfdin)(fdintPARTIAL_FILE, &fdin))) {
+      if (pfnfdin(fdintPARTIAL_FILE, &fdin) == -1) {
         set_error( fdi, FDIERROR_USER_ABORT, 0 );
         goto bail_and_fail;
       }
@@ -2640,6 +2640,7 @@ BOOL __cdecl FDICopy(
       fdin.date = file->date;
       fdin.time = file->time;
       fdin.attribs = file->attribs;
+      fdin.iFolder = file->index;
       if ((filehf = ((*pfnfdin)(fdintCOPY_FILE, &fdin))) == -1) {
         set_error( fdi, FDIERROR_USER_ABORT, 0 );
         filehf = 0;
@@ -2765,6 +2766,7 @@ BOOL __cdecl FDICopy(
       fdin.date = file->date;
       fdin.time = file->time;
       fdin.attribs = file->attribs; /* FIXME: filter _A_EXEC? */
+      fdin.iFolder = file->index;
       ((*pfnfdin)(fdintCLOSE_FILE_INFO, &fdin));
       filehf = 0;
 

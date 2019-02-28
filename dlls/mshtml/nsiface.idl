@@ -723,6 +723,15 @@ interface nsIUploadChannel : nsISupports
 
 [
     object,
+    uuid(fc826b53-0db8-42b4-aa6a-5dd2cfca52a4),
+    local
+]
+interface nsIFormPOSTActionChannel : nsIUploadChannel
+{
+}
+
+[
+    object,
     uuid(8d171460-a716-41f1-92be-8c659db39b45),
     local
 ]
@@ -3175,7 +3184,7 @@ interface nsIDOMUIEvent : nsISupports
     nsresult GetView(mozIDOMWindowProxy **aView);
     nsresult GetDetail(int32_t *aDetail);
     nsresult InitUIEvent(const nsAString *typeArg, bool canBubbleArg, bool cancelableArg,
-            mozIDOMWindowProxy *viewArg, int32_t detailArg);
+            mozIDOMWindow *viewArg, int32_t detailArg);
     nsresult GetLayerX(int32_t *aLayerX);
     nsresult GetLayerY(int32_t *aLayerY);
     nsresult GetPageX(int32_t *aPageX);
@@ -3239,6 +3248,18 @@ interface nsIDOMKeyEvent : nsIDOMUIEvent
     nsresult GetLocation(uint32_t *aLocation);
     nsresult GetRepeat(bool *aRepeat);
     nsresult GetKey(nsAString *aKey);
+}
+
+[
+    object,
+    uuid(5be16b03-36f9-4ca8-b2c5-0daadf3cd1b3),
+    local
+]
+interface nsIDOMCustomEvent : nsISupports
+{
+    nsresult GetDetail(nsIVariant **aDetail);
+    nsresult InitCustomEvent(const nsAString *typeArg, bool canBubbleArg, bool cancelableArg,
+             nsIVariant *detailArg);
 }
 
 [
@@ -3757,8 +3778,31 @@ interface nsIContentViewer : nsISupports
 ]
 interface nsIDocShellLoadInfo : nsISupports
 {
-    typedef int32_t nsDocShellInfoLoadType;
     typedef uint32_t nsDocShellInfoReferrerPolicy;
+
+    typedef enum {
+        loadNormal = 0,
+        loadNormalReplace = 1,
+        loadHistory = 2,
+        loadReloadNormal = 3,
+        loadReloadBypassCache = 4,
+        loadReloadBypassProxy = 5,
+        loadReloadBypassProxyAndCache = 6,
+        loadLink = 7,
+        loadRefresh = 8,
+        loadReloadCharsetChange = 9,
+        loadBypassHistory = 10,
+        loadStopContent = 11,
+        loadStopContentAndReplace = 12,
+        loadNormalExternal = 13,
+        loadNormalBypassCache = 14,
+        loadNormalBypassProxy = 15,
+        loadNormalBypassProxyAndCache = 16,
+        loadPushState = 17,
+        loadReplaceBypassCache = 18,
+        loadReloadMixedContent = 19,
+        loadNormalAllowMixedContent = 20
+    } nsDocShellInfoLoadType;
 
     nsresult GetReferrer(nsIURI **aReferrer);
     nsresult SetReferrer(nsIURI *aReferrer);

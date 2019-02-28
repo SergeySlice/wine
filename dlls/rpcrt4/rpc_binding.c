@@ -272,13 +272,13 @@ RPC_STATUS RPCRT4_ReleaseBinding(RpcBinding* Binding)
 
 RPC_STATUS RPCRT4_OpenBinding(RpcBinding* Binding, RpcConnection** Connection,
                               const RPC_SYNTAX_IDENTIFIER *TransferSyntax,
-                              const RPC_SYNTAX_IDENTIFIER *InterfaceId)
+                              const RPC_SYNTAX_IDENTIFIER *InterfaceId, BOOL *from_cache)
 {
   TRACE("(Binding == ^%p)\n", Binding);
 
   if (!Binding->server) {
      return RpcAssoc_GetClientConnection(Binding->Assoc, InterfaceId,
-         TransferSyntax, Binding->AuthInfo, Binding->QOS, Binding->CookieAuth, Connection);
+         TransferSyntax, Binding->AuthInfo, Binding->QOS, Binding->CookieAuth, Connection, from_cache);
   } else {
     /* we already have a connection with acceptable binding, so use it */
     if (Binding->FromConn) {
@@ -297,14 +297,13 @@ RPC_STATUS RPCRT4_CloseBinding(RpcBinding* Binding, RpcConnection* Connection)
   if (!Connection) return RPC_S_OK;
   if (Binding->server) {
     /* don't destroy a connection that is cached in the binding */
-    if (Binding->FromConn == Connection)
-      return RPC_S_OK;
-    return RPCRT4_ReleaseConnection(Connection);
+    if (Binding->FromConn != Connection)
+      RPCRT4_ReleaseConnection(Connection);
   }
   else {
     RpcAssoc_ReleaseIdleConnection(Binding->Assoc, Connection);
-    return RPC_S_OK;
   }
+  return RPC_S_OK;
 }
 
 static LPSTR RPCRT4_strconcatA(LPSTR dst, LPCSTR src)

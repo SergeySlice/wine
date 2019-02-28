@@ -28,7 +28,11 @@
 #include <stdio.h>
 
 #include "wine/debug.h"
+#include "wine/heap.h"
 #include "wine/unicode.h"
+
+#include "initguid.h"
+DEFINE_GUID(GUID_NULL,0,0,0,0,0,0,0,0,0,0,0);
 
 WINE_DEFAULT_DEBUG_CHANNEL(msiexec);
 
@@ -68,11 +72,11 @@ static void ShowUsage(int ExitCode)
 
     /* MsiGetFileVersion need the full path */
     *filename = 0;
-    res = GetModuleFileNameW(hmsi, filename, sizeof(filename) / sizeof(filename[0]));
+    res = GetModuleFileNameW(hmsi, filename, ARRAY_SIZE(filename));
     if (!res)
         WINE_ERR("GetModuleFileName failed: %d\n", GetLastError());
 
-    len = sizeof(msiexec_version) / sizeof(msiexec_version[0]);
+    len = ARRAY_SIZE(msiexec_version);
     *msiexec_version = 0;
     res = MsiGetFileVersionW(filename, msiexec_version, &len, NULL, NULL);
     if (res)
@@ -213,14 +217,6 @@ static DWORD msi_atou(LPCWSTR str)
 		ret += (*str - '0');
 		str++;
 	}
-	return ret;
-}
-
-static LPWSTR msi_strdup(LPCWSTR str)
-{
-	DWORD len = lstrlenW(str)+1;
-	LPWSTR ret = HeapAlloc(GetProcessHeap(), 0, sizeof(WCHAR)*len);
-	lstrcpyW(ret, str);
 	return ret;
 }
 
@@ -401,10 +397,71 @@ static DWORD DoUnregServer(void)
     return ret;
 }
 
-static INT DoEmbedding( LPWSTR key )
+extern UINT CDECL __wine_msi_call_dll_function(GUID *guid);
+
+static DWORD CALLBACK custom_action_thread(void *arg)
 {
-	printf("Remote custom actions are not supported yet\n");
-	return 1;
+    GUID guid = *(GUID *)arg;
+    heap_free(arg);
+    return __wine_msi_call_dll_function(&guid);
+}
+
+static int custom_action_server(const WCHAR *arg)
+{
+    static const WCHAR pipe_name[] = {'\\','\\','.','\\','p','i','p','e','\\','m','s','i','c','a','_','%','x','_','%','d',0};
+    DWORD client_pid = atoiW(arg);
+    GUID guid, *thread_guid;
+    DWORD64 thread64;
+    WCHAR buffer[24];
+    HANDLE thread;
+    HANDLE pipe;
+    DWORD size;
+
+    TRACE("%s\n", debugstr_w(arg));
+
+    if (!client_pid)
+    {
+        ERR("Invalid parameter %s\n", debugstr_w(arg));
+        return 1;
+    }
+
+    sprintfW(buffer, pipe_name, client_pid, sizeof(void *) * 8);
+    pipe = CreateFileW(buffer, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
+    if (pipe == INVALID_HANDLE_VALUE)
+    {
+        ERR("Failed to create custom action server pipe: %u\n", GetLastError());
+        return GetLastError();
+    }
+
+    /* We need this to unmarshal streams, and some apps expect it to be present. */
+    CoInitializeEx(NULL, COINIT_MULTITHREADED);
+
+    while (ReadFile(pipe, &guid, sizeof(guid), &size, NULL) && size == sizeof(guid))
+    {
+        if (IsEqualGUID(&guid, &GUID_NULL))
+        {
+            /* package closed; time to shut down */
+            CoUninitialize();
+            return 0;
+        }
+
+        thread_guid = heap_alloc(sizeof(GUID));
+        memcpy(thread_guid, &guid, sizeof(GUID));
+        thread = CreateThread(NULL, 0, custom_action_thread, thread_guid, 0, NULL);
+
+        /* give the thread handle to the client to wait on, since we might have
+         * to run a nested action and can't block during this one */
+        thread64 = (DWORD_PTR)thread;
+        if (!WriteFile(pipe, &thread64, sizeof(thread64), &size, NULL) || size != sizeof(thread64))
+        {
+            ERR("Failed to write to custom action server pipe: %u\n", GetLastError());
+            CoUninitialize();
+            return GetLastError();
+        }
+    }
+    ERR("Failed to read from custom action server pipe: %u\n", GetLastError());
+    CoUninitialize();
+    return GetLastError();
 }
 
 /*
@@ -413,90 +470,103 @@ static INT DoEmbedding( LPWSTR key )
 
 enum chomp_state
 {
-	cs_whitespace,
-	cs_token,
-	cs_quote
+    CS_WHITESPACE,
+    CS_TOKEN,
+    CS_QUOTE
 };
 
-static int chomp( WCHAR *str )
+static int chomp( const WCHAR *in, WCHAR *out )
 {
-	enum chomp_state state = cs_token;
-	WCHAR *p, *out;
-        int count = 1;
-        BOOL ignore;
+    enum chomp_state state = CS_TOKEN;
+    const WCHAR *p;
+    int count = 1;
+    BOOL ignore;
 
-	for( p = str, out = str; *p; p++ )
-	{
-                ignore = TRUE;
-		switch( state )
-		{
-		case cs_whitespace:
-			switch( *p )
-			{
-			case ' ':
-				break;
-			case '"':
-				state = cs_quote;
-				count++;
-				break;
-			default:
-				count++;
-                                ignore = FALSE;
-				state = cs_token;
-			}
-			break;
+    for (p = in; *p; p++)
+    {
+        ignore = TRUE;
+        switch (state)
+        {
+        case CS_WHITESPACE:
+            switch (*p)
+            {
+            case ' ':
+                break;
+            case '"':
+                state = CS_QUOTE;
+                count++;
+                break;
+            default:
+                count++;
+                ignore = FALSE;
+                state = CS_TOKEN;
+            }
+            break;
 
-		case cs_token:
-			switch( *p )
-			{
-			case '"':
-				state = cs_quote;
-				break;
-			case ' ':
-				state = cs_whitespace;
-				*out++ = 0;
-				break;
-			default:
-                                ignore = FALSE;
-			}
-			break;
+        case CS_TOKEN:
+            switch (*p)
+            {
+            case '"':
+                state = CS_QUOTE;
+                break;
+            case ' ':
+                state = CS_WHITESPACE;
+                if (out) *out++ = 0;
+                break;
+            default:
+                if (p > in && p[-1] == '"')
+                {
+                    if (out) *out++ = 0;
+                    count++;
+                }
+                ignore = FALSE;
+            }
+            break;
 
-		case cs_quote:
-			switch( *p )
-			{
-			case '"':
-				state = cs_token;
-				break;
-			default:
-                                ignore = FALSE;
-			}
-			break;
-		}
-		if( !ignore )
-			*out++ = *p;
-	}
-
-	*out = 0;
-
-	return count;
+        case CS_QUOTE:
+            switch (*p)
+            {
+            case '"':
+                state = CS_TOKEN;
+                break;
+            default:
+                ignore = FALSE;
+            }
+            break;
+        }
+        if (!ignore && out) *out++ = *p;
+    }
+    if (out) *out = 0;
+    return count;
 }
 
 static void process_args( WCHAR *cmdline, int *pargc, WCHAR ***pargv )
 {
-	WCHAR **argv, *p = msi_strdup(cmdline);
-	int i, n;
+    WCHAR **argv, *p;
+    int i, count;
 
-	n = chomp( p );
-	argv = HeapAlloc(GetProcessHeap(), 0, sizeof (WCHAR*)*(n+1));
-	for( i=0; i<n; i++ )
-	{
-		argv[i] = p;
-		p += lstrlenW(p) + 1;
-	}
-	argv[i] = NULL;
+    *pargc = 0;
+    *pargv = NULL;
 
-	*pargc = n;
-	*pargv = argv;
+    count = chomp( cmdline, NULL );
+    if (!(p = HeapAlloc( GetProcessHeap(), 0, (lstrlenW(cmdline) + count + 1) * sizeof(WCHAR) )))
+        return;
+
+    count = chomp( cmdline, p );
+    if (!(argv = HeapAlloc( GetProcessHeap(), 0, (count + 1) * sizeof(WCHAR *) )))
+    {
+        HeapFree( GetProcessHeap(), 0, p );
+        return;
+    }
+    for (i = 0; i < count; i++)
+    {
+        argv[i] = p;
+        p += lstrlenW( p ) + 1;
+    }
+    argv[i] = NULL;
+
+    *pargc = count;
+    *pargv = argv;
 }
 
 static BOOL process_args_from_reg( const WCHAR *ident, int *pargc, WCHAR ***pargv )
@@ -588,7 +658,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	}
 
 	if (argc == 3 && msi_option_equal(argvW[1], "Embedding"))
-		return DoEmbedding( argvW[2] );
+        return custom_action_server(argvW[2]);
 
 	for(i = 1; i < argc; i++)
 	{

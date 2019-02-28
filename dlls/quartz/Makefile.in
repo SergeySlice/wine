@@ -7,7 +7,6 @@ C_SRCS = \
 	avidec.c \
 	avisplit.c \
 	dsoundrender.c \
-	enumfilters.c \
 	enummedia.c \
 	enummoniker.c \
 	enumregfilters.c \
@@ -30,7 +29,6 @@ RC_SRCS = version.rc
 
 IDL_SRCS = \
 	control_tlb.idl \
-	fil_data.idl \
 	quartz_strmif.idl
 
 dlldata_EXTRADEFS = -DENTRY_PREFIX=QUARTZ_ -DPROXY_DELEGATION -DWINE_REGISTER_DLL

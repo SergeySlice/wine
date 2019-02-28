@@ -81,7 +81,7 @@ struct wait_work_item
     ULONG Flags;
     HANDLE CompletionEvent;
     LONG DeleteCount;
-    BOOLEAN CallbackInProgress;
+    int CallbackInProgress;
 };
 
 struct timer_queue;
@@ -530,9 +530,14 @@ static DWORD CALLBACK wait_thread_proc(LPVOID Arg)
                     wait_work_item->Context );
                 TimerOrWaitFired = TRUE;
             }
-            wait_work_item->CallbackInProgress = TRUE;
+            interlocked_xchg( &wait_work_item->CallbackInProgress, TRUE );
+            if (wait_work_item->CompletionEvent)
+            {
+                TRACE( "Work has been canceled.\n" );
+                break;
+            }
             wait_work_item->Callback( wait_work_item->Context, TimerOrWaitFired );
-            wait_work_item->CallbackInProgress = FALSE;
+            interlocked_xchg( &wait_work_item->CallbackInProgress, FALSE );
 
             if (wait_work_item->Flags & WT_EXECUTEONLYONCE)
                 break;
@@ -541,11 +546,14 @@ static DWORD CALLBACK wait_thread_proc(LPVOID Arg)
             break;
     }
 
-    completion_event = wait_work_item->CompletionEvent;
-    if (completion_event) NtSetEvent( completion_event, NULL );
 
     if (interlocked_inc( &wait_work_item->DeleteCount ) == 2 )
+    {
+        completion_event = wait_work_item->CompletionEvent;
         delete_wait_work_item( wait_work_item );
+        if (completion_event && completion_event != INVALID_HANDLE_VALUE)
+            NtSetEvent( completion_event, NULL );
+    }
 
     return 0;
 }
@@ -633,44 +641,50 @@ NTSTATUS WINAPI RtlRegisterWait(PHANDLE NewWaitObject, HANDLE Object,
 NTSTATUS WINAPI RtlDeregisterWaitEx(HANDLE WaitHandle, HANDLE CompletionEvent)
 {
     struct wait_work_item *wait_work_item = WaitHandle;
-    NTSTATUS status = STATUS_SUCCESS;
+    NTSTATUS status;
+    HANDLE LocalEvent = NULL;
+    int CallbackInProgress;
 
-    TRACE( "(%p)\n", WaitHandle );
+    TRACE( "(%p %p)\n", WaitHandle, CompletionEvent );
 
     if (WaitHandle == NULL)
         return STATUS_INVALID_HANDLE;
 
-    NtSetEvent( wait_work_item->CancelEvent, NULL );
-    if (wait_work_item->CallbackInProgress)
+    interlocked_xchg_ptr( &wait_work_item->CompletionEvent, INVALID_HANDLE_VALUE );
+    CallbackInProgress = wait_work_item->CallbackInProgress;
+    TRACE( "callback in progress %u\n", CallbackInProgress );
+    if (CompletionEvent == INVALID_HANDLE_VALUE || !CallbackInProgress)
     {
-        if (CompletionEvent != NULL)
-        {
-            if (CompletionEvent == INVALID_HANDLE_VALUE)
-            {
-                status = NtCreateEvent( &CompletionEvent, EVENT_ALL_ACCESS, NULL, NotificationEvent, FALSE );
-                if (status != STATUS_SUCCESS)
-                    return status;
-                interlocked_xchg_ptr( &wait_work_item->CompletionEvent, CompletionEvent );
-                if (wait_work_item->CallbackInProgress)
-                    NtWaitForSingleObject( CompletionEvent, FALSE, NULL );
-                NtClose( CompletionEvent );
-            }
-            else
-            {
-                interlocked_xchg_ptr( &wait_work_item->CompletionEvent, CompletionEvent );
-                if (wait_work_item->CallbackInProgress)
-                    status = STATUS_PENDING;
-            }
-        }
-        else
-            status = STATUS_PENDING;
+        status = NtCreateEvent( &LocalEvent, EVENT_ALL_ACCESS, NULL, NotificationEvent, FALSE );
+        if (status != STATUS_SUCCESS)
+            return status;
+        interlocked_xchg_ptr( &wait_work_item->CompletionEvent, LocalEvent );
     }
+    else if (CompletionEvent != NULL)
+    {
+        interlocked_xchg_ptr( &wait_work_item->CompletionEvent, CompletionEvent );
+    }
+
+    NtSetEvent( wait_work_item->CancelEvent, NULL );
 
     if (interlocked_inc( &wait_work_item->DeleteCount ) == 2 )
     {
         status = STATUS_SUCCESS;
         delete_wait_work_item( wait_work_item );
     }
+    else if (LocalEvent)
+    {
+        TRACE( "Waiting for completion event\n" );
+        NtWaitForSingleObject( LocalEvent, FALSE, NULL );
+        status = STATUS_SUCCESS;
+    }
+    else
+    {
+        status = STATUS_PENDING;
+    }
+
+    if (LocalEvent)
+        NtClose( LocalEvent );
 
     return status;
 }

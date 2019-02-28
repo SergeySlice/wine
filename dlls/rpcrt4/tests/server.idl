@@ -21,27 +21,44 @@
 #pragma makedep client
 #pragma makedep server
 
+import "objidl.idl";
+
 #include "server_defines.h"
 
+#ifndef IFACE_NAME
+#define IFACE_NAME IMixedServer
+#endif
+
+#ifndef IFACE_HANDLE
+#define IFACE_HANDLE IMixedServer_IfHandle
+#endif
+
+#ifndef ISERVER_UUID
+#define ISERVER_UUID 00000000-4114-0704-2301-000000000000
+#endif
+
+cpp_quote("#ifndef SKIP_STRUCT_DECLS")
 typedef struct tag_vector
 {
   int x;
   int y;
   int z;
 } vector_t;
+cpp_quote("#endif")
 
 typedef int fnprintf(const char *format, ...);
 
 [
-  uuid(00000000-4114-0704-2301-000000000000),
-  implicit_handle(handle_t IServer_IfHandle)
+  uuid(ISERVER_UUID),
+  implicit_handle(handle_t IFACE_HANDLE)
 ]
-interface IServer
+interface IFACE_NAME
 {
 cpp_quote("#if 0")
   typedef wchar_t WCHAR;
 cpp_quote("#endif")
 
+cpp_quote("#ifndef SKIP_STRUCT_DECLS")
   typedef [string] char *str_t;
   typedef [string] WCHAR *wstr_t;
 
@@ -78,6 +95,7 @@ cpp_quote("#endif")
 
     int s;
   } sun_t;
+cpp_quote("#endif")
 
   int int_return(void);
   int square(int x);
@@ -103,6 +121,7 @@ cpp_quote("#endif")
   double ptypes_sum(ptypes_t *ptypes);
   int dot_pvectors(pvectors_t *pvectors);
 
+cpp_quote("#ifndef SKIP_STRUCT_DECLS")
   /* don't use this anywhere except in sp_t */
   typedef struct
   {
@@ -114,10 +133,12 @@ cpp_quote("#endif")
     int x;
     sp_inner_t *s;
   } sp_t;
+cpp_quote("#endif")
 
   int sum_sp(sp_t *sp);
   double square_sun(sun_t *su);
 
+cpp_quote("#ifndef SKIP_STRUCT_DECLS")
   typedef struct test_list
   {
     int t;
@@ -129,6 +150,7 @@ cpp_quote("#endif")
   } test_list_t;
 
   typedef [ref] int *refpint_t;
+cpp_quote("#endif")
 
   int test_list_length(test_list_t *ls);
   int sum_fixed_int_3d(int m[2][3][4]);
@@ -140,6 +162,7 @@ cpp_quote("#endif")
   int dot_two_vectors(vector_t vs[2]);
   void get_number_array([out, length_is(*n)] int x[20], [out] int *n);
 
+cpp_quote("#ifndef SKIP_STRUCT_DECLS")
   typedef struct
   {
     int n;
@@ -161,6 +184,7 @@ cpp_quote("#endif")
     int b;
     int c;
   } cpsc_t;
+cpp_quote("#endif")
 
   int sum_cs(cs_t *cs);
   int sum_cps(cps_t *cps);
@@ -171,6 +195,7 @@ cpp_quote("#endif")
   typedef [wire_marshal(int)] void *puint_t;
   int square_puint(puint_t p);
 
+cpp_quote("#ifndef SKIP_STRUCT_DECLS")
   typedef struct
   {
     [size_is(n)] puint_t *ps;
@@ -183,11 +208,13 @@ cpp_quote("#endif")
     [size_is(n)] puint_t *ps;
     char n;
   } cpuints_t;
+cpp_quote("#endif")
 
   int sum_puints(puints_t *p);
   int sum_cpuints(cpuints_t *p);
   int dot_copy_vectors(vector_t u, vector_t v);
 
+cpp_quote("#ifndef SKIP_STRUCT_DECLS")
   typedef struct wire_us *wire_us_t;
   typedef [wire_marshal(wire_us_t)] struct us us_t;
   struct us
@@ -202,9 +229,11 @@ cpp_quote("#endif")
   {
     us_t us;
   } test_us_t;
+cpp_quote("#endif")
 
   int square_test_us(test_us_t *tus);
 
+cpp_quote("#ifndef SKIP_STRUCT_DECLS")
   typedef union encu switch (int t)
   {
   case ENCU_I: int i;
@@ -235,6 +264,7 @@ cpp_quote("#endif")
   {
     e_t f;
   } se_t;
+cpp_quote("#endif")
 
   double square_encu(encu_t *eu);
   double square_unencu(int t, [switch_is(t)] unencu_t *eu);
@@ -247,6 +277,7 @@ cpp_quote("#endif")
   int sum_toplev_conf_2n([size_is(n * 2)] int *x, int n);
   int sum_toplev_conf_cond([size_is(c ? a : b)] int *x, int a, int b, int c);
 
+cpp_quote("#ifndef SKIP_STRUCT_DECLS")
   typedef struct
   {
     char c;
@@ -254,19 +285,23 @@ cpp_quote("#endif")
     short s;
     double d;
   } aligns_t;
+cpp_quote("#endif")
 
   double sum_aligns(aligns_t *a);
 
+cpp_quote("#ifndef SKIP_STRUCT_DECLS")
   typedef struct
   {
     int i;
     char c;
   } padded_t;
+cpp_quote("#endif")
 
   int sum_padded(padded_t *p);
   int sum_padded2(padded_t ps[2]);
   int sum_padded_conf([size_is(n)] padded_t *ps, int n);
 
+cpp_quote("#ifndef SKIP_STRUCT_DECLS")
   typedef struct
   {
     int *p1;
@@ -279,10 +314,12 @@ cpp_quote("#endif")
     int *p3;
     char c;
   } bogus_t;
+cpp_quote("#endif")
 
   int sum_bogus(bogus_t *b);
   void check_null([unique] int *null);
 
+cpp_quote("#ifndef SKIP_STRUCT_DECLS")
   typedef struct
   {
     str_t s;
@@ -292,10 +329,12 @@ cpp_quote("#endif")
   {
     wstr_t s;
   } wstr_struct_t;
+cpp_quote("#endif")
 
   int str_struct_len(str_struct_t *s);
   int wstr_struct_len(wstr_struct_t *s);
 
+cpp_quote("#ifndef SKIP_STRUCT_DECLS")
   typedef struct
   {
     unsigned int n;
@@ -307,25 +346,30 @@ cpp_quote("#endif")
     int n;
     [size_is(n)] doub_carr_1_t *a[];
   } doub_carr_t;
+cpp_quote("#endif")
 
   int sum_doub_carr(doub_carr_t *dc);
   void make_pyramid_doub_carr(unsigned char n, [out] doub_carr_t **dc);
 
+cpp_quote("#ifndef SKIP_STRUCT_DECLS")
   typedef struct
   {
     short n;
     [size_is(n)] short data[];
   } user_bstr_t;
+cpp_quote("#endif")
 
   typedef [unique] user_bstr_t *wire_bstr_t;
   typedef [wire_marshal(wire_bstr_t)] short *bstr_t;
   unsigned hash_bstr(bstr_t s);
   void get_a_bstr([out]bstr_t *s);
+cpp_quote("#ifndef SKIP_STRUCT_DECLS")
   typedef struct
   {
     [string, size_is(size)] char *name;
     unsigned int size;
   } name_t;
+cpp_quote("#endif")
   void get_name([in,out] name_t *name);
 
   typedef char **str_array_t;
@@ -336,6 +380,7 @@ cpp_quote("#endif")
   int sum_pcarr2(int n, [size_is(, n)] int **pa);
   int sum_L1_norms(int n, [size_is(n)] vector_t *vs);
 
+cpp_quote("#ifndef SKIP_STRUCT_DECLS")
   /* Don't use this except in the get_s123 test.  */
   typedef struct
   {
@@ -343,23 +388,27 @@ cpp_quote("#endif")
     int f2;
     int f3;
   } s123_t;
+cpp_quote("#endif")
 
   /* Make sure WIDL generates a type format string for a previously unseen
      type as a return value.  */
   s123_t *get_s123(void);
 
+cpp_quote("#ifndef SKIP_STRUCT_DECLS")
   typedef struct
   {
     unsigned int length;
     unsigned int size;
     [size_is(size), length_is(length)] pints_t numbers[];
   } numbers_struct_t;
+cpp_quote("#endif")
 
   void get_numbers([in] int length, [in] int size, [out, length_is(length), size_is(size)] pints_t pn[]);
   void get_numbers_struct([out] numbers_struct_t **ns);
 
   str_t get_filename(void);
 
+cpp_quote("#ifndef SKIP_STRUCT_DECLS")
   enum renum
   {
     RE0,
@@ -371,6 +420,7 @@ cpp_quote("#endif")
   const int RE_MAX = RE3;
   typedef [range(RE_MIN, RE_MAX)] enum renum renum_t;
   typedef [range(0, 100)] int rint_t;
+cpp_quote("#endif")
   rint_t echo_ranged_int([range(0, 10)] int i, [range(0, 20)] int j, [range(0, 100)] int k);
   rint_t echo_ranged_int2([range(0, 40)] int i);
   void get_ranged_enum([out] renum_t *re);
@@ -383,4 +433,25 @@ cpp_quote("#endif")
   void authinfo_test(unsigned int protseq, int secure);
 
   void stop(void);
+  void stop_autolisten(void);
+
+cpp_quote("#ifndef SKIP_STRUCT_DECLS")
+  typedef union ipu switch(int t)
+  {
+    default: IStream *stream;
+  } ipu_t;
+cpp_quote("#endif")
+
+  void ip_test([in] ipu_t *a);
+
+  int sum_ptr_array([in] int *a[2]);
+  int sum_array_ptr([in] int (*a)[2]);
+
+cpp_quote("#ifndef SKIP_STRUCT_DECLS")
+  typedef [context_handle] void *ctx_handle_t;
+cpp_quote("#endif")
+
+  ctx_handle_t get_handle();
+  void get_handle_by_ptr([out] ctx_handle_t *r);
+  void test_handle(ctx_handle_t ctx_handle);
 }

@@ -519,7 +519,7 @@ static CFDictionaryRef create_mode_dict(CGDisplayModeRef display_mode, BOOL is_o
             CFSTR("pixel_encoding"),
             CFSTR("refresh_rate"),
         };
-        const void* values[sizeof(keys) / sizeof(keys[0])] = {
+        const void* values[ARRAY_SIZE(keys)] = {
             cf_io_flags,
             cf_width,
             cf_height,
@@ -527,7 +527,7 @@ static CFDictionaryRef create_mode_dict(CGDisplayModeRef display_mode, BOOL is_o
             cf_refresh,
         };
 
-        ret = CFDictionaryCreate(NULL, (const void**)keys, (const void**)values, sizeof(keys) / sizeof(keys[0]),
+        ret = CFDictionaryCreate(NULL, (const void**)keys, (const void**)values, ARRAY_SIZE(keys),
                                  &kCFCopyStringDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     }
 
@@ -559,7 +559,6 @@ static CFArrayRef copy_display_modes(CGDirectDisplayID display)
     CFArrayRef modes = NULL;
 
 #if defined(MAC_OS_X_VERSION_10_8) && MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_8
-#ifdef kCGDisplayShowDuplicateLowResolutionModes    
     if (&kCGDisplayShowDuplicateLowResolutionModes != NULL &&
         CGDisplayModeGetPixelWidth != NULL && CGDisplayModeGetPixelHeight != NULL)
     {
@@ -668,7 +667,6 @@ static CFArrayRef copy_display_modes(CGDirectDisplayID display)
     }
     else
 #endif
-#endif        
         modes = CGDisplayCopyAllDisplayModes(display, NULL);
 
     return modes;
@@ -1184,7 +1182,7 @@ BOOL macdrv_GetDeviceGammaRamp(PHYSDEV dev, LPVOID ramp)
     struct macdrv_display *displays;
     int num_displays;
     uint32_t mac_entries;
-    int win_entries = sizeof(r->red) / sizeof(r->red[0]);
+    int win_entries = ARRAY_SIZE(r->red);
     CGGammaValue *red, *green, *blue;
     CGError err;
     int win_entry;
@@ -1318,7 +1316,7 @@ BOOL macdrv_SetDeviceGammaRamp(PHYSDEV dev, LPVOID ramp)
     DDGAMMARAMP *r = ramp;
     struct macdrv_display *displays;
     int num_displays;
-    int win_entries = sizeof(r->red) / sizeof(r->red[0]);
+    int win_entries = ARRAY_SIZE(r->red);
     CGGammaValue *red, *green, *blue;
     int i;
     CGError err = kCGErrorFailure;

@@ -1,4 +1,4 @@
-@ stub FltAcquirePushLockExclusive
+@ stdcall FltAcquirePushLockExclusive(ptr)
 @ stub FltAcquirePushLockShared
 @ stub FltAcquireResourceExclusive
 @ stub FltAcquireResourceShared
@@ -40,7 +40,7 @@
 @ stub FltDeleteContext
 @ stub FltDeleteFileContext
 @ stub FltDeleteInstanceContext
-@ stub FltDeletePushLock
+@ stdcall FltDeletePushLock(ptr)
 @ stub FltDeleteStreamContext
 @ stub FltDeleteStreamHandleContext
 @ stub FltDeleteVolumeContext
@@ -79,7 +79,7 @@
 @ stub FltGetLowerInstance
 @ stub FltGetRequestorProcess
 @ stub FltGetRequestorProcessId
-@ stub FltGetRoutineAddress
+@ stdcall FltGetRoutineAddress(str)
 @ stub FltGetStreamContext
 @ stub FltGetStreamHandleContext
 @ stub FltGetSwappedBufferMdlAddress
@@ -128,12 +128,12 @@
 @ stub FltReadFile
 @ stub FltReferenceContext
 @ stub FltReferenceFileNameInformation
-@ stub FltRegisterFilter
+@ stdcall FltRegisterFilter(ptr ptr ptr)
 @ stub FltReissueSynchronousIo
 @ stub FltReleaseContext
 @ stub FltReleaseContexts
 @ stub FltReleaseFileNameInformation
-@ stub FltReleasePushLock
+@ stdcall FltReleasePushLock(ptr)
 @ stub FltReleaseResource
 @ stub FltRequestOperationStatusCallback
 @ stub FltRetainSwappedBufferMdlAddress
@@ -150,7 +150,7 @@
 @ stub FltSetStreamHandleContext
 @ stub FltSetVolumeContext
 @ stub FltSetVolumeInformation
-@ stub FltStartFiltering
+@ stdcall FltStartFiltering(ptr)
 @ stub FltSupportsFileContexts
 @ stub FltSupportsStreamContexts
 @ stub FltSupportsStreamHandleContexts
@@ -158,6 +158,6 @@
 @ stub FltUninitializeFileLock
 @ stub FltUninitializeOplock
 @ stub FltUnloadFilter
-@ stub FltUnregisterFilter
+@ stdcall FltUnregisterFilter(ptr)
 @ stub FltUntagFile
 @ stub FltWriteFile

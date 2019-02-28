@@ -34,45 +34,49 @@ static void dxgi_mode_from_wined3d(DXGI_MODE_DESC *mode, const struct wined3d_di
     mode->Scaling = DXGI_MODE_SCALING_UNSPECIFIED; /* FIXME */
 }
 
-static inline struct dxgi_output *impl_from_IDXGIOutput(IDXGIOutput *iface)
+static inline struct dxgi_output *impl_from_IDXGIOutput4(IDXGIOutput4 *iface)
 {
-    return CONTAINING_RECORD(iface, struct dxgi_output, IDXGIOutput_iface);
+    return CONTAINING_RECORD(iface, struct dxgi_output, IDXGIOutput4_iface);
 }
 
 /* IUnknown methods */
 
-static HRESULT STDMETHODCALLTYPE dxgi_output_QueryInterface(IDXGIOutput *iface, REFIID riid, void **object)
+static HRESULT STDMETHODCALLTYPE dxgi_output_QueryInterface(IDXGIOutput4 *iface, REFIID iid, void **object)
 {
-    TRACE("iface %p, riid %s, object %p.\n", iface, debugstr_guid(riid), object);
+    TRACE("iface %p, iid %s, object %p.\n", iface, debugstr_guid(iid), object);
 
-    if (IsEqualGUID(riid, &IID_IDXGIOutput)
-            || IsEqualGUID(riid, &IID_IDXGIObject)
-            || IsEqualGUID(riid, &IID_IUnknown))
+    if (IsEqualGUID(iid, &IID_IDXGIOutput4)
+            || IsEqualGUID(iid, &IID_IDXGIOutput3)
+            || IsEqualGUID(iid, &IID_IDXGIOutput2)
+            || IsEqualGUID(iid, &IID_IDXGIOutput1)
+            || IsEqualGUID(iid, &IID_IDXGIOutput)
+            || IsEqualGUID(iid, &IID_IDXGIObject)
+            || IsEqualGUID(iid, &IID_IUnknown))
     {
         IUnknown_AddRef(iface);
         *object = iface;
         return S_OK;
     }
 
-    WARN("%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid(riid));
+    WARN("%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid(iid));
 
     *object = NULL;
     return E_NOINTERFACE;
 }
 
-static ULONG STDMETHODCALLTYPE dxgi_output_AddRef(IDXGIOutput *iface)
+static ULONG STDMETHODCALLTYPE dxgi_output_AddRef(IDXGIOutput4 *iface)
 {
-    struct dxgi_output *This = impl_from_IDXGIOutput(iface);
-    ULONG refcount = InterlockedIncrement(&This->refcount);
+    struct dxgi_output *output = impl_from_IDXGIOutput4(iface);
+    ULONG refcount = InterlockedIncrement(&output->refcount);
 
-    TRACE("%p increasing refcount to %u.\n", This, refcount);
+    TRACE("%p increasing refcount to %u.\n", output, refcount);
 
     return refcount;
 }
 
-static ULONG STDMETHODCALLTYPE dxgi_output_Release(IDXGIOutput *iface)
+static ULONG STDMETHODCALLTYPE dxgi_output_Release(IDXGIOutput4 *iface)
 {
-    struct dxgi_output *output = impl_from_IDXGIOutput(iface);
+    struct dxgi_output *output = impl_from_IDXGIOutput4(iface);
     ULONG refcount = InterlockedDecrement(&output->refcount);
 
     TRACE("%p decreasing refcount to %u.\n", output, refcount);
@@ -80,8 +84,8 @@ static ULONG STDMETHODCALLTYPE dxgi_output_Release(IDXGIOutput *iface)
     if (!refcount)
     {
         wined3d_private_store_cleanup(&output->private_store);
-        IDXGIAdapter1_Release(&output->adapter->IDXGIAdapter1_iface);
-        HeapFree(GetProcessHeap(), 0, output);
+        IWineDXGIAdapter_Release(&output->adapter->IWineDXGIAdapter_iface);
+        heap_free(output);
     }
 
     return refcount;
@@ -89,51 +93,51 @@ static ULONG STDMETHODCALLTYPE dxgi_output_Release(IDXGIOutput *iface)
 
 /* IDXGIObject methods */
 
-static HRESULT STDMETHODCALLTYPE dxgi_output_SetPrivateData(IDXGIOutput *iface,
+static HRESULT STDMETHODCALLTYPE dxgi_output_SetPrivateData(IDXGIOutput4 *iface,
         REFGUID guid, UINT data_size, const void *data)
 {
-    struct dxgi_output *output = impl_from_IDXGIOutput(iface);
+    struct dxgi_output *output = impl_from_IDXGIOutput4(iface);
 
     TRACE("iface %p, guid %s, data_size %u, data %p.\n", iface, debugstr_guid(guid), data_size, data);
 
     return dxgi_set_private_data(&output->private_store, guid, data_size, data);
 }
 
-static HRESULT STDMETHODCALLTYPE dxgi_output_SetPrivateDataInterface(IDXGIOutput *iface,
+static HRESULT STDMETHODCALLTYPE dxgi_output_SetPrivateDataInterface(IDXGIOutput4 *iface,
         REFGUID guid, const IUnknown *object)
 {
-    struct dxgi_output *output = impl_from_IDXGIOutput(iface);
+    struct dxgi_output *output = impl_from_IDXGIOutput4(iface);
 
     TRACE("iface %p, guid %s, object %p.\n", iface, debugstr_guid(guid), object);
 
     return dxgi_set_private_data_interface(&output->private_store, guid, object);
 }
 
-static HRESULT STDMETHODCALLTYPE dxgi_output_GetPrivateData(IDXGIOutput *iface,
+static HRESULT STDMETHODCALLTYPE dxgi_output_GetPrivateData(IDXGIOutput4 *iface,
         REFGUID guid, UINT *data_size, void *data)
 {
-    struct dxgi_output *output = impl_from_IDXGIOutput(iface);
+    struct dxgi_output *output = impl_from_IDXGIOutput4(iface);
 
     TRACE("iface %p, guid %s, data_size %p, data %p.\n", iface, debugstr_guid(guid), data_size, data);
 
     return dxgi_get_private_data(&output->private_store, guid, data_size, data);
 }
 
-static HRESULT STDMETHODCALLTYPE dxgi_output_GetParent(IDXGIOutput *iface,
+static HRESULT STDMETHODCALLTYPE dxgi_output_GetParent(IDXGIOutput4 *iface,
         REFIID riid, void **parent)
 {
-    struct dxgi_output *output = impl_from_IDXGIOutput(iface);
+    struct dxgi_output *output = impl_from_IDXGIOutput4(iface);
 
     TRACE("iface %p, riid %s, parent %p.\n", iface, debugstr_guid(riid), parent);
 
-    return IDXGIAdapter1_QueryInterface(&output->adapter->IDXGIAdapter1_iface, riid, parent);
+    return IWineDXGIAdapter_QueryInterface(&output->adapter->IWineDXGIAdapter_iface, riid, parent);
 }
 
 /* IDXGIOutput methods */
 
-static HRESULT STDMETHODCALLTYPE dxgi_output_GetDesc(IDXGIOutput *iface, DXGI_OUTPUT_DESC *desc)
+static HRESULT STDMETHODCALLTYPE dxgi_output_GetDesc(IDXGIOutput4 *iface, DXGI_OUTPUT_DESC *desc)
 {
-    struct dxgi_output *output = impl_from_IDXGIOutput(iface);
+    struct dxgi_output *output = impl_from_IDXGIOutput4(iface);
     struct wined3d_output_desc wined3d_desc;
     HRESULT hr;
 
@@ -162,13 +166,17 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_GetDesc(IDXGIOutput *iface, DXGI_OU
     return S_OK;
 }
 
-static HRESULT STDMETHODCALLTYPE dxgi_output_GetDisplayModeList(IDXGIOutput *iface,
+#define MAX_VIDEOMODE_COUNT 30
+static HRESULT STDMETHODCALLTYPE dxgi_output_GetDisplayModeList(IDXGIOutput4 *iface,
         DXGI_FORMAT format, UINT flags, UINT *mode_count, DXGI_MODE_DESC *desc)
 {
-    struct dxgi_output *output = impl_from_IDXGIOutput(iface);
+    struct dxgi_output *output = impl_from_IDXGIOutput4(iface);
     enum wined3d_format_id wined3d_format;
     unsigned int i, max_count;
     struct wined3d *wined3d;
+    struct wined3d_display_mode modes[MAX_VIDEOMODE_COUNT];
+    unsigned int pos[MAX_VIDEOMODE_COUNT];
+    unsigned int j;
 
     FIXME("iface %p, format %s, flags %#x, mode_count %p, desc %p partial stub!\n",
             iface, debug_dxgi_format(format), flags, mode_count, desc);
@@ -206,29 +214,51 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_GetDisplayModeList(IDXGIOutput *ifa
 
     for (i = 0; i < *mode_count; ++i)
     {
-        struct wined3d_display_mode mode;
         HRESULT hr;
 
         hr = wined3d_enum_adapter_modes(wined3d, output->adapter->ordinal, wined3d_format,
-                WINED3D_SCANLINE_ORDERING_UNKNOWN, i, &mode);
+                WINED3D_SCANLINE_ORDERING_UNKNOWN, i, &modes[i]);
         if (FAILED(hr))
         {
             WARN("EnumAdapterModes failed, hr %#x.\n", hr);
             wined3d_mutex_unlock();
             return hr;
         }
-
-        dxgi_mode_from_wined3d(&desc[i], &mode);
+    }
+// initial positions
+    for (i = 0; i < *mode_count; ++i) pos[i] = i;
+// sort ascending
+    for (i = 0; i < *mode_count - 1; ++i)
+    {
+        for (j = i + 1; j < *mode_count; ++j)
+        {
+            unsigned int k;
+            if ((modes[pos[i]].height > modes[pos[j]].height) ||
+                ((modes[pos[i]].height == modes[pos[j]].height) &&
+                 (modes[pos[i]].width > modes[pos[j]].width)) ||
+                ((modes[pos[i]].height == modes[pos[j]].height) &&
+                 (modes[pos[i]].width == modes[pos[j]].width) &&
+                 (modes[pos[i]].refresh_rate > modes[pos[j]].refresh_rate))) {
+                    k = pos[i];
+                    pos[i] = pos[j];
+                    pos[j] = k;
+                }
+        }
+    }
+//report sorted modes
+    for (i = 0; i < *mode_count; ++i)
+    {
+        dxgi_mode_from_wined3d(&desc[i], &modes[pos[i]]);
     }
     wined3d_mutex_unlock();
 
     return S_OK;
 }
 
-static HRESULT STDMETHODCALLTYPE dxgi_output_FindClosestMatchingMode(IDXGIOutput *iface,
+static HRESULT STDMETHODCALLTYPE dxgi_output_FindClosestMatchingMode(IDXGIOutput4 *iface,
         const DXGI_MODE_DESC *mode, DXGI_MODE_DESC *closest_match, IUnknown *device)
 {
-    struct dxgi_output *output = impl_from_IDXGIOutput(iface);
+    struct dxgi_output *output = impl_from_IDXGIOutput4(iface);
     struct wined3d_display_mode wined3d_mode;
     struct dxgi_adapter *adapter;
     struct wined3d *wined3d;
@@ -266,70 +296,155 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_FindClosestMatchingMode(IDXGIOutput
     return hr;
 }
 
-static HRESULT STDMETHODCALLTYPE dxgi_output_WaitForVBlank(IDXGIOutput *iface)
+static HRESULT STDMETHODCALLTYPE dxgi_output_WaitForVBlank(IDXGIOutput4 *iface)
 {
-    FIXME("iface %p stub!\n", iface);
+    static BOOL once = FALSE;
+
+    if (!once++)
+        FIXME("iface %p stub!\n", iface);
+    else
+        TRACE("iface %p stub!\n", iface);
 
     return E_NOTIMPL;
 }
 
-static HRESULT STDMETHODCALLTYPE dxgi_output_TakeOwnership(IDXGIOutput *iface, IUnknown *device, BOOL exclusive)
+static HRESULT STDMETHODCALLTYPE dxgi_output_TakeOwnership(IDXGIOutput4 *iface, IUnknown *device, BOOL exclusive)
 {
     FIXME("iface %p, device %p, exclusive %d stub!\n", iface, device, exclusive);
 
     return E_NOTIMPL;
 }
 
-static void STDMETHODCALLTYPE dxgi_output_ReleaseOwnership(IDXGIOutput *iface)
+static void STDMETHODCALLTYPE dxgi_output_ReleaseOwnership(IDXGIOutput4 *iface)
 {
     FIXME("iface %p stub!\n", iface);
 }
 
-static HRESULT STDMETHODCALLTYPE dxgi_output_GetGammaControlCapabilities(IDXGIOutput *iface,
+static HRESULT STDMETHODCALLTYPE dxgi_output_GetGammaControlCapabilities(IDXGIOutput4 *iface,
         DXGI_GAMMA_CONTROL_CAPABILITIES *gamma_caps)
 {
-    FIXME("iface %p, gamma_caps %p stub!\n", iface, gamma_caps);
+    unsigned int i;
 
-    return E_NOTIMPL;
+    TRACE("iface %p, gamma_caps %p.\n", iface, gamma_caps);
+
+    if (!gamma_caps)
+        return E_INVALIDARG;
+
+    gamma_caps->ScaleAndOffsetSupported = FALSE;
+    gamma_caps->MaxConvertedValue = 1.0f;
+    gamma_caps->MinConvertedValue = 0.0f;
+    gamma_caps->NumGammaControlPoints = 256;
+
+    for (i = 0; i < gamma_caps->NumGammaControlPoints; ++i)
+        gamma_caps->ControlPointPositions[i] = i / 255.0f;
+
+    return S_OK;
 }
 
-static HRESULT STDMETHODCALLTYPE dxgi_output_SetGammaControl(IDXGIOutput *iface,
+static HRESULT STDMETHODCALLTYPE dxgi_output_SetGammaControl(IDXGIOutput4 *iface,
         const DXGI_GAMMA_CONTROL *gamma_control)
 {
     FIXME("iface %p, gamma_control %p stub!\n", iface, gamma_control);
 
-    return E_NOTIMPL;
+    return S_OK;
 }
 
-static HRESULT STDMETHODCALLTYPE dxgi_output_GetGammaControl(IDXGIOutput *iface, DXGI_GAMMA_CONTROL *gamma_control)
+static HRESULT STDMETHODCALLTYPE dxgi_output_GetGammaControl(IDXGIOutput4 *iface,
+        DXGI_GAMMA_CONTROL *gamma_control)
 {
     FIXME("iface %p, gamma_control %p stub!\n", iface, gamma_control);
 
     return E_NOTIMPL;
 }
 
-static HRESULT STDMETHODCALLTYPE dxgi_output_SetDisplaySurface(IDXGIOutput *iface, IDXGISurface *surface)
+static HRESULT STDMETHODCALLTYPE dxgi_output_SetDisplaySurface(IDXGIOutput4 *iface, IDXGISurface *surface)
 {
     FIXME("iface %p, surface %p stub!\n", iface, surface);
 
     return E_NOTIMPL;
 }
 
-static HRESULT STDMETHODCALLTYPE dxgi_output_GetDisplaySurfaceData(IDXGIOutput *iface, IDXGISurface *surface)
+static HRESULT STDMETHODCALLTYPE dxgi_output_GetDisplaySurfaceData(IDXGIOutput4 *iface, IDXGISurface *surface)
 {
     FIXME("iface %p, surface %p stub!\n", iface, surface);
 
     return E_NOTIMPL;
 }
 
-static HRESULT STDMETHODCALLTYPE dxgi_output_GetFrameStatistics(IDXGIOutput *iface, DXGI_FRAME_STATISTICS *stats)
+static HRESULT STDMETHODCALLTYPE dxgi_output_GetFrameStatistics(IDXGIOutput4 *iface, DXGI_FRAME_STATISTICS *stats)
 {
     FIXME("iface %p, stats %p stub!\n", iface, stats);
 
     return E_NOTIMPL;
 }
 
-static const struct IDXGIOutputVtbl dxgi_output_vtbl =
+/* IDXGIOutput1 methods */
+
+static HRESULT STDMETHODCALLTYPE dxgi_output_GetDisplayModeList1(IDXGIOutput4 *iface,
+        DXGI_FORMAT format, UINT flags, UINT *mode_count, DXGI_MODE_DESC1 *modes)
+{
+    FIXME("iface %p, format %#x, flags %#x, mode_count %p, modes %p stub!\n",
+            iface, format, flags, mode_count, modes);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT STDMETHODCALLTYPE dxgi_output_FindClosestMatchingMode1(IDXGIOutput4 *iface,
+        const DXGI_MODE_DESC1 *mode, DXGI_MODE_DESC1 *closest_match, IUnknown *device)
+{
+    FIXME("iface %p, mode %p, closest_match %p, device %p stub!\n",
+            iface, mode, closest_match, device);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT STDMETHODCALLTYPE dxgi_output_GetDisplaySurfaceData1(IDXGIOutput4 *iface,
+        IDXGIResource *resource)
+{
+    FIXME("iface %p, resource %p stub!\n", iface, resource);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT STDMETHODCALLTYPE dxgi_output_DuplicateOutput(IDXGIOutput4 *iface,
+        IUnknown *device, IDXGIOutputDuplication **output_duplication)
+{
+    FIXME("iface %p, device %p, output_duplication %p stub!\n", iface, device, output_duplication);
+
+    return E_NOTIMPL;
+}
+
+/* IDXGIOutput2 methods */
+
+static BOOL STDMETHODCALLTYPE dxgi_output_SupportsOverlays(IDXGIOutput4 *iface)
+{
+    FIXME("iface %p stub!\n", iface);
+
+    return FALSE;
+}
+
+/* IDXGIOutput3 methods */
+
+static HRESULT STDMETHODCALLTYPE dxgi_output_CheckOverlaySupport(IDXGIOutput4 *iface,
+        DXGI_FORMAT format, IUnknown *device, UINT *flags)
+{
+    FIXME("iface %p, format %#x, device %p, flags %p stub!\n", iface, format, device, flags);
+
+    return E_NOTIMPL;
+}
+
+/* IDXGIOutput4 methods */
+
+static HRESULT STDMETHODCALLTYPE dxgi_output_CheckOverlayColorSpaceSupport(IDXGIOutput4 *iface,
+        DXGI_FORMAT format, DXGI_COLOR_SPACE_TYPE color_space, IUnknown *device, UINT *flags)
+{
+    FIXME("iface %p, format %#x, color_space %#x, device %p, flags %p stub!\n",
+            iface, format, color_space, device, flags);
+
+    return E_NOTIMPL;
+}
+
+static const struct IDXGIOutput4Vtbl dxgi_output_vtbl =
 {
     dxgi_output_QueryInterface,
     dxgi_output_AddRef,
@@ -352,20 +467,31 @@ static const struct IDXGIOutputVtbl dxgi_output_vtbl =
     dxgi_output_SetDisplaySurface,
     dxgi_output_GetDisplaySurfaceData,
     dxgi_output_GetFrameStatistics,
+    /* IDXGIOutput1 methods */
+    dxgi_output_GetDisplayModeList1,
+    dxgi_output_FindClosestMatchingMode1,
+    dxgi_output_GetDisplaySurfaceData1,
+    dxgi_output_DuplicateOutput,
+    /* IDXGIOutput2 methods */
+    dxgi_output_SupportsOverlays,
+    /* IDXGIOutput3 methods */
+    dxgi_output_CheckOverlaySupport,
+    /* IDXGIOutput4 methods */
+    dxgi_output_CheckOverlayColorSpaceSupport,
 };
 
 static void dxgi_output_init(struct dxgi_output *output, struct dxgi_adapter *adapter)
 {
-    output->IDXGIOutput_iface.lpVtbl = &dxgi_output_vtbl;
+    output->IDXGIOutput4_iface.lpVtbl = &dxgi_output_vtbl;
     output->refcount = 1;
     wined3d_private_store_init(&output->private_store);
     output->adapter = adapter;
-    IDXGIAdapter1_AddRef(&output->adapter->IDXGIAdapter1_iface);
+    IWineDXGIAdapter_AddRef(&output->adapter->IWineDXGIAdapter_iface);
 }
 
 HRESULT dxgi_output_create(struct dxgi_adapter *adapter, struct dxgi_output **output)
 {
-    if (!(*output = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(**output))))
+    if (!(*output = heap_alloc_zero(sizeof(**output))))
         return E_OUTOFMEMORY;
 
     dxgi_output_init(*output, adapter);

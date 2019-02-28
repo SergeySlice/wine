@@ -22,6 +22,7 @@
  */
 
 #include "config.h"
+#include "wine/port.h"
 #include "initguid.h"
 #include "d3d9_private.h"
 
@@ -39,13 +40,13 @@ IDirect3D9 * WINAPI DECLSPEC_HOTPATCH Direct3DCreate9(UINT sdk_version)
 
     TRACE("sdk_version %#x.\n", sdk_version);
 
-    if (!(object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*object))))
+    if (!(object = heap_alloc_zero(sizeof(*object))))
         return NULL;
 
     if (!d3d9_init(object, FALSE))
     {
         WARN("Failed to initialize d3d9.\n");
-        HeapFree(GetProcessHeap(), 0, object);
+        heap_free(object);
         return NULL;
     }
 
@@ -60,13 +61,13 @@ HRESULT WINAPI DECLSPEC_HOTPATCH Direct3DCreate9Ex(UINT sdk_version, IDirect3D9E
 
     TRACE("sdk_version %#x, d3d9ex %p.\n", sdk_version, d3d9ex);
 
-    if (!(object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*object))))
+    if (!(object = heap_alloc_zero(sizeof(*object))))
         return E_OUTOFMEMORY;
 
     if (!d3d9_init(object, TRUE))
     {
         WARN("Failed to initialize d3d9.\n");
-        HeapFree(GetProcessHeap(), 0, object);
+        heap_free(object);
         return D3DERR_NOTAVAILABLE;
     }
 
@@ -75,6 +76,73 @@ HRESULT WINAPI DECLSPEC_HOTPATCH Direct3DCreate9Ex(UINT sdk_version, IDirect3D9E
 
     return D3D_OK;
 }
+
+static int uisv_refcount;
+
+static HRESULT WINAPI uisv_QueryInterface(void *iface, REFIID riid, void **out)
+{
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI uisv_AddRef(void *iface)
+{
+    ULONG refcount = InterlockedIncrement(&uisv_refcount);
+    return refcount;
+}
+
+static ULONG WINAPI uisv_Release(void *iface)
+{
+    ULONG refcount = InterlockedDecrement(&uisv_refcount);
+    return refcount;
+}
+
+static HRESULT WINAPI uisv_DefaultUnimp()
+{
+    FIXME("uisv_DefaultUnimp() called: will crash\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI uisv_1par(DWORD p1)
+{
+  static int once1 = 0;
+  if (!once1++) {
+    FIXME("uisv_1par called\n");
+  }
+  
+    return S_OK;
+}
+
+static HRESULT WINAPI uisv_4par(DWORD p1, DWORD p2, DWORD p3, DWORD p4)
+{
+  static int once4 = 0;
+  if (!once4++) {
+    FIXME("uisv_4par called\n");
+  }
+    return S_OK;
+}
+
+static HRESULT WINAPI uisv_5par(DWORD p1, DWORD p2, DWORD p3, DWORD p4, DWORD p5)
+{
+  static int once5 = 0;
+  if (!once5++) {
+    FIXME("uisv_5par called\n");
+  }
+    return S_OK;
+}
+
+
+static const void *undefinedInternalShaderValidator_vtbl[] =
+{
+    /* IUnknown */
+    uisv_QueryInterface,
+    uisv_AddRef,
+    uisv_Release,
+    /* interface */
+    uisv_4par,
+    uisv_5par,
+    uisv_1par,
+  uisv_DefaultUnimp
+ };
 
 /*******************************************************************
  *       Direct3DShaderValidatorCreate9 (D3D9.@)
@@ -85,9 +153,9 @@ HRESULT WINAPI DECLSPEC_HOTPATCH Direct3DCreate9Ex(UINT sdk_version, IDirect3D9E
 void* WINAPI Direct3DShaderValidatorCreate9(void)
 {
     static int once;
-
+    static void *vtbl_addr=undefinedInternalShaderValidator_vtbl;
     if (!once++) FIXME("stub\n");
-    return NULL;
+    return &vtbl_addr;
 }
 
 /***********************************************************************

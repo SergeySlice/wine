@@ -68,8 +68,6 @@ static inline int needs_relay( const ORDDEF *odp )
     }
     /* skip norelay and forward entry points */
     if (odp->flags & (FLAG_NORELAY|FLAG_FORWARD)) return 0;
-    /* skip register entry points on x86_64 */
-    if (target_cpu == CPU_x86_64 && (odp->flags & FLAG_REGISTER)) return 0;
     return 1;
 }
 
@@ -84,7 +82,9 @@ static int has_relays( DLLSPEC *spec )
 {
     int i;
 
-    if (target_cpu != CPU_x86 && target_cpu != CPU_x86_64 && target_cpu != CPU_ARM) return 0;
+    if (target_cpu != CPU_x86 && target_cpu != CPU_x86_64 &&
+        target_cpu != CPU_ARM && target_cpu != CPU_ARM64)
+        return 0;
 
     for (i = spec->base; i <= spec->limit; i++)
     {
@@ -94,6 +94,88 @@ static int has_relays( DLLSPEC *spec )
     return 0;
 }
 
+static int cmp_func_args( const void *p1, const void *p2 )
+{
+    const ORDDEF *odp1 = *(const ORDDEF **)p1;
+    const ORDDEF *odp2 = *(const ORDDEF **)p2;
+
+    return odp2->u.func.nb_args - odp1->u.func.nb_args;
+}
+
+static void get_arg_string( ORDDEF *odp, char str[MAX_ARGUMENTS + 1] )
+{
+    int i;
+
+    for (i = 0; i < odp->u.func.nb_args; i++)
+    {
+        switch (odp->u.func.args[i])
+        {
+        case ARG_STR: str[i] = 's'; break;
+        case ARG_WSTR: str[i] = 'w'; break;
+        case ARG_FLOAT: str[i] = 'f'; break;
+        case ARG_DOUBLE: str[i] = 'd'; break;
+        case ARG_INT64:
+        case ARG_INT128:
+            if (get_ptr_size() == 4)
+            {
+                str[i] = (odp->u.func.args[i] == ARG_INT64) ? 'j' : 'k';
+                break;
+            }
+            /* fall through */
+        case ARG_LONG:
+        case ARG_PTR:
+        default:
+            str[i] = 'i';
+            break;
+        }
+    }
+    if (target_cpu == CPU_x86 && odp->type == TYPE_THISCALL) str[0] = 't';
+
+    /* append return value */
+    if (get_ptr_size() == 4 && (odp->flags & FLAG_RET64))
+        strcpy( str + i, "J" );
+    else
+        strcpy( str + i, "I" );
+}
+
+/*******************************************************************
+ *         build_args_string
+ */
+static char *build_args_string( DLLSPEC *spec )
+{
+    int i, count = 0, len = 1;
+    char *p, *buffer;
+    char str[MAX_ARGUMENTS + 2];
+    ORDDEF **funcs;
+
+    funcs = xmalloc( (spec->limit + 1 - spec->base) * sizeof(*funcs) );
+    for (i = spec->base; i <= spec->limit; i++)
+    {
+        ORDDEF *odp = spec->ordinals[i];
+
+        if (!needs_relay( odp )) continue;
+        funcs[count++] = odp;
+        len += odp->u.func.nb_args + 1;
+    }
+    /* sort functions by decreasing number of arguments */
+    qsort( funcs, count, sizeof(*funcs), cmp_func_args );
+    buffer = xmalloc( len );
+    buffer[0] = 0;
+    /* build the arguments string, reusing substrings where possible */
+    for (i = 0; i < count; i++)
+    {
+        get_arg_string( funcs[i], str );
+        if (!(p = strstr( buffer, str )))
+        {
+            p = buffer + strlen( buffer );
+            strcpy( p, str );
+        }
+        funcs[i]->u.func.args_str_offset = p - buffer;
+    }
+    free( funcs );
+    return buffer;
+}
+
 /*******************************************************************
  *         output_relay_debug
  *
@@ -101,8 +183,7 @@ static int has_relays( DLLSPEC *spec )
  */
 static void output_relay_debug( DLLSPEC *spec )
 {
-    int i, j;
-    unsigned int pos, args, flags;
+    int i;
 
     /* first the table of entry point offsets */
 
@@ -120,33 +201,10 @@ static void output_relay_debug( DLLSPEC *spec )
             output( "\t.long 0\n" );
     }
 
-    /* then the table of argument types */
+    /* then the strings of argument types */
 
-    output( "\t.align %d\n", get_alignment(4) );
-    output( ".L__wine_spec_relay_arg_types:\n" );
-
-    for (i = spec->base; i <= spec->limit; i++)
-    {
-        ORDDEF *odp = spec->ordinals[i];
-        unsigned int mask = 0;
-
-        if (needs_relay( odp ))
-        {
-            for (j = pos = 0; pos < 16 && j < odp->u.func.nb_args; j++)
-            {
-                switch (odp->u.func.args[j])
-                {
-                case ARG_STR:    mask |= 1 << (2 * pos++); break;
-                case ARG_WSTR:   mask |= 2 << (2 * pos++); break;
-                case ARG_INT64:
-                case ARG_DOUBLE: pos += 8 / get_ptr_size(); break;
-                case ARG_INT128: pos += (target_cpu == CPU_x86) ? 4 : 1; break;
-                default:         pos++; break;
-                }
-            }
-        }
-        output( "\t.long 0x%08x\n", mask );
-    }
+    output( ".L__wine_spec_relay_args_string:\n" );
+    output( "\t%s \"%s\"\n", get_asm_string_keyword(), build_args_string( spec ));
 
     /* then the relay thunks */
 
@@ -164,9 +222,6 @@ static void output_relay_debug( DLLSPEC *spec )
         output( ".L__wine_spec_relay_entry_point_%d:\n", i );
         output_cfi( ".cfi_startproc" );
 
-        args = get_args_size(odp) / get_ptr_size();
-        flags = 0;
-
         switch (target_cpu)
         {
         case CPU_x86:
@@ -175,16 +230,8 @@ static void output_relay_debug( DLLSPEC *spec )
                 output( "\tpopl %%eax\n" );
                 output( "\tpushl %%ecx\n" );
                 output( "\tpushl %%eax\n" );
-                flags |= 2;
             }
-            if (odp->flags & FLAG_REGISTER)
-                output( "\tpushl %%eax\n" );
-            else
-                output( "\tpushl %%esp\n" );
-            output_cfi( ".cfi_adjust_cfa_offset 4" );
-
-            if (odp->flags & FLAG_RET64) flags |= 1;
-            output( "\tpushl $%u\n", (flags << 24) | (args << 16) | (i - spec->base) );
+            output( "\tpushl $%u\n", (odp->u.func.args_str_offset << 16) | (i - spec->base) );
             output_cfi( ".cfi_adjust_cfa_offset 4" );
 
             if (UsePIC)
@@ -197,36 +244,28 @@ static void output_relay_debug( DLLSPEC *spec )
             output( "\tpushl %%eax\n" );
             output_cfi( ".cfi_adjust_cfa_offset 4" );
 
-            if (odp->flags & FLAG_REGISTER)
-            {
-                output( "\tcall *8(%%eax)\n" );
-            }
+            output( "\tcall *4(%%eax)\n" );
+            output_cfi( ".cfi_adjust_cfa_offset -8" );
+            if (odp->type == TYPE_STDCALL || odp->type == TYPE_THISCALL)
+                output( "\tret $%u\n", get_args_size( odp ));
             else
-            {
-                output( "\tcall *4(%%eax)\n" );
-                output_cfi( ".cfi_adjust_cfa_offset -12" );
-                if (odp->type == TYPE_STDCALL || odp->type == TYPE_THISCALL)
-                    output( "\tret $%u\n", args * get_ptr_size() );
-                else
-                    output( "\tret\n" );
-            }
+                output( "\tret\n" );
             break;
 
         case CPU_ARM:
         {
             unsigned int mask, val, count = 0;
-            unsigned int stack_size = min( 16, (args * 4 + 7) & ~7 );
+            int j, has_float = 0;
 
-            if (odp->flags & FLAG_RET64) flags |= 1;
-            val = (flags << 24) | (args << 16) | (i - spec->base);
-            switch (stack_size)
-            {
-            case 16: output( "\tpush {r0-r3}\n" ); break;
-            case 8:  output( "\tpush {r0-r1}\n" ); break;
-            case 0:  break;
-            }
-            output( "\tpush {LR}\n" );
+            if (strcmp( float_abi_option, "soft" ))
+                for (j = 0; j < odp->u.func.nb_args && !has_float; j++)
+                    has_float = is_float_arg( odp, j );
+
+            val = (odp->u.func.args_str_offset << 16) | (i - spec->base);
+            output( "\tpush {r0-r3}\n" );
             output( "\tmov r2, SP\n");
+            if (has_float) output( "\tvpush {s0-s15}\n" );
+            output( "\tpush {LR}\n" );
             output( "\tsub SP, #4\n");
             for (mask = 0xff; mask; mask <<= 8)
                 if (val & mask) output( "\t%s r1,#%u\n", count++ ? "add" : "mov", val & mask );
@@ -236,33 +275,62 @@ static void output_relay_debug( DLLSPEC *spec )
             output( "\tldr IP, [r0, #4]\n");
             output( "1:\tblx IP\n");
             output( "\tldr IP, [SP, #4]\n" );
-            output( "\tadd SP, #%u\n", stack_size + 8 );
+            output( "\tadd SP, #%u\n", 24 + (has_float ? 64 : 0) );
             output( "\tbx IP\n");
             output( "2:\t.long .L__wine_spec_relay_descr-1b\n" );
             break;
         }
 
-        case CPU_x86_64:
-            output( "\tsubq $40,%%rsp\n" );
-            output_cfi( ".cfi_adjust_cfa_offset 40" );
-            switch (args)
+        case CPU_ARM64:
+            switch (odp->u.func.nb_args)
             {
-            default: output( "\tmovq %%%s,72(%%rsp)\n", is_float_arg( odp, 3 ) ? "xmm3" : "r9" );
+            default:
+            case 8:
+            case 7:  output( "\tstp x6, x7, [SP,#-16]!\n" );
             /* fall through */
-            case 3:  output( "\tmovq %%%s,64(%%rsp)\n", is_float_arg( odp, 2 ) ? "xmm2" : "r8" );
+            case 6:
+            case 5:  output( "\tstp x4, x5, [SP,#-16]!\n" );
             /* fall through */
-            case 2:  output( "\tmovq %%%s,56(%%rsp)\n", is_float_arg( odp, 1 ) ? "xmm1" : "rdx" );
+            case 4:
+            case 3:  output( "\tstp x2, x3, [SP,#-16]!\n" );
             /* fall through */
-            case 1:  output( "\tmovq %%%s,48(%%rsp)\n", is_float_arg( odp, 0 ) ? "xmm0" : "rcx" );
+            case 2:
+            case 1:  output( "\tstp x0, x1, [SP,#-16]!\n" );
             /* fall through */
             case 0:  break;
             }
-            output( "\tleaq 40(%%rsp),%%r8\n" );
-            output( "\tmovq $%u,%%rdx\n", (flags << 24) | (args << 16) | (i - spec->base) );
+            output( "\tmov x2, SP\n");
+            output( "\tstp x29, x30, [SP,#-16]!\n" );
+            output( "\tstp x8, x9, [SP,#-16]!\n" );
+            output( "\tmov w1, #%u\n", odp->u.func.args_str_offset << 16 );
+            if (i - spec->base) output( "\tadd w1, w1, #%u\n", i - spec->base );
+            output( "\tadrp x0, .L__wine_spec_relay_descr\n");
+            output( "\tadd x0, x0, #:lo12:.L__wine_spec_relay_descr\n");
+            output( "\tldr x3, [x0, #8]\n");
+            output( "\tblr x3\n");
+            output( "\tadd SP, SP, #16\n" );
+            output( "\tldp x29, x30, [SP], #16\n" );
+            if (odp->u.func.nb_args)
+                output( "\tadd SP, SP, #%u\n", 8 * ((min(odp->u.func.nb_args, 8) + 1) & ~1) );
+            output( "\tret\n");
+            break;
+
+        case CPU_x86_64:
+            switch (odp->u.func.nb_args)
+            {
+            default: output( "\tmovq %%%s,32(%%rsp)\n", is_float_arg( odp, 3 ) ? "xmm3" : "r9" );
+            /* fall through */
+            case 3:  output( "\tmovq %%%s,24(%%rsp)\n", is_float_arg( odp, 2 ) ? "xmm2" : "r8" );
+            /* fall through */
+            case 2:  output( "\tmovq %%%s,16(%%rsp)\n", is_float_arg( odp, 1 ) ? "xmm1" : "rdx" );
+            /* fall through */
+            case 1:  output( "\tmovq %%%s,8(%%rsp)\n", is_float_arg( odp, 0 ) ? "xmm0" : "rcx" );
+            /* fall through */
+            case 0:  break;
+            }
+            output( "\tmovl $%u,%%edx\n", (odp->u.func.args_str_offset << 16) | (i - spec->base) );
             output( "\tleaq .L__wine_spec_relay_descr(%%rip),%%rcx\n" );
             output( "\tcallq *8(%%rcx)\n" );
-            output( "\taddq $40,%%rsp\n" );
-            output_cfi( ".cfi_adjust_cfa_offset -40" );
             output( "\tret\n" );
             break;
 
@@ -407,12 +475,12 @@ void output_exports( DLLSPEC *spec )
     }
 
     output( ".L__wine_spec_relay_descr:\n" );
-    output( "\t%s 0xdeb90001\n", get_asm_ptr_keyword() );  /* magic */
-    output( "\t%s 0,0\n", get_asm_ptr_keyword() );         /* relay funcs */
+    output( "\t%s 0xdeb90002\n", get_asm_ptr_keyword() );  /* magic */
+    output( "\t%s 0\n", get_asm_ptr_keyword() );           /* relay func */
     output( "\t%s 0\n", get_asm_ptr_keyword() );           /* private data */
     output( "\t%s __wine_spec_relay_entry_points\n", get_asm_ptr_keyword() );
     output( "\t%s .L__wine_spec_relay_entry_point_offsets\n", get_asm_ptr_keyword() );
-    output( "\t%s .L__wine_spec_relay_arg_types\n", get_asm_ptr_keyword() );
+    output( "\t%s .L__wine_spec_relay_args_string\n", get_asm_ptr_keyword() );
 
     output_relay_debug( spec );
 }
@@ -626,7 +694,6 @@ void BuildSpec32File( DLLSPEC *spec )
     output_stubs( spec );
     output_exports( spec );
     output_imports( spec );
-    if (is_undefined( "__wine_call_from_regs" )) output_asm_relays();
     if (needs_get_pc_thunk) output_get_pc_thunk();
     output_resources( spec );
     output_gnu_stack_note();

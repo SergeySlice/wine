@@ -19,6 +19,7 @@
  */
 
 #include "config.h"
+#include "wine/port.h"
 #include "d3d8_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3d8);
@@ -57,9 +58,7 @@ static ULONG WINAPI d3d8_swapchain_AddRef(IDirect3DSwapChain8 *iface)
     {
         if (swapchain->parent_device)
             IDirect3DDevice8_AddRef(swapchain->parent_device);
-        wined3d_mutex_lock();
         wined3d_swapchain_incref(swapchain->wined3d_swapchain);
-        wined3d_mutex_unlock();
     }
 
     return ref;
@@ -76,9 +75,7 @@ static ULONG WINAPI d3d8_swapchain_Release(IDirect3DSwapChain8 *iface)
     {
         IDirect3DDevice8 *parent_device = swapchain->parent_device;
 
-        wined3d_mutex_lock();
         wined3d_swapchain_decref(swapchain->wined3d_swapchain);
-        wined3d_mutex_unlock();
 
         if (parent_device)
             IDirect3DDevice8_Release(parent_device);
@@ -92,7 +89,6 @@ static HRESULT WINAPI DECLSPEC_HOTPATCH d3d8_swapchain_Present(IDirect3DSwapChai
 {
     struct d3d8_swapchain *swapchain = impl_from_IDirect3DSwapChain8(iface);
     struct d3d8_device *device = impl_from_IDirect3DDevice8(swapchain->parent_device);
-    HRESULT hr;
 
     TRACE("iface %p, src_rect %s, dst_rect %s, dst_window_override %p, dirty_region %p.\n",
             iface, wine_dbgstr_rect(src_rect), wine_dbgstr_rect(dst_rect), dst_window_override, dirty_region);
@@ -103,12 +99,8 @@ static HRESULT WINAPI DECLSPEC_HOTPATCH d3d8_swapchain_Present(IDirect3DSwapChai
     if (dirty_region)
         FIXME("Ignoring dirty_region %p.\n", dirty_region);
 
-    wined3d_mutex_lock();
-    hr = wined3d_swapchain_present(swapchain->wined3d_swapchain,
-            src_rect, dst_rect, dst_window_override, 0);
-    wined3d_mutex_unlock();
-
-    return hr;
+    return wined3d_swapchain_present(swapchain->wined3d_swapchain,
+            src_rect, dst_rect, dst_window_override, swapchain->swap_interval, 0);
 }
 
 static HRESULT WINAPI d3d8_swapchain_GetBackBuffer(IDirect3DSwapChain8 *iface,
@@ -158,7 +150,7 @@ static const IDirect3DSwapChain8Vtbl d3d8_swapchain_vtbl =
 
 static void STDMETHODCALLTYPE d3d8_swapchain_wined3d_object_released(void *parent)
 {
-    HeapFree(GetProcessHeap(), 0, parent);
+    heap_free(parent);
 }
 
 static const struct wined3d_parent_ops d3d8_swapchain_wined3d_parent_ops =
@@ -167,19 +159,16 @@ static const struct wined3d_parent_ops d3d8_swapchain_wined3d_parent_ops =
 };
 
 static HRESULT swapchain_init(struct d3d8_swapchain *swapchain, struct d3d8_device *device,
-        struct wined3d_swapchain_desc *desc)
+        struct wined3d_swapchain_desc *desc, unsigned int swap_interval)
 {
     HRESULT hr;
 
     swapchain->refcount = 1;
     swapchain->IDirect3DSwapChain8_iface.lpVtbl = &d3d8_swapchain_vtbl;
+    swapchain->swap_interval = swap_interval;
 
-    wined3d_mutex_lock();
-    hr = wined3d_swapchain_create(device->wined3d_device, desc, swapchain,
-            &d3d8_swapchain_wined3d_parent_ops, &swapchain->wined3d_swapchain);
-    wined3d_mutex_unlock();
-
-    if (FAILED(hr))
+    if (FAILED(hr = wined3d_swapchain_create(device->wined3d_device, desc, swapchain,
+            &d3d8_swapchain_wined3d_parent_ops, &swapchain->wined3d_swapchain)))
     {
         WARN("Failed to create wined3d swapchain, hr %#x.\n", hr);
         return hr;
@@ -192,18 +181,18 @@ static HRESULT swapchain_init(struct d3d8_swapchain *swapchain, struct d3d8_devi
 }
 
 HRESULT d3d8_swapchain_create(struct d3d8_device *device, struct wined3d_swapchain_desc *desc,
-        struct d3d8_swapchain **swapchain)
+        unsigned int swap_interval, struct d3d8_swapchain **swapchain)
 {
     struct d3d8_swapchain *object;
     HRESULT hr;
 
-    if (!(object = HeapAlloc(GetProcessHeap(),  HEAP_ZERO_MEMORY, sizeof(*object))))
+    if (!(object = heap_alloc_zero(sizeof(*object))))
         return E_OUTOFMEMORY;
 
-    if (FAILED(hr = swapchain_init(object, device, desc)))
+    if (FAILED(hr = swapchain_init(object, device, desc, swap_interval)))
     {
         WARN("Failed to initialize swapchain, hr %#x.\n", hr);
-        HeapFree(GetProcessHeap(), 0, object);
+        heap_free(object);
         return hr;
     }
 

@@ -48,7 +48,7 @@ static const struct
     const char *szProductType;
 } win_versions[] =
 {
-    { "win10",       "Windows 10",       10,  0, 0x3839,VER_PLATFORM_WIN32_NT, "", 0, 0, "WinNT"},
+    { "win10",       "Windows 10",       10,  0, 0x42EE,VER_PLATFORM_WIN32_NT, "", 0, 0, "WinNT"},
     { "win81",       "Windows 8.1",       6,  3, 0x2580,VER_PLATFORM_WIN32_NT, "", 0, 0, "WinNT"},
     { "win8",        "Windows 8",         6,  2, 0x23F0,VER_PLATFORM_WIN32_NT, "", 0, 0, "WinNT"},
     { "win2008r2",   "Windows 2008 R2",   6,  1, 0x1DB1,VER_PLATFORM_WIN32_NT, "Service Pack 1", 1, 0, "ServerNT"},
@@ -71,8 +71,6 @@ static const struct
     { "win20",       "Windows 2.0",       2,  0,     0, VER_PLATFORM_WIN32s, "Win32s 1.3", 0, 0, ""}
 #endif
 };
-
-#define NB_VERSIONS (sizeof(win_versions)/sizeof(win_versions[0]))
 
 static const char szKey9x[] = "Software\\Microsoft\\Windows\\CurrentVersion";
 static const char szKeyNT[] = "Software\\Microsoft\\Windows NT\\CurrentVersion";
@@ -113,7 +111,7 @@ static int get_registry_version(void)
     }
     major = atoi(ver);
 
-    for (i = 0; i < NB_VERSIONS; i++)
+    for (i = 0; i < ARRAY_SIZE(win_versions); i++)
     {
         if (win_versions[i].dwPlatformId != platform) continue;
         if (win_versions[i].dwMajorVersion != major) continue;
@@ -146,12 +144,12 @@ static void update_comboboxes(HWND dialog)
             return;
         }
         if (ver != -1) winver = strdupA( win_versions[ver].szVersion );
-        else winver = strdupA("winxp");
+        else winver = strdupA("win7");
     }
     WINE_TRACE("winver is %s\n", winver);
 
     /* normalize the version strings */
-    for (i = 0; i < NB_VERSIONS; i++)
+    for (i = 0; i < ARRAY_SIZE(win_versions); i++)
     {
         if (!strcasecmp (win_versions[i].szVersion, winver))
         {
@@ -176,12 +174,11 @@ init_comboboxes (HWND dialog)
     if (current_app)
     {
         WCHAR str[256];
-        LoadStringW (GetModuleHandleW(NULL), IDS_USE_GLOBAL_SETTINGS, str,
-            sizeof(str)/sizeof(str[0]));
+        LoadStringW(GetModuleHandleW(NULL), IDS_USE_GLOBAL_SETTINGS, str, ARRAY_SIZE(str));
         SendDlgItemMessageW (dialog, IDC_WINVER, CB_ADDSTRING, 0, (LPARAM)str);
     }
 
-    for (i = 0; i < NB_VERSIONS; i++)
+    for (i = 0; i < ARRAY_SIZE(win_versions); i++)
     {
       SendDlgItemMessageA(dialog, IDC_WINVER, CB_ADDSTRING,
                           0, (LPARAM) win_versions[i].szDescription);
@@ -218,21 +215,20 @@ static void init_appsheet(HWND dialog)
 
   /* we use the lparam field of the item so we can alter the presentation later and not change code
    * for instance, to use the tile view or to display the EXEs embedded 'display name' */
-  LoadStringW (GetModuleHandleW(NULL), IDS_DEFAULT_SETTINGS, appname,
-      sizeof(appname)/sizeof(appname[0]));
+  LoadStringW(GetModuleHandleW(NULL), IDS_DEFAULT_SETTINGS, appname, ARRAY_SIZE(appname));
   add_listview_item(listview, appname, NULL);
 
   /* because this list is only populated once, it's safe to bypass the settings list here  */
   if (RegOpenKeyA(config_key, "AppDefaults", &key) == ERROR_SUCCESS)
   {
       i = 0;
-      size = sizeof(appname)/sizeof(appname[0]);
+      size = ARRAY_SIZE(appname);
       while (RegEnumKeyExW (key, i, appname, &size, NULL, NULL, NULL, NULL) == ERROR_SUCCESS)
       {
           add_listview_item(listview, appname, strdupW(appname));
 
           i++;
-          size = sizeof(appname)/sizeof(appname[0]);
+          size = ARRAY_SIZE(appname);
       }
 
       RegCloseKey(key);
@@ -333,19 +329,19 @@ static void on_add_app_click(HWND dialog)
                        0, 0, NULL, 0, NULL };
 
   LoadStringW (GetModuleHandleW(NULL), IDS_SELECT_EXECUTABLE, selectExecutableStr,
-      sizeof(selectExecutableStr)/sizeof(selectExecutableStr[0]));
+      ARRAY_SIZE(selectExecutableStr));
   LoadStringW (GetModuleHandleW(NULL), IDS_EXECUTABLE_FILTER, programsFilter,
-      sizeof(programsFilter)/sizeof(programsFilter[0]));
+      ARRAY_SIZE(programsFilter));
   snprintfW( filter, MAX_PATH, filterW, programsFilter, 0, 0 );
 
   ofn.lpstrTitle = selectExecutableStr;
   ofn.lpstrFilter = filter;
   ofn.lpstrFileTitle = filetitle;
   ofn.lpstrFileTitle[0] = '\0';
-  ofn.nMaxFileTitle = sizeof(filetitle)/sizeof(filetitle[0]);
+  ofn.nMaxFileTitle = ARRAY_SIZE(filetitle);
   ofn.lpstrFile = file;
   ofn.lpstrFile[0] = '\0';
-  ofn.nMaxFile = sizeof(file)/sizeof(file[0]);
+  ofn.nMaxFile = ARRAY_SIZE(file);
 
   if (GetOpenFileNameW (&ofn))
   {
@@ -435,6 +431,7 @@ static void on_winver_change(HWND dialog)
 
             set_reg_key(HKEY_LOCAL_MACHINE, szKeyNT, "CSDVersion", NULL);
             set_reg_key(HKEY_LOCAL_MACHINE, szKeyNT, "CurrentVersion", NULL);
+            set_reg_key(HKEY_LOCAL_MACHINE, szKeyNT, "CurrentBuild", NULL);
             set_reg_key(HKEY_LOCAL_MACHINE, szKeyNT, "CurrentBuildNumber", NULL);
             set_reg_key(HKEY_LOCAL_MACHINE, szKeyNT, "ProductName", NULL);
             set_reg_key(HKEY_LOCAL_MACHINE, szKeyProdNT, "ProductType", NULL);
@@ -449,6 +446,7 @@ static void on_winver_change(HWND dialog)
             set_reg_key(HKEY_LOCAL_MACHINE, szKeyNT, "CurrentVersion", Buffer);
             set_reg_key(HKEY_LOCAL_MACHINE, szKeyNT, "CSDVersion", win_versions[selection].szCSDVersion);
             snprintf(Buffer, sizeof(Buffer), "%d", win_versions[selection].dwBuildNumber);
+            set_reg_key(HKEY_LOCAL_MACHINE, szKeyNT, "CurrentBuild", Buffer);
             set_reg_key(HKEY_LOCAL_MACHINE, szKeyNT, "CurrentBuildNumber", Buffer);
             snprintf(Buffer, sizeof(Buffer), "Microsoft %s", win_versions[selection].szDescription);
             set_reg_key(HKEY_LOCAL_MACHINE, szKeyNT, "ProductName", Buffer);
@@ -467,6 +465,7 @@ static void on_winver_change(HWND dialog)
         case VER_PLATFORM_WIN32s:
             set_reg_key(HKEY_LOCAL_MACHINE, szKeyNT, "CSDVersion", NULL);
             set_reg_key(HKEY_LOCAL_MACHINE, szKeyNT, "CurrentVersion", NULL);
+            set_reg_key(HKEY_LOCAL_MACHINE, szKeyNT, "CurrentBuild", NULL);
             set_reg_key(HKEY_LOCAL_MACHINE, szKeyNT, "CurrentBuildNumber", NULL);
             set_reg_key(HKEY_LOCAL_MACHINE, szKeyNT, "ProductName", NULL);
             set_reg_key(HKEY_LOCAL_MACHINE, szKeyProdNT, "ProductType", NULL);

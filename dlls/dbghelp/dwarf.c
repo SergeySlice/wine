@@ -568,7 +568,7 @@ static void dwarf2_fill_attr(const dwarf2_parse_context_t* ctx,
 
     case DW_FORM_string:
         attr->u.string = (const char *)data;
-        TRACE("string<%s>\n", attr->u.string);
+        TRACE("string<%s>\n", debugstr_a(attr->u.string));
         break;
 
     case DW_FORM_strp:
@@ -576,7 +576,7 @@ static void dwarf2_fill_attr(const dwarf2_parse_context_t* ctx,
         unsigned long offset = dwarf2_get_u4(data);
         attr->u.string = (const char*)ctx->sections[section_string].address + offset;
     }
-    TRACE("strp<%s>\n", attr->u.string);
+    TRACE("strp<%s>\n", debugstr_a(attr->u.string));
     break;
         
     case DW_FORM_block:
@@ -820,9 +820,9 @@ compute_location(dwarf2_traverse_context_t* ctx, struct location* loc,
             if (hproc)
             {
                 DWORD_PTR addr = stack[stk--];
-                DWORD_PTR deref;
+                DWORD_PTR deref = 0;
 
-                if (!ReadProcessMemory(hproc, (void*)addr, &deref, sizeof(deref), NULL))
+                if (!ReadProcessMemory(hproc, (void*)addr, &deref, ctx->word_size, NULL))
                 {
                     WARN("Couldn't read memory at %lx\n", addr);
                     return loc_err_cant_read;
@@ -942,6 +942,7 @@ static BOOL dwarf2_compute_location_attr(dwarf2_parse_context_t* ctx,
             *ptr = xloc.u.block.size;
             memcpy(ptr + 1, xloc.u.block.ptr, xloc.u.block.size);
             loc->offset = (unsigned long)ptr;
+            compute_location(&lctx, loc, NULL, frame);
         }
     }
     return TRUE;
@@ -1612,7 +1613,7 @@ static void dwarf2_parse_variable(dwarf2_subprogram_t* subpgm,
         struct attribute ext;
 
 	TRACE("found parameter %s (kind=%d, offset=%ld, reg=%d) at %s\n",
-              name.u.string, loc.kind, loc.offset, loc.reg,
+              debugstr_a(name.u.string), loc.kind, loc.offset, loc.reg,
               dwarf2_debug_ctx(subpgm->ctx));
 
         switch (loc.kind)
@@ -1647,8 +1648,8 @@ static void dwarf2_parse_variable(dwarf2_subprogram_t* subpgm,
     else if (dwarf2_find_attribute(subpgm->ctx, di, DW_AT_const_value, &value))
     {
         VARIANT v;
-        if (subpgm->func) WARN("Unsupported constant %s in function\n", name.u.string);
-        if (is_pmt)       FIXME("Unsupported constant (parameter) %s in function\n", name.u.string);
+        if (subpgm->func) WARN("Unsupported constant %s in function\n", debugstr_a(name.u.string));
+        if (is_pmt)       FIXME("Unsupported constant (parameter) %s in function\n", debugstr_a(name.u.string));
         switch (value.form)
         {
         case DW_FORM_data1:
@@ -1698,7 +1699,7 @@ static void dwarf2_parse_variable(dwarf2_subprogram_t* subpgm,
 
         default:
             FIXME("Unsupported form for const value %s (%lx)\n",
-                  name.u.string, value.form);
+                  debugstr_a(name.u.string), value.form);
             v.n1.n2.vt = VT_EMPTY;
         }
         di->symt = &symt_new_constant(subpgm->ctx->module, subpgm->ctx->compiland,
@@ -1717,7 +1718,7 @@ static void dwarf2_parse_variable(dwarf2_subprogram_t* subpgm,
         }
         else
         {
-            WARN("dropping global variable %s which has been optimized away\n", name.u.string);
+            WARN("dropping global variable %s which has been optimized away\n", debugstr_a(name.u.string));
         }
     }
     if (is_pmt && subpgm->func && subpgm->func->type)
@@ -1822,7 +1823,7 @@ static void dwarf2_parse_subprogram_block(dwarf2_subprogram_t* subpgm,
 
     if (!dwarf2_read_range(subpgm->ctx, di, &low_pc, &high_pc))
     {
-        FIXME("no range\n");
+        WARN("no range\n");
         return;
     }
 
@@ -1920,7 +1921,7 @@ static struct symt* dwarf2_parse_subprogram(dwarf2_parse_context_t* ctx,
         inline_flags.u.uvalue != DW_INL_not_inlined)
     {
         TRACE("Function %s declared as inlined (%ld)... skipping\n",
-              name.u.string ? name.u.string : "(null)", inline_flags.u.uvalue);
+              debugstr_a(name.u.string), inline_flags.u.uvalue);
         return NULL;
     }
 
@@ -1932,7 +1933,7 @@ static struct symt* dwarf2_parse_subprogram(dwarf2_parse_context_t* ctx,
     }
     if (!dwarf2_read_range(ctx, di, &low_pc, &high_pc))
     {
-        WARN("cannot get range for %s\n", name.u.string);
+        WARN("cannot get range for %s\n", debugstr_a(name.u.string));
         return NULL;
     }
     /* As functions (defined as inline assembly) get debug info with dwarf
@@ -2172,7 +2173,7 @@ static void dwarf2_set_line_number(struct module* module, unsigned long address,
     if (!file || !(psrc = vector_at(v, file - 1))) return;
 
     TRACE("%s %lx %s %u\n",
-          debugstr_w(module->module.ModuleName), address, source_get(module, *psrc), line);
+          debugstr_w(module->module.ModuleName), address, debugstr_a(source_get(module, *psrc)), line);
     if (!(symt = symt_find_nearest(module, address)) ||
         symt->symt.tag != SymTagFunction) return;
     func = (struct symt_function*)symt;
@@ -2233,7 +2234,7 @@ static BOOL dwarf2_parse_line_numbers(const dwarf2_section_t* sections,
     {
         const char*  rel = (const char*)traverse.data;
         unsigned     rellen = strlen(rel);
-        TRACE("Got include %s\n", rel);
+        TRACE("Got include %s\n", debugstr_a(rel));
         traverse.data += rellen + 1;
         p = vector_add(&dirs, &ctx->pool);
 
@@ -2267,7 +2268,7 @@ static BOOL dwarf2_parse_line_numbers(const dwarf2_section_t* sections,
         mod_time = dwarf2_leb128_as_unsigned(&traverse);
         length = dwarf2_leb128_as_unsigned(&traverse);
         dir = *(const char**)vector_at(&dirs, dir_index);
-        TRACE("Got file %s/%s (%u,%lu)\n", dir, name, mod_time, length);
+        TRACE("Got file %s/%s (%u,%lu)\n", debugstr_a(dir), debugstr_a(name), mod_time, length);
         psrc = vector_add(&files, &ctx->pool);
         *psrc = source_new(ctx->module, dir, name);
     }
@@ -2338,7 +2339,7 @@ static BOOL dwarf2_parse_line_numbers(const dwarf2_section_t* sections,
                         address = ctx->load_offset + dwarf2_parse_addr(&traverse);
                         break;
                     case DW_LNE_define_file:
-                        FIXME("not handled define file %s\n", traverse.data);
+                        FIXME("not handled define file %s\n", debugstr_a((char *)traverse.data));
                         traverse.data += strlen((const char *)traverse.data) + 1;
                         dwarf2_leb128_as_unsigned(&traverse);
                         dwarf2_leb128_as_unsigned(&traverse);
@@ -2521,7 +2522,7 @@ static enum location_error loc_compute_frame(struct process* pcs,
                 *frame = *pframe;
                 break;
             case loc_dwarf2_location_list:
-                WARN("Searching loclist for %s\n", func->hash_elt.name);
+                WARN("Searching loclist for %s\n", debugstr_a(func->hash_elt.name));
                 if (!dwarf2_lookup_loclist(modfmt,
                                            modfmt->u.dwarf2_info->debug_loc.address + pframe->offset,
                                            ip, &lctx))
@@ -2667,7 +2668,7 @@ static BOOL parse_cie_details(dwarf2_traverse_context_t* ctx, struct frame_info*
     info->state.cfa_rule = RULE_CFA_OFFSET;
 
     end = NULL;
-    TRACE("\tparsing augmentation %s\n", augmentation);
+    TRACE("\tparsing augmentation %s\n", debugstr_a(augmentation));
     if (*augmentation) do
     {
         switch (*augmentation)
@@ -3007,25 +3008,27 @@ static void execute_cfa_instructions(dwarf2_traverse_context_t* ctx,
 }
 
 /* retrieve a context register from its dwarf number */
-static ULONG_PTR get_context_reg(CONTEXT *context, ULONG_PTR dw_reg)
+static DWORD64 get_context_reg(struct cpu_stack_walk *csw, union ctx *context,
+    ULONG_PTR dw_reg)
 {
-    unsigned regno = dbghelp_current_cpu->map_dwarf_register(dw_reg, TRUE), sz;
-    ULONG_PTR* ptr = dbghelp_current_cpu->fetch_context_reg(context, regno, &sz);
+    unsigned regno = csw->cpu->map_dwarf_register(dw_reg, TRUE), sz;
+    void* ptr = csw->cpu->fetch_context_reg(context, regno, &sz);
 
-    if (sz != sizeof(ULONG_PTR))
-    {
-        FIXME("reading register %lu/%u of wrong size %u\n", dw_reg, regno, sz);
-        return 0;
-    }
-    return *ptr;
+    if (sz == 8)
+        return *(DWORD64 *)ptr;
+    else if (sz == 4)
+        return *(DWORD *)ptr;
+
+    FIXME("unhandled size %d\n", sz);
+    return 0;
 }
 
 /* set a context register from its dwarf number */
-static void set_context_reg(struct cpu_stack_walk* csw, CONTEXT *context, ULONG_PTR dw_reg,
-                            ULONG_PTR val, BOOL isdebuggee)
+static void set_context_reg(struct cpu_stack_walk* csw, union ctx *context,
+    ULONG_PTR dw_reg, ULONG_PTR val, BOOL isdebuggee)
 {
-    unsigned regno = dbghelp_current_cpu->map_dwarf_register(dw_reg, TRUE), sz;
-    ULONG_PTR* ptr = dbghelp_current_cpu->fetch_context_reg(context, regno, &sz);
+    unsigned regno = csw->cpu->map_dwarf_register(dw_reg, TRUE), sz;
+    ULONG_PTR* ptr = csw->cpu->fetch_context_reg(context, regno, &sz);
 
     if (isdebuggee)
     {
@@ -3055,12 +3058,14 @@ static void set_context_reg(struct cpu_stack_walk* csw, CONTEXT *context, ULONG_
 }
 
 /* copy a register from one context to another using dwarf number */
-static void copy_context_reg(CONTEXT *dstcontext, ULONG_PTR dwregdst, CONTEXT* srccontext, ULONG_PTR dwregsrc)
+static void copy_context_reg(struct cpu_stack_walk *csw,
+    union ctx *dstcontext, ULONG_PTR dwregdst,
+    union ctx *srccontext, ULONG_PTR dwregsrc)
 {
-    unsigned regdstno = dbghelp_current_cpu->map_dwarf_register(dwregdst, TRUE), szdst;
-    unsigned regsrcno = dbghelp_current_cpu->map_dwarf_register(dwregsrc, TRUE), szsrc;
-    ULONG_PTR* ptrdst = dbghelp_current_cpu->fetch_context_reg(dstcontext, regdstno, &szdst);
-    ULONG_PTR* ptrsrc = dbghelp_current_cpu->fetch_context_reg(srccontext, regsrcno, &szsrc);
+    unsigned regdstno = csw->cpu->map_dwarf_register(dwregdst, TRUE), szdst;
+    unsigned regsrcno = csw->cpu->map_dwarf_register(dwregsrc, TRUE), szsrc;
+    ULONG_PTR* ptrdst = csw->cpu->fetch_context_reg(dstcontext, regdstno, &szdst);
+    ULONG_PTR* ptrsrc = csw->cpu->fetch_context_reg(srccontext, regsrcno, &szsrc);
 
     if (szdst != szsrc)
     {
@@ -3072,10 +3077,11 @@ static void copy_context_reg(CONTEXT *dstcontext, ULONG_PTR dwregdst, CONTEXT* s
 }
 
 static ULONG_PTR eval_expression(const struct module* module, struct cpu_stack_walk* csw,
-                                 const unsigned char* zp, CONTEXT *context)
+                                 const unsigned char* zp, union ctx *context)
 {
     dwarf2_traverse_context_t    ctx;
-    ULONG_PTR reg, sz, tmp, stack[64];
+    ULONG_PTR reg, sz, tmp;
+    DWORD64 stack[64];
     int sp = -1;
     ULONG_PTR len;
 
@@ -3092,9 +3098,10 @@ static ULONG_PTR eval_expression(const struct module* module, struct cpu_stack_w
         if (opcode >= DW_OP_lit0 && opcode <= DW_OP_lit31)
             stack[++sp] = opcode - DW_OP_lit0;
         else if (opcode >= DW_OP_reg0 && opcode <= DW_OP_reg31)
-            stack[++sp] = get_context_reg(context, opcode - DW_OP_reg0);
+            stack[++sp] = get_context_reg(csw, context, opcode - DW_OP_reg0);
         else if (opcode >= DW_OP_breg0 && opcode <= DW_OP_breg31)
-            stack[++sp] = get_context_reg(context, opcode - DW_OP_breg0) + dwarf2_leb128_as_signed(&ctx);
+            stack[++sp] = get_context_reg(csw, context, opcode - DW_OP_breg0)
+                          + dwarf2_leb128_as_signed(&ctx);
         else switch (opcode)
         {
         case DW_OP_nop:         break;
@@ -3110,9 +3117,10 @@ static ULONG_PTR eval_expression(const struct module* module, struct cpu_stack_w
         case DW_OP_constu:      stack[++sp] = dwarf2_leb128_as_unsigned(&ctx); break;
         case DW_OP_consts:      stack[++sp] = dwarf2_leb128_as_signed(&ctx); break;
         case DW_OP_deref:
-            if (!sw_read_mem(csw, stack[sp], &tmp, sizeof(tmp)))
+            tmp = 0;
+            if (!sw_read_mem(csw, stack[sp], &tmp, ctx.word_size))
             {
-                ERR("Couldn't read memory at %lx\n", stack[sp]);
+                ERR("Couldn't read memory at %s\n", wine_dbgstr_longlong(stack[sp]));
                 tmp = 0;
             }
             stack[sp] = tmp;
@@ -3151,18 +3159,18 @@ static ULONG_PTR eval_expression(const struct module* module, struct cpu_stack_w
             stack[++sp] = dwarf2_parse_augmentation_ptr(&ctx, tmp);
             break;
         case DW_OP_regx:
-            stack[++sp] = get_context_reg(context, dwarf2_leb128_as_unsigned(&ctx));
+            stack[++sp] = get_context_reg(csw, context, dwarf2_leb128_as_unsigned(&ctx));
             break;
         case DW_OP_bregx:
             reg = dwarf2_leb128_as_unsigned(&ctx);
             tmp = dwarf2_leb128_as_signed(&ctx);
-            stack[++sp] = get_context_reg(context, reg) + tmp;
+            stack[++sp] = get_context_reg(csw, context, reg) + tmp;
             break;
         case DW_OP_deref_size:
             sz = dwarf2_parse_byte(&ctx);
             if (!sw_read_mem(csw, stack[sp], &tmp, sz))
             {
-                ERR("Couldn't read memory at %lx\n", stack[sp]);
+                ERR("Couldn't read memory at %s\n", wine_dbgstr_longlong(stack[sp]));
                 tmp = 0;
             }
             /* do integral promotion */
@@ -3183,19 +3191,19 @@ static ULONG_PTR eval_expression(const struct module* module, struct cpu_stack_w
 }
 
 static void apply_frame_state(const struct module* module, struct cpu_stack_walk* csw,
-                              CONTEXT *context, struct frame_state *state, ULONG_PTR* cfa)
+                              union ctx *context, struct frame_state *state, DWORD64 *cfa)
 {
     unsigned int i;
     ULONG_PTR value;
-    CONTEXT new_context = *context;
+    union ctx new_context = *context;
 
     switch (state->cfa_rule)
     {
     case RULE_EXPRESSION:
         *cfa = eval_expression(module, csw, (const unsigned char*)state->cfa_offset, context);
-        if (!sw_read_mem(csw, *cfa, cfa, sizeof(*cfa)))
+        if (!sw_read_mem(csw, *cfa, cfa, csw->cpu->word_size))
         {
-            WARN("Couldn't read memory at %p\n", (void*)*cfa);
+            WARN("Couldn't read memory at %s\n", wine_dbgstr_longlong(*cfa));
             return;
         }
         break;
@@ -3203,7 +3211,7 @@ static void apply_frame_state(const struct module* module, struct cpu_stack_walk
         *cfa = eval_expression(module, csw, (const unsigned char*)state->cfa_offset, context);
         break;
     default:
-        *cfa = get_context_reg(context, state->cfa_reg) + state->cfa_offset;
+        *cfa = get_context_reg(csw, context, state->cfa_reg) + state->cfa_offset;
         break;
     }
     if (!*cfa) return;
@@ -3220,7 +3228,7 @@ static void apply_frame_state(const struct module* module, struct cpu_stack_walk
             set_context_reg(csw, &new_context, i, *cfa + state->regs[i], TRUE);
             break;
         case RULE_OTHER_REG:
-            copy_context_reg(&new_context, i, context, state->regs[i]);
+            copy_context_reg(csw, &new_context, i, context, state->regs[i]);
             break;
         case RULE_EXPRESSION:
             value = eval_expression(module, csw, (const unsigned char*)state->regs[i], context);
@@ -3239,7 +3247,8 @@ static void apply_frame_state(const struct module* module, struct cpu_stack_walk
  *           dwarf2_virtual_unwind
  *
  */
-BOOL dwarf2_virtual_unwind(struct cpu_stack_walk* csw, ULONG_PTR ip, CONTEXT* context, ULONG_PTR* cfa)
+BOOL dwarf2_virtual_unwind(struct cpu_stack_walk *csw, ULONG_PTR ip,
+    union ctx *context, DWORD64 *cfa)
 {
     struct module_pair pair;
     struct frame_info info;
@@ -3279,7 +3288,7 @@ BOOL dwarf2_virtual_unwind(struct cpu_stack_walk* csw, ULONG_PTR ip, CONTEXT* co
 
     TRACE("function %lx/%lx code_align %lu data_align %ld retaddr %s\n",
           ip, info.ip, info.code_align, info.data_align,
-          dbghelp_current_cpu->fetch_regname(dbghelp_current_cpu->map_dwarf_register(info.retaddr_reg, TRUE)));
+          csw->cpu->fetch_regname(csw->cpu->map_dwarf_register(info.retaddr_reg, TRUE)));
 
     /* if at very beginning of function, return and use default unwinder */
     if (ip == info.ip) return FALSE;
@@ -3316,7 +3325,7 @@ static void dwarf2_location_compute(struct process* pcs,
 
     if (!func->container || func->container->tag != SymTagCompiland)
     {
-        WARN("We'd expect function %s's container to exist and be a compiland\n", func->hash_elt.name);
+        WARN("We'd expect function %s's container to exist and be a compiland\n", debugstr_a(func->hash_elt.name));
         err = loc_err_internal;
     }
     else
@@ -3391,7 +3400,7 @@ static inline BOOL dwarf2_init_zsection(dwarf2_section_t* section,
 
     if (sz <= 12 || memcmp(sect, "ZLIB", 4))
     {
-        ERR("invalid compressed section %s\n", zsectname);
+        ERR("invalid compressed section %s\n", debugstr_a(zsectname));
         goto out;
     }
 
@@ -3416,7 +3425,7 @@ static inline BOOL dwarf2_init_zsection(dwarf2_section_t* section,
     res = inflateInit(&z);
     if (res != Z_OK)
     {
-        FIXME("inflateInit failed with %i / %s\n", res, z.msg);
+        FIXME("inflateInit failed with %i / %s\n", res, debugstr_a(z.msg));
         goto out_free;
     }
 
@@ -3428,7 +3437,7 @@ static inline BOOL dwarf2_init_zsection(dwarf2_section_t* section,
 
     if (res != Z_STREAM_END)
     {
-        FIXME("Decompression failed with %i / %s\n", res, z.msg);
+        FIXME("Decompression failed with %i / %s\n", res, debugstr_a(z.msg));
         goto out_end;
     }
 

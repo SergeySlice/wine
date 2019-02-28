@@ -6,7 +6,7 @@
 @ stdcall WlanEnumInterfaces(long ptr ptr)
 @ stub WlanExtractPsdIEDataList
 @ stdcall WlanFreeMemory(ptr)
-@ stub WlanGetAvailableNetworkList
+@ stdcall WlanGetAvailableNetworkList(ptr ptr long ptr ptr)
 @ stub WlanGetFilterList
 @ stub WlanGetInterfaceCapability
 @ stub WlanGetNetworkBssList
@@ -19,10 +19,10 @@
 @ stub WlanQueryAutoConfigParameter
 @ stub WlanQueryInterface
 @ stub WlanReasonCodeToString
-@ stub WlanRegisterNotification
+@ stdcall WlanRegisterNotification(ptr long long ptr ptr ptr ptr)
 @ stub WlanRenameProfile
 @ stub WlanSaveTemporaryProfile
-@ stub WlanScan
+@ stdcall WlanScan(ptr ptr ptr ptr ptr)
 @ stub WlanSetAutoConfigParameter
 @ stub WlanSetFilterList
 @ stub WlanSetInterface

@@ -316,7 +316,7 @@ static void *get_pixel_ptr( const BITMAPINFO *info, void *bits, int x, int y )
         return (char *)bits + y * get_dib_stride( width, bpp ) + x * bpp / 8;
 }
 
-static BOOL build_rle_bitmap( const BITMAPINFO *info, struct gdi_image_bits *bits, HRGN *clip )
+static BOOL build_rle_bitmap( BITMAPINFO *info, struct gdi_image_bits *bits, HRGN *clip )
 {
     DWORD i = 0;
     int left, right;
@@ -449,6 +449,7 @@ done:
     bits->ptr     = out_bits;
     bits->is_copy = TRUE;
     bits->free    = free_heap_bits;
+    info->bmiHeader.biSizeImage = get_dib_image_size( info );
 
     return TRUE;
 
@@ -576,17 +577,13 @@ INT nulldrv_StretchDIBits( PHYSDEV dev, INT xDst, INT yDst, INT widthDst, INT he
         DWORD dst_colors = dst_info->bmiHeader.biClrUsed;
 
         /* 1-bpp destination without a color table requires a fake 1-entry table
-         * that contains only the background color; except with a 1-bpp source,
-         * in which case it uses the source colors */
+         * that contains only the background color. There is no source DC to get
+         * it from, so the background is hardcoded to the default color. */
         if (dst_info->bmiHeader.biBitCount == 1 && !dst_colors)
         {
-            if (src_info->bmiHeader.biBitCount > 1)
-                get_mono_dc_colors( dc, dst_info, 1 );
-            else
-            {
-                memcpy( dst_info->bmiColors, src_info->bmiColors, 2 * sizeof(dst_info->bmiColors[0]) );
-                dst_info->bmiHeader.biClrUsed = 2;
-            }
+            static const RGBQUAD default_bg = { 255, 255, 255 };
+            dst_info->bmiColors[0] = default_bg;
+            dst_info->bmiHeader.biClrUsed = 1;
         }
 
         if (!(err = convert_bits( src_info, &src, dst_info, &src_bits )))
@@ -830,6 +827,7 @@ INT nulldrv_SetDIBitsToDevice( PHYSDEV dev, INT x_dst, INT y_dst, DWORD cx, DWOR
             else if (src.y >= lines) return lines;
         }
         src_info->bmiHeader.biHeight = top_down ? -lines : lines;
+        src_info->bmiHeader.biSizeImage = get_dib_image_size( src_info );
     }
 
     src.visrect.left = src.x;
@@ -1051,8 +1049,7 @@ static void copy_color_info(BITMAPINFO *dst, const BITMAPINFO *src, UINT colorus
     }
     else
     {
-        dst->bmiHeader.biClrUsed   = src->bmiHeader.biClrUsed;
-        dst->bmiHeader.biSizeImage = src->bmiHeader.biSizeImage;
+        dst->bmiHeader.biClrUsed = src->bmiHeader.biClrUsed;
 
         if (src->bmiHeader.biCompression == BI_BITFIELDS)
             /* bitfields are always at bmiColors even in larger structures */
@@ -1177,6 +1174,7 @@ void get_ddb_bitmapinfo( BITMAPOBJ *bmp, BITMAPINFO *info )
     info->bmiHeader.biPlanes        = 1;
     info->bmiHeader.biBitCount      = bmp->dib.dsBm.bmBitsPixel;
     info->bmiHeader.biCompression   = BI_RGB;
+    info->bmiHeader.biSizeImage     = get_dib_image_size( info );
     info->bmiHeader.biXPelsPerMeter = 0;
     info->bmiHeader.biYPelsPerMeter = 0;
     info->bmiHeader.biClrUsed       = 0;
@@ -1210,7 +1208,7 @@ BITMAPINFO *copy_packed_dib( const BITMAPINFO *src_info, UINT usage )
  *    Success: Number of scan lines copied from bitmap
  *    Failure: 0
  */
-INT WINAPI GetDIBits(
+INT WINAPI DECLSPEC_HOTPATCH GetDIBits(
     HDC hdc,         /* [in]  Handle to device context */
     HBITMAP hbitmap, /* [in]  Handle to bitmap */
     UINT startscan,  /* [in]  First scan line to set in dest bitmap */
@@ -1388,7 +1386,6 @@ INT WINAPI GetDIBits(
             }
             break;
         }
-        src_info->bmiHeader.biSizeImage = get_dib_image_size( dst_info );
         copy_color_info( dst_info, src_info, coloruse );
     }
     else if (dst_info->bmiHeader.biBitCount <= 8) /* otherwise construct a default colour table for the dst, if needed */
@@ -1409,6 +1406,7 @@ INT WINAPI GetDIBits(
             dst_info->bmiHeader.biHeight = src.height;
         else
             dst_info->bmiHeader.biHeight = -src.height;
+        dst_info->bmiHeader.biSizeImage = get_dib_image_size( dst_info );
 
         convert_bitmapinfo( src_info, src_bits.ptr, &src, dst_info, bits );
         if (src_bits.free) src_bits.free( &src_bits );
@@ -1425,7 +1423,11 @@ INT WINAPI GetDIBits(
     }
 
     copy_color_info( info, dst_info, coloruse );
-    if (info->bmiHeader.biSize != sizeof(BITMAPCOREHEADER)) info->bmiHeader.biClrUsed = 0;
+    if (info->bmiHeader.biSize != sizeof(BITMAPCOREHEADER))
+    {
+        info->bmiHeader.biClrUsed = 0;
+        info->bmiHeader.biSizeImage = get_dib_image_size( info );
+    }
 
 done:
     release_dc_ptr( dc );
@@ -1625,7 +1627,7 @@ NTSTATUS WINAPI D3DKMTCreateDCFromMemory( D3DKMT_CREATEDCFROMMEMORY *desc )
 
     if (!desc->pMemory) return STATUS_INVALID_PARAMETER;
 
-    for (i = 0; i < sizeof(format_info) / sizeof(*format_info); ++i)
+    for (i = 0; i < ARRAY_SIZE( format_info ); ++i)
     {
         if (format_info[i].format == desc->Format)
         {
@@ -1829,5 +1831,6 @@ static BOOL DIB_DeleteObject( HGDIOBJ handle )
     else VirtualFree( bmp->dib.dsBm.bmBits, 0, MEM_RELEASE );
 
     HeapFree(GetProcessHeap(), 0, bmp->color_table);
-    return HeapFree( GetProcessHeap(), 0, bmp );
+    HeapFree( GetProcessHeap(), 0, bmp );
+    return TRUE;
 }

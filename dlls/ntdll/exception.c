@@ -59,6 +59,8 @@ static RTL_CRITICAL_SECTION_DEBUG critsect_debug =
 };
 static RTL_CRITICAL_SECTION vectored_handlers_section = { &critsect_debug, -1, 0, 0, 0, 0 };
 
+static PRTL_EXCEPTION_FILTER unhandled_exception_filter;
+
 
 static VECTORED_HANDLER *add_vectored_handler( struct list *handler_list, ULONG first,
                                                PVECTORED_EXCEPTION_HANDLER func )
@@ -110,6 +112,7 @@ void wait_suspend( CONTEXT *context )
     LARGE_INTEGER timeout;
     int saved_errno = errno;
     context_t server_context;
+    DWORD flags = context->ContextFlags;
 
     context_to_server( &server_context, context );
 
@@ -130,10 +133,14 @@ void wait_suspend( CONTEXT *context )
     {
         wine_server_set_reply( req, &server_context, sizeof(server_context) );
         wine_server_call( req );
+        if (wine_server_reply_size( reply ))
+        {
+            context_from_server( context, &server_context );
+            context->ContextFlags |= flags;  /* unchanged registers are still available */
+        }
     }
     SERVER_END_REQ;
 
-    context_from_server( context, &server_context );
     errno = saved_errno;
 }
 
@@ -298,6 +305,25 @@ PVOID WINAPI DECLSPEC_HOTPATCH RtlAddVectoredExceptionHandler( ULONG first, PVEC
 ULONG WINAPI RtlRemoveVectoredExceptionHandler( PVOID handler )
 {
     return remove_vectored_handler( &vectored_exception_handlers, handler );
+}
+
+
+/*******************************************************************
+ *         RtlSetUnhandledExceptionFilter   (NTDLL.@)
+ */
+void WINAPI RtlSetUnhandledExceptionFilter( PRTL_EXCEPTION_FILTER filter )
+{
+    unhandled_exception_filter = filter;
+}
+
+
+/*******************************************************************
+ *         call_unhandled_exception_filter
+ */
+LONG WINAPI call_unhandled_exception_filter( PEXCEPTION_POINTERS eptr )
+{
+    if (!unhandled_exception_filter) return EXCEPTION_CONTINUE_SEARCH;
+    return unhandled_exception_filter( eptr );
 }
 
 

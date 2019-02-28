@@ -123,7 +123,7 @@
 @ stub CM_Get_Res_Des_Data_Ex
 @ stub CM_Get_Res_Des_Data_Size
 @ stub CM_Get_Res_Des_Data_Size_Ex
-@ stub CM_Get_Sibling
+@ stdcall CM_Get_Sibling(ptr long long)
 @ stdcall CM_Get_Sibling_Ex(ptr long long ptr)
 @ stdcall CM_Get_Version()
 @ stub CM_Get_Version_Ex
@@ -286,7 +286,7 @@
 @ stdcall SetupDiClassGuidsFromNameExW(wstr ptr long ptr wstr ptr)
 @ stdcall SetupDiClassGuidsFromNameW(wstr ptr long ptr)
 @ stdcall SetupDiClassNameFromGuidA(ptr str long ptr)
-@ stdcall SetupDiClassNameFromGuidExA(ptr str long ptr wstr ptr)
+@ stdcall SetupDiClassNameFromGuidExA(ptr str long ptr str ptr)
 @ stdcall SetupDiClassNameFromGuidExW(ptr wstr long ptr wstr ptr)
 @ stdcall SetupDiClassNameFromGuidW(ptr wstr long ptr)
 @ stdcall SetupDiCreateDevRegKeyA(ptr ptr long long long ptr str)
@@ -298,11 +298,11 @@
 @ stdcall SetupDiCreateDeviceInfoW(long wstr ptr wstr long long ptr)
 @ stdcall SetupDiCreateDeviceInterfaceA(ptr ptr ptr str long ptr)
 @ stdcall SetupDiCreateDeviceInterfaceW(ptr ptr ptr wstr long ptr)
-@ stdcall SetupDiCreateDeviceInterfaceRegKeyA(ptr ptr long long ptr ptr)
-@ stdcall SetupDiCreateDeviceInterfaceRegKeyW(ptr ptr long long ptr ptr)
+@ stdcall SetupDiCreateDeviceInterfaceRegKeyA(ptr ptr long long ptr str)
+@ stdcall SetupDiCreateDeviceInterfaceRegKeyW(ptr ptr long long ptr wstr)
 @ stdcall SetupDiDeleteDevRegKey(ptr ptr long long long)
 @ stdcall SetupDiDeleteDeviceInfo(ptr ptr)
-@ stub SetupDiDeleteDeviceInterfaceData
+@ stdcall SetupDiDeleteDeviceInterfaceData(ptr ptr)
 @ stdcall SetupDiDeleteDeviceInterfaceRegKey(ptr ptr long)
 @ stub SetupDiDeleteDeviceRegKey
 @ stdcall SetupDiDestroyClassImageList(ptr)
@@ -311,8 +311,8 @@
 @ stdcall SetupDiDrawMiniIcon(ptr int128 long long)
 @ stdcall SetupDiEnumDeviceInfo(long long ptr)
 @ stdcall SetupDiEnumDeviceInterfaces(long ptr ptr long ptr)
-@ stub SetupDiEnumDriverInfoA
-@ stub SetupDiEnumDriverInfoW
+@ stdcall SetupDiEnumDriverInfoA(ptr ptr long long ptr)
+@ stdcall SetupDiEnumDriverInfoW(ptr ptr long long ptr)
 @ stdcall SetupDiGetActualSectionToInstallA(long str str long ptr ptr)
 @ stdcall SetupDiGetActualSectionToInstallW(long wstr wstr long ptr ptr)
 @ stdcall SetupDiGetClassBitmapIndex(ptr ptr)
@@ -322,10 +322,10 @@
 @ stdcall SetupDiGetClassDescriptionW(ptr wstr long ptr)
 @ stub SetupDiGetClassDevPropertySheetsA
 @ stub SetupDiGetClassDevPropertySheetsW
-@ stdcall SetupDiGetClassDevsA(ptr ptr long long)
+@ stdcall SetupDiGetClassDevsA(ptr str long long)
 @ stdcall SetupDiGetClassDevsExA(ptr str ptr long ptr str ptr)
 @ stdcall SetupDiGetClassDevsExW(ptr wstr ptr long ptr wstr ptr)
-@ stdcall SetupDiGetClassDevsW(ptr ptr long long)
+@ stdcall SetupDiGetClassDevsW(ptr wstr long long)
 @ stdcall SetupDiGetClassImageIndex(ptr ptr ptr)
 @ stdcall SetupDiGetClassImageList(ptr)
 @ stub SetupDiGetClassImageListExA
@@ -389,6 +389,7 @@
 @ stdcall SetupDiSetClassInstallParamsW(ptr ptr ptr long)
 @ stdcall SetupDiSetDeviceInstallParamsA(ptr ptr ptr)
 @ stdcall SetupDiSetDeviceInstallParamsW(ptr ptr ptr)
+@ stdcall SetupDiSetDevicePropertyW(ptr ptr ptr long ptr long long)
 @ stdcall SetupDiSetDeviceRegistryPropertyA(ptr ptr long ptr long)
 @ stdcall SetupDiSetDeviceRegistryPropertyW(ptr ptr long ptr long)
 @ stub SetupDiSetDriverInstallParamsA

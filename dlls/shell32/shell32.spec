@@ -57,7 +57,7 @@
   59 stdcall -ordinal RestartDialog(long wstr long)
   60 stdcall -noname ExitWindowsDialog(long)
   61 stdcall -noname RunFileDlg(long long str str str long) RunFileDlgAW
-  62 stdcall -ordinal PickIconDlg(long long long ptr)
+  62 stdcall -ordinal PickIconDlg(long wstr long ptr)
   63 stdcall -ordinal GetFileNameFromBrowse(long ptr long str str str str) GetFileNameFromBrowseAW
   64 stdcall -ordinal DriveType(long)
   65 stdcall -noname InvalidateDriveType(long)
@@ -65,7 +65,7 @@
   67 stdcall -ordinal Shell_MergeMenus(long long long long long long)
   68 stdcall -ordinal SHGetSetSettings(ptr long long)
   69 stub -noname SHGetNetResource
-  70 stdcall -noname SHCreateDefClassObject(long long long ptr long)
+  70 stdcall -noname SHCreateDefClassObject(ptr ptr long ptr ptr)
   71 stdcall -ordinal Shell_GetImageLists(ptr ptr)
   72 stdcall -ordinal Shell_GetCachedImageIndex(str long long) Shell_GetCachedImageIndexAW
   73 stdcall -ordinal SHShellFolderView_Message(long long long)
@@ -114,11 +114,11 @@
  119 stdcall -ordinal IsLFNDrive(ptr) IsLFNDriveAW
  120 stdcall -noname FileMenu_AbortInitMenu()
  121 stdcall -noname SHFlushClipboard()
- 122 stdcall -private @(long long ptr str long) shell.dll16.RunDLL_CallEntry16
+ 122 stdcall -noname RunDLL_CallEntry16(long long ptr str long)
  123 stdcall -noname SHFreeUnusedLibraries()
  124 stdcall -noname FileMenu_AppendFilesForPidl(long ptr long)
  125 stdcall -noname FileMenu_AddFilesForPidl(long long long ptr long long ptr)
- 126 stdcall -noname SHOutOfMemoryMessageBox(long long long)
+ 126 stdcall -noname SHOutOfMemoryMessageBox(long str long)
  127 stdcall -noname SHWinHelp(long long long long)
  128 stdcall -noname SHDllGetClassObject(ptr ptr ptr) DllGetClassObject
  129 stdcall -ordinal DAD_AutoScroll(long ptr ptr)
@@ -155,17 +155,17 @@
  163 stdcall -noname StrToOleStr(wstr str) StrToOleStrAW
  164 stdcall -ordinal Win32DeleteFile(str) Win32DeleteFileAW
  165 stdcall -ordinal SHCreateDirectory(long ptr)
- 166 stdcall -noname CallCPLEntry16(long long long long long long)
- 167 stdcall -ordinal SHAddFromPropSheetExtArray(long long long)
+ 166 stdcall -noname CallCPLEntry16(long ptr long long long long)
+ 167 stdcall -ordinal SHAddFromPropSheetExtArray(long ptr long)
  168 stdcall -ordinal SHCreatePropSheetExtArray(long wstr long)
  169 stdcall -ordinal SHDestroyPropSheetExtArray(long)
- 170 stdcall -ordinal SHReplaceFromPropSheetExtArray(long long long long)
+ 170 stdcall -ordinal SHReplaceFromPropSheetExtArray(long long ptr long)
  171 stdcall -ordinal PathCleanupSpec(ptr ptr)
  172 stdcall -noname SHCreateLinks(long str ptr long ptr)
  173 stdcall -ordinal SHValidateUNC(long wstr long)
  174 stdcall -ordinal SHCreateShellFolderViewEx(ptr ptr)
  175 stdcall -noname SHGetSpecialFolderPath(long long long long) SHGetSpecialFolderPathAW
- 176 stdcall -ordinal SHSetInstanceExplorer(ptr)
+ 176 stdcall -ordinal SHSetInstanceExplorer(ptr) shcore.SetProcessReference
  177 stub DAD_SetDragImageFromListView
  178 stdcall -ordinal SHObjectProperties(long long wstr wstr)
  179 stdcall -ordinal SHGetNewLinkInfoA(str str ptr ptr long)
@@ -173,7 +173,7 @@
  181 stdcall -noname RegisterShellHook(long long)
  182 varargs -ordinal ShellMessageBoxW(long long wstr wstr long)
  183 varargs -ordinal ShellMessageBoxA(long long str str long)
- 184 stdcall -noname ArrangeWindows(long long ptr long long)
+ 184 stdcall -noname ArrangeWindows(long long ptr long ptr)
  185 stub SHHandleDiskFull
  186 stdcall -noname ILGetDisplayNameEx(ptr ptr ptr long)
  187 stub ILGetPseudoNameW
@@ -259,8 +259,8 @@
 
  701 stdcall CDefFolderMenu_Create2(ptr ptr long ptr ptr ptr long ptr ptr)
  704 stdcall -noname GUIDFromStringW(wstr ptr)
- 709 stdcall SHGetSetFolderCustomSettings(ptr str long)
- 714 stdcall @(ptr) SHELL32_714 # PathIsTemporaryW
+ 709 stdcall SHGetSetFolderCustomSettings(ptr wstr long)
+ 714 stdcall -noname PathIsTemporaryW(wstr)
  723 stdcall -noname SHCreateSessionKey(long ptr)
  727 stdcall SHGetImageList(long ptr ptr)
  730 stdcall -noname RestartDialogEx(long wstr long long)
@@ -271,7 +271,7 @@
 
 @ stdcall CheckEscapesA(str long)
 @ stdcall CheckEscapesW(wstr long)
-@ stdcall CommandLineToArgvW(wstr ptr)
+@ stdcall CommandLineToArgvW(wstr ptr) shcore.CommandLineToArgvW
 @ stdcall Control_FillCache_RunDLL(long long long long) Control_FillCache_RunDLLA
 @ stdcall Control_FillCache_RunDLLA(long long long long)
 @ stdcall Control_FillCache_RunDLLW(long long long long)
@@ -300,7 +300,7 @@
 @ stdcall ExtractAssociatedIconExW(long wstr ptr ptr)
 @ stdcall ExtractAssociatedIconW(long wstr ptr)
 @ stdcall ExtractIconA(long str long)
-@ stdcall ExtractIconEx(ptr long ptr ptr long) ExtractIconExA
+@ stdcall ExtractIconEx(str long ptr ptr long) ExtractIconExA
 @ stdcall ExtractIconExA(str long ptr ptr long)
 @ stdcall ExtractIconExW(wstr long ptr ptr long)
 @ stub ExtractIconResInfoA
@@ -312,7 +312,7 @@
 @ stdcall FindExecutableW(wstr wstr ptr)
 @ stub FixupOptionalComponents
 @ stdcall FreeIconList(long)
-@ stdcall GetCurrentProcessExplicitAppUserModelID(ptr)
+@ stdcall GetCurrentProcessExplicitAppUserModelID(ptr) shcore.GetCurrentProcessExplicitAppUserModelID
 @ stdcall InitNetworkAddressControl()
 @ stub InternalExtractIconListA
 @ stub InternalExtractIconListW
@@ -328,7 +328,7 @@
 @ stub RealShellExecuteExW
 @ stub RealShellExecuteW
 @ stdcall RegenerateUserEnvironment(ptr long)
-@ stdcall SetCurrentProcessExplicitAppUserModelID(wstr)
+@ stdcall SetCurrentProcessExplicitAppUserModelID(wstr) shcore.SetCurrentProcessExplicitAppUserModelID
 @ stdcall SHAddToRecentDocs (long ptr)
 @ stdcall SHAppBarMessage(long ptr)
 @ stdcall SHAssocEnumHandlers(wstr long ptr)
@@ -344,6 +344,8 @@
 @ stdcall SHCreateDirectoryExW(long wstr ptr)
 @ stdcall SHCreateItemFromIDList(ptr ptr ptr)
 @ stdcall SHCreateItemFromParsingName(wstr ptr ptr ptr)
+@ stdcall SHCreateItemInKnownFolder(ptr long wstr ptr ptr)
+@ stdcall SHCreateItemFromRelativeName(ptr wstr ptr ptr ptr)
 @ stub SHCreateProcessAsUserW
 @ stdcall SHCreateShellItem(ptr ptr ptr ptr)
 @ stdcall SHCreateShellItemArray(ptr ptr long ptr ptr)
@@ -365,9 +367,9 @@
 @ stdcall SHGetDiskFreeSpaceA(str ptr ptr ptr) kernel32.GetDiskFreeSpaceExA
 @ stdcall SHGetDiskFreeSpaceExA(str ptr ptr ptr) kernel32.GetDiskFreeSpaceExA
 @ stdcall SHGetDiskFreeSpaceExW(wstr ptr ptr ptr) kernel32.GetDiskFreeSpaceExW
-@ stdcall SHGetFileInfo(ptr long ptr long long) SHGetFileInfoA
-@ stdcall SHGetFileInfoA(ptr long ptr long long)
-@ stdcall SHGetFileInfoW(ptr long ptr long long)
+@ stdcall SHGetFileInfo(str long ptr long long) SHGetFileInfoA
+@ stdcall SHGetFileInfoA(str long ptr long long)
+@ stdcall SHGetFileInfoW(wstr long ptr long long)
 @ stdcall SHGetFolderLocation(long long long long ptr)
 @ stdcall SHGetFolderPathA(long long long long ptr)
 @ stdcall SHGetFolderPathEx(ptr long ptr ptr long)
@@ -378,7 +380,7 @@
 @ stdcall SHGetIconOverlayIndexA(str long)
 @ stdcall SHGetIconOverlayIndexW(wstr long)
 @ stdcall SHGetIDListFromObject(ptr ptr)
-@ stdcall SHGetInstanceExplorer(ptr)
+@ stdcall SHGetInstanceExplorer(ptr) shcore.GetProcessReference
 @ stdcall SHGetItemFromDataObject(ptr long ptr ptr)
 @ stdcall SHGetItemFromObject(ptr ptr ptr)
 @ stdcall SHGetKnownFolderIDList(ptr long ptr ptr)
@@ -390,6 +392,7 @@
 @ stdcall SHGetNewLinkInfo(str str ptr ptr long) SHGetNewLinkInfoA
 @ stdcall SHGetPathFromIDList(ptr ptr) SHGetPathFromIDListA
 @ stdcall SHGetPathFromIDListA(ptr ptr)
+@ stdcall SHGetPathFromIDListEx(ptr ptr long long)
 @ stdcall SHGetPathFromIDListW(ptr ptr)
 @ stdcall SHGetPropertyStoreForWindow(long ptr ptr)
 @ stdcall SHGetPropertyStoreFromParsingName(wstr ptr long ptr ptr)
@@ -404,9 +407,10 @@
 @ stub SHInvokePrinterCommandA
 @ stub SHInvokePrinterCommandW
 @ stdcall SHIsFileAvailableOffline(wstr ptr)
-@ stdcall SHLoadInProc(long)
+@ stdcall SHLoadInProc(ptr)
 @ stdcall SHLoadNonloadedIconOverlayIdentifiers()
 @ stdcall SHOpenFolderAndSelectItems(ptr long ptr long)
+@ stdcall SHOpenWithDialog(long ptr)
 @ stdcall SHParseDisplayName(wstr ptr ptr long ptr)
 @ stdcall SHPathPrepareForWriteA(long ptr str long)
 @ stdcall SHPathPrepareForWriteW(long ptr wstr long)
@@ -436,9 +440,9 @@
 @ stub SheShortenPathW
 @ stdcall ShellAboutA(long str str long)
 @ stdcall ShellAboutW(long wstr wstr long)
-@ stub ShellExec_RunDLL
-@ stub ShellExec_RunDLLA
-@ stub ShellExec_RunDLLW
+@ stdcall ShellExec_RunDLL(long long str long) ShellExec_RunDLLA
+@ stdcall ShellExec_RunDLLA(long long str long)
+@ stdcall ShellExec_RunDLLW(long long wstr long)
 @ stdcall ShellExecuteA(long str str str str long)
 @ stdcall ShellExecuteEx (long) ShellExecuteExA
 @ stdcall ShellExecuteExA (long)
@@ -448,6 +452,7 @@
 @ stdcall Shell_NotifyIcon(long ptr) Shell_NotifyIconA
 @ stdcall Shell_NotifyIconA(long ptr)
 @ stdcall Shell_NotifyIconW(long ptr)
+@ stdcall Shell_NotifyIconGetRect(ptr ptr)
 @ stdcall StrChrA(str long) shlwapi.StrChrA
 @ stdcall StrChrIA(str long) shlwapi.StrChrIA
 @ stdcall StrChrIW(wstr long) shlwapi.StrChrIW

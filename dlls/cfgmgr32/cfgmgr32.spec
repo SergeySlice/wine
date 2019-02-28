@@ -1,3 +1,4 @@
+@ stdcall CMP_WaitNoPendingInstallEvents(long) setupapi.CMP_WaitNoPendingInstallEvents
 @ stub CM_Add_Empty_Log_Conf
 @ stub CM_Add_Empty_Log_Conf_Ex
 @ stub CM_Add_IDA
@@ -112,7 +113,7 @@
 @ stub CM_Get_Res_Des_Data_Ex
 @ stub CM_Get_Res_Des_Data_Size
 @ stub CM_Get_Res_Des_Data_Size_Ex
-@ stub CM_Get_Sibling
+@ stdcall CM_Get_Sibling(ptr long long) setupapi.CM_Get_Sibling
 @ stdcall CM_Get_Sibling_Ex(ptr long long ptr) setupapi.CM_Get_Sibling_Ex
 @ stdcall CM_Get_Version() setupapi.CM_Get_Version
 @ stub CM_Get_Version_Ex
@@ -181,4 +182,3 @@
 @ stub CM_Unregister_Device_InterfaceW
 @ stub CM_Unregister_Device_Interface_ExA
 @ stub CM_Unregister_Device_Interface_ExW
-@ stdcall CMP_WaitNoPendingInstallEvents(long) setupapi.CMP_WaitNoPendingInstallEvents

@@ -99,6 +99,8 @@ typedef struct tagDC
 
     struct gdi_path *path;
 
+    struct font_gamma_ramp *font_gamma_ramp;
+
     UINT          font_code_page;
     WORD          ROPmode;
     WORD          polyFillMode;
@@ -200,7 +202,7 @@ extern BOOL intersect_vis_rectangles( struct bitblt_coords *dst, struct bitblt_c
 extern DWORD stretch_bits( const BITMAPINFO *src_info, struct bitblt_coords *src,
                            BITMAPINFO *dst_info, struct bitblt_coords *dst,
                            struct gdi_image_bits *bits, int mode ) DECLSPEC_HIDDEN;
-extern void get_mono_dc_colors( DC *dc, BITMAPINFO *info, int count ) DECLSPEC_HIDDEN;
+extern void get_mono_dc_colors( DC *dc, int color_table_size, BITMAPINFO *info, int count ) DECLSPEC_HIDDEN;
 
 /* brush.c */
 extern BOOL store_brush_pattern( LOGBRUSH *brush, struct brush_pattern *pattern ) DECLSPEC_HIDDEN;
@@ -268,7 +270,15 @@ extern const struct gdi_dc_funcs *DRIVER_load_driver( LPCWSTR name ) DECLSPEC_HI
 extern BOOL DRIVER_GetDriverName( LPCWSTR device, LPWSTR driver, DWORD size ) DECLSPEC_HIDDEN;
 
 /* enhmetafile.c */
-extern HENHMETAFILE EMF_Create_HENHMETAFILE(ENHMETAHEADER *emh, BOOL on_disk ) DECLSPEC_HIDDEN;
+extern HENHMETAFILE EMF_Create_HENHMETAFILE(ENHMETAHEADER *emh, DWORD filesize, BOOL on_disk ) DECLSPEC_HIDDEN;
+
+/* font.c */
+struct font_gamma_ramp
+{
+    DWORD gamma;
+    BYTE  encode[256];
+    BYTE  decode[256];
+};
 
 /* freetype.c */
 
@@ -303,6 +313,8 @@ extern HGDIOBJ GDI_inc_ref_count( HGDIOBJ handle ) DECLSPEC_HIDDEN;
 extern BOOL GDI_dec_ref_count( HGDIOBJ handle ) DECLSPEC_HIDDEN;
 extern void GDI_hdc_using_object(HGDIOBJ obj, HDC hdc) DECLSPEC_HIDDEN;
 extern void GDI_hdc_not_using_object(HGDIOBJ obj, HDC hdc) DECLSPEC_HIDDEN;
+extern DWORD get_dpi(void) DECLSPEC_HIDDEN;
+extern DWORD get_system_dpi(void) DECLSPEC_HIDDEN;
 
 /* mapping.c */
 extern BOOL dp_to_lp( DC *dc, POINT *points, INT count ) DECLSPEC_HIDDEN;
@@ -353,6 +365,8 @@ extern HPALETTE PALETTE_Init(void) DECLSPEC_HIDDEN;
 extern BOOL add_rect_to_region( HRGN rgn, const RECT *rect ) DECLSPEC_HIDDEN;
 extern INT mirror_region( HRGN dst, HRGN src, INT width ) DECLSPEC_HIDDEN;
 extern BOOL REGION_FrameRgn( HRGN dest, HRGN src, INT x, INT y ) DECLSPEC_HIDDEN;
+extern HRGN create_polypolygon_region( const POINT *pts, const INT *count, INT nbpolygons,
+                                       INT mode, const RECT *clip_rect ) DECLSPEC_HIDDEN;
 
 #define RGN_DEFAULT_RECTS 4
 typedef struct
@@ -505,6 +519,14 @@ static inline void offset_rect( RECT *rect, int offset_x, int offset_y )
     rect->top    += offset_y;
     rect->right  += offset_x;
     rect->bottom += offset_y;
+}
+
+static inline void set_rect( RECT *rect, int left, int top, int right, int bottom )
+{
+    rect->left = left;
+    rect->top = top;
+    rect->right = right;
+    rect->bottom = bottom;
 }
 
 static inline void order_rect( RECT *rect )

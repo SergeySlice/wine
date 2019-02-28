@@ -129,7 +129,7 @@ static inline int validate_rectangles( const rectangle_t *rects, unsigned int nb
 
     for (ptr = rects, end = rects + nb_rects; ptr < end; ptr++)
     {
-        if (ptr->left >= ptr->right || ptr->top >= ptr->bottom) return 0;  /* empty rectangle */
+        if (is_rect_empty( ptr )) return 0;  /* empty rectangle */
         if (ptr == end - 1) break;
         if (ptr[0].top == ptr[1].top)  /* same band */
         {
@@ -623,7 +623,7 @@ void free_region( struct region *region )
 /* set region to a simple rectangle */
 void set_region_rect( struct region *region, const rectangle_t *rect )
 {
-    if (rect->left < rect->right && rect->top < rect->bottom)
+    if (!is_rect_empty( rect ))
     {
         region->num_rects = 1;
         region->rects[0] = region->extents = *rect;
@@ -631,10 +631,7 @@ void set_region_rect( struct region *region, const rectangle_t *rect )
     else
     {
         region->num_rects = 0;
-        region->extents.left = 0;
-        region->extents.top = 0;
-        region->extents.right = 0;
-        region->extents.bottom = 0;
+        region->extents = empty_rect;
     }
 }
 
@@ -700,16 +697,8 @@ void offset_region( struct region *region, int x, int y )
 
     if (!region->num_rects) return;
     for (rect = region->rects, end = rect + region->num_rects; rect < end; rect++)
-    {
-        rect->left += x;
-        rect->right += x;
-        rect->top += y;
-        rect->bottom += y;
-    }
-    region->extents.left += x;
-    region->extents.right += x;
-    region->extents.top += y;
-    region->extents.bottom += y;
+        offset_rect( rect, x, y );
+    offset_rect( &region->extents, x, y );
 }
 
 /* mirror a region relative to a window client rect */
@@ -732,6 +721,18 @@ void mirror_region( const rectangle_t *client_rect, struct region *region )
         if (i == j) mirror_rect( client_rect, &region->rects[i] );
     }
     mirror_rect( client_rect, &region->extents );
+}
+
+
+/* scale a region for a given dpi factor */
+void scale_region( struct region *region, unsigned int dpi_from, unsigned int dpi_to )
+{
+    rectangle_t *rect, *end;
+
+    if (!region->num_rects) return;
+    for (rect = region->rects, end = rect + region->num_rects; rect < end; rect++)
+        scale_dpi_rect( rect, dpi_from, dpi_to );
+    scale_dpi_rect( &region->extents, dpi_from, dpi_to );
 }
 
 

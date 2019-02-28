@@ -433,6 +433,7 @@ static HRESULT WINAPI
 CompositeMonikerImpl_Reduce(IMoniker* iface, IBindCtx* pbc, DWORD dwReduceHowFar,
                IMoniker** ppmkToLeft, IMoniker** ppmkReduced)
 {
+    HRESULT   res;
     IMoniker *tempMk,*antiMk,*rightMostMk,*leftReducedComposedMk,*rightMostReducedMk;
     IEnumMoniker *enumMoniker;
 
@@ -453,7 +454,11 @@ CompositeMonikerImpl_Reduce(IMoniker* iface, IBindCtx* pbc, DWORD dwReduceHowFar
         IMoniker_ComposeWith(iface,antiMk,0,&tempMk);
         IMoniker_Release(antiMk);
 
-        return IMoniker_Reduce(rightMostMk,pbc,dwReduceHowFar,&tempMk, ppmkReduced);
+        res = IMoniker_Reduce(rightMostMk,pbc,dwReduceHowFar,&tempMk, ppmkReduced);
+        IMoniker_Release(tempMk);
+        IMoniker_Release(rightMostMk);
+
+        return res;
     }
     else if (*ppmkToLeft==NULL)
 
@@ -473,13 +478,16 @@ CompositeMonikerImpl_Reduce(IMoniker* iface, IBindCtx* pbc, DWORD dwReduceHowFar
         /* If any of the components  reduces itself, the method returns S_OK and passes back a composite */
         /* of the reduced components */
         if (IMoniker_Reduce(rightMostMk,pbc,dwReduceHowFar,NULL,&rightMostReducedMk) &&
-            IMoniker_Reduce(rightMostMk,pbc,dwReduceHowFar,&tempMk,&leftReducedComposedMk)
-           )
+            IMoniker_Reduce(rightMostMk,pbc,dwReduceHowFar,&tempMk,&leftReducedComposedMk) ){
+            IMoniker_Release(tempMk);
+            IMoniker_Release(rightMostMk);
 
             return CreateGenericComposite(leftReducedComposedMk,rightMostReducedMk,ppmkReduced);
-
+        }
         else{
             /* If no reduction occurred, the method passes back the same moniker and returns MK_S_REDUCED_TO_SELF.*/
+            IMoniker_Release(tempMk);
+            IMoniker_Release(rightMostMk);
 
             IMoniker_AddRef(iface);
 
@@ -1989,30 +1997,8 @@ MonikerCommonPrefixWith(IMoniker* pmkThis,IMoniker* pmkOther,IMoniker** ppmkComm
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI CompositeMonikerCF_QueryInterface(IClassFactory *iface, REFIID riid, void **ppv)
-{
-    *ppv = NULL;
-    if (IsEqualIID(riid, &IID_IUnknown) || IsEqualIID(riid, &IID_IClassFactory))
-    {
-        *ppv = iface;
-        IClassFactory_AddRef(iface);
-        return S_OK;
-    }
-    return E_NOINTERFACE;
-}
-
-static ULONG WINAPI CompositeMonikerCF_AddRef(LPCLASSFACTORY iface)
-{
-    return 2; /* non-heap based object */
-}
-
-static ULONG WINAPI CompositeMonikerCF_Release(LPCLASSFACTORY iface)
-{
-    return 1; /* non-heap based object */
-}
-
-static HRESULT WINAPI CompositeMonikerCF_CreateInstance(LPCLASSFACTORY iface,
-    LPUNKNOWN pUnk, REFIID riid, LPVOID *ppv)
+HRESULT WINAPI CompositeMoniker_CreateInstance(IClassFactory *iface,
+    IUnknown *pUnk, REFIID riid, void **ppv)
 {
     IMoniker* pMoniker;
     HRESULT  hr;
@@ -2033,25 +2019,4 @@ static HRESULT WINAPI CompositeMonikerCF_CreateInstance(LPCLASSFACTORY iface,
     }
 
     return hr;
-}
-
-static HRESULT WINAPI CompositeMonikerCF_LockServer(LPCLASSFACTORY iface, BOOL fLock)
-{
-    FIXME("(%d), stub!\n",fLock);
-    return S_OK;
-}
-
-static const IClassFactoryVtbl CompositeMonikerCFVtbl =
-{
-    CompositeMonikerCF_QueryInterface,
-    CompositeMonikerCF_AddRef,
-    CompositeMonikerCF_Release,
-    CompositeMonikerCF_CreateInstance,
-    CompositeMonikerCF_LockServer
-};
-static const IClassFactoryVtbl *CompositeMonikerCF = &CompositeMonikerCFVtbl;
-
-HRESULT CompositeMonikerCF_Create(REFIID riid, LPVOID *ppv)
-{
-    return IClassFactory_QueryInterface((IClassFactory *)&CompositeMonikerCF, riid, ppv);
 }

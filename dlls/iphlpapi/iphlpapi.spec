@@ -23,7 +23,7 @@
 @ stdcall ConvertInterfaceNameToLuidW( wstr ptr )
 #@ stub ConvertInterfacePhysicalAddressToLuid
 #@ stub ConvertIpv4MaskToLength
-#@ stub ConvertLengthToIpv4Mask
+@ stdcall ConvertLengthToIpv4Mask( long ptr )
 #@ stub ConvertRemoteInterfaceAliasToLuid
 #@ stub ConvertRemoteInterfaceGuidToLuid
 #@ stub ConvertRemoteInterfaceIndexToLuid
@@ -92,7 +92,7 @@
 #@ stub GetIfStackTable
 @ stdcall GetIfTable( ptr ptr long )
 @ stdcall GetIfTable2( ptr )
-#@ stub GetIfTable2Ex
+@ stdcall GetIfTable2Ex( long ptr )
 @ stub GetIfTableFromStack
 @ stub GetIgmpList
 @ stdcall GetInterfaceInfo( ptr ptr )
@@ -102,13 +102,13 @@
 #@ stub GetIpErrorString
 #@ stub GetIpForwardEntry2
 @ stdcall GetIpForwardTable( ptr ptr long )
-#@ stub GetIpForwardTable2
+@ stdcall GetIpForwardTable2( long ptr )
 @ stub GetIpForwardTableFromStack
 #@ stub GetIpInterfaceEntry
-#@ stub GetIpInterfaceTable
+@ stdcall GetIpInterfaceTable( long ptr )
 #@ stub GetIpNetEntry2
 @ stdcall GetIpNetTable( ptr ptr long )
-#@ stub GetIpNetTable2
+@ stdcall GetIpNetTable2( long ptr )
 @ stub GetIpNetTableFromStack
 #@ stub GetIpPathEntry
 #@ stub GetIpPathTable
@@ -141,14 +141,14 @@
 @ stdcall GetTcpTable2( ptr ptr long )
 @ stub GetTcpTableFromStack
 #@ stub GetTeredoPort
-#@ stub GetUdp6Table
+@ stdcall GetUdp6Table( ptr ptr long )
 @ stdcall GetUdpStatisticsEx( ptr long )
 @ stdcall GetUdpStatistics( ptr )
 @ stub GetUdpStatsFromStack
 @ stdcall GetUdpTable( ptr ptr long )
 @ stub GetUdpTableFromStack
-#@ stub GetUnicastIpAddressEntry
-#@ stub GetUnicastIpAddressTable
+@ stdcall GetUnicastIpAddressEntry( ptr )
+@ stdcall GetUnicastIpAddressTable(long ptr)
 @ stdcall GetUniDirectionalAdapterInfo( ptr ptr )
 @ stdcall Icmp6CreateFile()
 #@ stub Icmp6ParseReplies
@@ -159,8 +159,8 @@
 @ stdcall IcmpSendEcho2Ex(ptr ptr ptr ptr long long ptr long ptr ptr long long)
 @ stdcall IcmpSendEcho2(ptr ptr ptr ptr long ptr long ptr ptr long long)
 @ stdcall IcmpSendEcho(ptr long ptr long ptr ptr long long)
-#@ stub if_indextoname
-#@ stub if_nametoindex
+@ stdcall if_indextoname(long ptr) IPHLP_if_indextoname
+@ stdcall if_nametoindex(str) IPHLP_if_nametoindex
 #@ stub InitializeIpForwardEntry
 #@ stub InitializeIpInterfaceEntry
 #@ stub InitializeUnicastIpAddressEntry
@@ -239,7 +239,7 @@
 @ stub NotifyRouteChangeEx
 #@ stub NotifyStableUnicastIpAddressTable
 #@ stub NotifyTeredoPortChange
-#@ stub NotifyUnicastIpAddressChange
+@ stdcall NotifyUnicastIpAddressChange(long ptr ptr long ptr)
 #@ stub NTPTimeToNTFileTime
 #@ stub NTTimeToNTPTime
 #@ stub ParseNetworkString

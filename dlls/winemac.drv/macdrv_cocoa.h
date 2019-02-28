@@ -138,6 +138,10 @@ typedef struct macdrv_opaque_window* macdrv_window;
 typedef struct macdrv_opaque_event_queue* macdrv_event_queue;
 typedef struct macdrv_opaque_view* macdrv_view;
 typedef struct macdrv_opaque_opengl_context* macdrv_opengl_context;
+#ifdef HAVE_METAL_METAL_H
+typedef struct macdrv_opaque_metal_device* macdrv_metal_device;
+typedef struct macdrv_opaque_metal_view* macdrv_metal_view;
+#endif
 typedef struct macdrv_opaque_status_item* macdrv_status_item;
 struct macdrv_event;
 struct macdrv_query;
@@ -155,6 +159,8 @@ extern int topmost_float_inactive DECLSPEC_HIDDEN;
 extern int capture_displays_for_fullscreen DECLSPEC_HIDDEN;
 extern int left_option_is_alt DECLSPEC_HIDDEN;
 extern int right_option_is_alt DECLSPEC_HIDDEN;
+extern int left_command_is_ctrl DECLSPEC_HIDDEN;
+extern int right_command_is_ctrl DECLSPEC_HIDDEN;
 extern int allow_immovable_windows DECLSPEC_HIDDEN;
 extern int cursor_clipping_locks_windows DECLSPEC_HIDDEN;
 extern int use_precise_scrolling DECLSPEC_HIDDEN;
@@ -162,6 +168,7 @@ extern int gl_surface_mode DECLSPEC_HIDDEN;
 extern CFDictionaryRef localized_strings DECLSPEC_HIDDEN;
 extern int retina_enabled DECLSPEC_HIDDEN;  /* Whether Retina mode is enabled via registry setting. */
 extern int retina_on DECLSPEC_HIDDEN;       /* Whether Retina mode is currently active (enabled and display is in default mode). */
+extern int enable_app_nap DECLSPEC_HIDDEN;
 
 static inline CGRect cgrect_mac_from_win(CGRect rect)
 {
@@ -371,10 +378,17 @@ typedef struct macdrv_event {
             int                 button;
             int                 down;
             int                 count;
+            int                 x;
+            int                 y;
         }                                           status_item_mouse_button;
         struct {
             macdrv_status_item  item;
+            int                 x;
+            int                 y;
         }                                           status_item_mouse_move;
+        struct {
+            int no_activate;
+        }                                           window_drag_begin;
         struct {
             CGRect  frame;
             int     fullscreen;
@@ -520,6 +534,12 @@ extern void macdrv_set_view_superview(macdrv_view v, macdrv_view s, macdrv_windo
 extern void macdrv_set_view_hidden(macdrv_view v, int hidden) DECLSPEC_HIDDEN;
 extern void macdrv_add_view_opengl_context(macdrv_view v, macdrv_opengl_context c) DECLSPEC_HIDDEN;
 extern void macdrv_remove_view_opengl_context(macdrv_view v, macdrv_opengl_context c) DECLSPEC_HIDDEN;
+#ifdef HAVE_METAL_METAL_H
+extern macdrv_metal_device macdrv_create_metal_device(void) DECLSPEC_HIDDEN;
+extern void macdrv_release_metal_device(macdrv_metal_device d) DECLSPEC_HIDDEN;
+extern macdrv_metal_view macdrv_view_create_metal_view(macdrv_view v, macdrv_metal_device d) DECLSPEC_HIDDEN;
+extern void macdrv_view_release_metal_view(macdrv_metal_view v) DECLSPEC_HIDDEN;
+#endif
 extern int macdrv_get_view_backing_size(macdrv_view v, int backing_size[2]) DECLSPEC_HIDDEN;
 extern void macdrv_set_view_backing_size(macdrv_view v, const int backing_size[2]) DECLSPEC_HIDDEN;
 extern uint32_t macdrv_window_background_color(void) DECLSPEC_HIDDEN;
@@ -542,6 +562,7 @@ extern int macdrv_layout_list_needs_update DECLSPEC_HIDDEN;
 extern CFArrayRef macdrv_copy_pasteboard_types(CFTypeRef pasteboard) DECLSPEC_HIDDEN;
 extern CFDataRef macdrv_copy_pasteboard_data(CFTypeRef pasteboard, CFStringRef type) DECLSPEC_HIDDEN;
 extern int macdrv_is_pasteboard_owner(macdrv_window w) DECLSPEC_HIDDEN;
+extern int macdrv_has_pasteboard_changed(void) DECLSPEC_HIDDEN;
 extern void macdrv_clear_pasteboard(macdrv_window w) DECLSPEC_HIDDEN;
 extern int macdrv_set_pasteboard_data(CFStringRef type, CFDataRef data, macdrv_window w) DECLSPEC_HIDDEN;
 

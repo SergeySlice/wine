@@ -25,6 +25,7 @@
 # error You must include config.h to use this header
 #endif
 
+#include "wine/heap.h"
 #include <wine/list.h>
 #include "winsock2.h"
 #include "wine/unicode.h"
@@ -120,8 +121,8 @@ struct IDirectPlay8LobbiedApplicationImpl
  */
 struct IDirectPlay8ThreadPoolImpl
 {
-  IDirectPlay8ThreadPool IDirectPlay8ThreadPool_iface;
-  LONG ref;
+    IDirectPlay8ThreadPool IDirectPlay8ThreadPool_iface;
+    LONG ref;
 };
 
 /**
@@ -137,6 +138,8 @@ extern HRESULT DPNET_CreateDirectPlay8LobbyClient(IClassFactory *iface, IUnknown
 
 extern void init_dpn_sp_caps(DPN_SP_CAPS *dpnspcaps) DECLSPEC_HIDDEN;
 extern void init_winsock(void) DECLSPEC_HIDDEN;
+extern HRESULT enum_services_providers(const GUID * const service, DPN_SERVICE_PROVIDER_INFO * const info_buffer,
+        DWORD * const buf_size, DWORD * const returned) DECLSPEC_HIDDEN;
 
 /* used for generic dumping (copied from ddraw) */
 typedef struct {
@@ -151,21 +154,6 @@ typedef struct {
 
 #define FE(x) { x, #x }	
 #define GE(x) { &x, #x }
-
-static inline void *heap_alloc( size_t len )
-{
-    return HeapAlloc( GetProcessHeap(), 0, len );
-}
-
-static inline void *heap_realloc(void *mem, size_t len)
-{
-    return HeapReAlloc( GetProcessHeap(), 0, mem, len);
-}
-
-static inline BOOL heap_free( void *mem )
-{
-    return HeapFree( GetProcessHeap(), 0, mem );
-}
 
 static inline WCHAR *heap_strdupW( const WCHAR *src )
 {

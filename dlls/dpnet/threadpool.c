@@ -36,6 +36,10 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(dpnet);
 
+static PFNDPNMESSAGEHANDLER threadpool_msghandler = NULL;
+static DWORD threadpool_flags       = 0;
+static void *threadpool_usercontext = NULL;
+
 static inline IDirectPlay8ThreadPoolImpl *impl_from_IDirectPlay8ThreadPool(IDirectPlay8ThreadPool *iface)
 {
     return CONTAINING_RECORD(iface, IDirectPlay8ThreadPoolImpl, IDirectPlay8ThreadPool_iface);
@@ -82,13 +86,35 @@ static ULONG WINAPI IDirectPlay8ThreadPoolImpl_Release(IDirectPlay8ThreadPool *i
 static HRESULT WINAPI IDirectPlay8ThreadPoolImpl_Initialize(IDirectPlay8ThreadPool *iface,
         void * const pvUserContext, const PFNDPNMESSAGEHANDLER pfn, const DWORD dwFlags)
 {
-    FIXME("(%p)->(%p,%p,%x): stub\n", iface, pvUserContext, pfn, dwFlags);
+    IDirectPlay8ThreadPoolImpl *This = impl_from_IDirectPlay8ThreadPool(iface);
+
+    TRACE("(%p)->(%p,%p,%x)\n", This, pvUserContext, pfn, dwFlags);
+
+    if(!pfn)
+        return DPNERR_INVALIDPARAM;
+
+    if(threadpool_msghandler)
+        return DPNERR_ALREADYINITIALIZED;
+
+    threadpool_msghandler  = pfn;
+    threadpool_flags       = dwFlags;
+    threadpool_usercontext = pvUserContext;
+
     return DPN_OK;
 }
 
 static HRESULT WINAPI IDirectPlay8ThreadPoolImpl_Close(IDirectPlay8ThreadPool *iface,
         const DWORD dwFlags)
 {
+    IDirectPlay8ThreadPoolImpl *This = impl_from_IDirectPlay8ThreadPool(iface);
+
+    FIXME("(%p)->(%x)\n", This, dwFlags);
+
+    if(!threadpool_msghandler)
+        return DPNERR_UNINITIALIZED;
+
+    threadpool_msghandler = NULL;
+
     return DPN_OK;
 }
 

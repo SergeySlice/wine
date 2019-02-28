@@ -321,6 +321,20 @@ POWER_PLATFORM_ROLE WINAPI PowerDeterminePlatformRole(void)
    return PlatformRoleDesktop;
 }
 
+POWER_PLATFORM_ROLE WINAPI PowerDeterminePlatformRoleEx(ULONG version)
+{
+    FIXME("%u stub.\n", version);
+    return PlatformRoleDesktop;
+}
+
+DWORD WINAPI PowerEnumerate(HKEY key, const GUID *scheme, const GUID *subgroup, POWER_DATA_ACCESSOR flags,
+                        ULONG index, UCHAR *buffer, DWORD *buffer_size)
+{
+   FIXME("(%p,%s,%s,%d,%d,%p,%p) stub!\n", key, debugstr_guid(scheme), debugstr_guid(subgroup),
+                flags, index, buffer, buffer_size);
+   return ERROR_CALL_NOT_IMPLEMENTED;
+}
+
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 {
    switch(fdwReason) {

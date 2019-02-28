@@ -246,6 +246,45 @@ void sync_window_cursor( Window window )
     set_window_cursor( window, cursor );
 }
 
+#ifdef HAVE_X11_EXTENSIONS_XINPUT2_H
+/***********************************************************************
+ *              update_relative_valuators
+ */
+static void update_relative_valuators(XIAnyClassInfo **valuators, int n_valuators)
+{
+    struct x11drv_thread_data *thread_data = x11drv_thread_data();
+    int i;
+
+    thread_data->x_rel_valuator.number = -1;
+    thread_data->y_rel_valuator.number = -1;
+
+    for (i = 0; i < n_valuators; i++)
+    {
+        XIValuatorClassInfo *class = (XIValuatorClassInfo *)valuators[i];
+        struct x11drv_valuator_data *valuator_data = NULL;
+
+        if (valuators[i]->type != XIValuatorClass) continue;
+        if (class->label == x11drv_atom( Rel_X ) ||
+            (!class->label && class->number == 0 && class->mode == XIModeRelative))
+        {
+            valuator_data = &thread_data->x_rel_valuator;
+        }
+        else if (class->label == x11drv_atom( Rel_Y ) ||
+                 (!class->label && class->number == 1 && class->mode == XIModeRelative))
+        {
+            valuator_data = &thread_data->y_rel_valuator;
+        }
+
+        if (valuator_data) {
+            valuator_data->number = class->number;
+            valuator_data->min = class->min;
+            valuator_data->max = class->max;
+        }
+    }
+}
+#endif
+
+
 /***********************************************************************
  *              enable_xinput2
  */
@@ -254,9 +293,9 @@ static void enable_xinput2(void)
 #ifdef HAVE_X11_EXTENSIONS_XINPUT2_H
     struct x11drv_thread_data *data = x11drv_thread_data();
     XIEventMask mask;
-    XIDeviceInfo *devices;
+    XIDeviceInfo *pointer_info;
     unsigned char mask_bits[XIMaskLen(XI_LASTEVENT)];
-    int i;
+    int count;
 
     if (!xinput2_available) return;
 
@@ -271,28 +310,33 @@ static void enable_xinput2(void)
         }
     }
     if (data->xi2_state == xi_unavailable) return;
-
-    if (data->xi2_devices) pXIFreeDeviceInfo( data->xi2_devices );
     if (!pXIGetClientPointer( data->display, None, &data->xi2_core_pointer )) return;
-    data->xi2_devices = devices = pXIQueryDevice( data->display, XIAllDevices, &data->xi2_device_count );
 
     mask.mask     = mask_bits;
     mask.mask_len = sizeof(mask_bits);
+    mask.deviceid = XIAllDevices;
     memset( mask_bits, 0, sizeof(mask_bits) );
+    XISetMask( mask_bits, XI_DeviceChanged );
     XISetMask( mask_bits, XI_RawMotion );
     XISetMask( mask_bits, XI_ButtonPress );
 
-    for (i = 0; i < data->xi2_device_count; ++i)
-    {
-        if (devices[i].use == XISlavePointer && devices[i].attachment == data->xi2_core_pointer)
-        {
-            TRACE( "Device %u (%s) is attached to the core pointer\n",
-                   devices[i].deviceid, debugstr_a(devices[i].name) );
-            mask.deviceid = devices[i].deviceid;
-            pXISelectEvents( data->display, DefaultRootWindow( data->display ), &mask, 1 );
-            data->xi2_state = xi_enabled;
-        }
-    }
+    pXISelectEvents( data->display, DefaultRootWindow( data->display ), &mask, 1 );
+
+    pointer_info = pXIQueryDevice( data->display, data->xi2_core_pointer, &count );
+    update_relative_valuators( pointer_info->classes, pointer_info->num_classes );
+    pXIFreeDeviceInfo( pointer_info );
+
+    /* This device info list is only used to find the initial current slave if
+     * no XI_DeviceChanged events happened. If any hierarchy change occurred that
+     * might be relevant here (eg. user switching mice after (un)plugging), a
+     * XI_DeviceChanged event will point us to the right slave. So this list is
+     * safe to be obtained statically at enable_xinput2() time.
+     */
+    if (data->xi2_devices) pXIFreeDeviceInfo( data->xi2_devices );
+    data->xi2_devices = pXIQueryDevice( data->display, XIAllDevices, &data->xi2_device_count );
+    data->xi2_current_slave = 0;
+
+    data->xi2_state = xi_enabled;
 #endif
 }
 
@@ -303,9 +347,7 @@ static void disable_xinput2(void)
 {
 #ifdef HAVE_X11_EXTENSIONS_XINPUT2_H
     struct x11drv_thread_data *data = x11drv_thread_data();
-    XIDeviceInfo *devices = data->xi2_devices;
     XIEventMask mask;
-    int i;
 
     if (data->xi2_state != xi_enabled) return;
 
@@ -314,18 +356,15 @@ static void disable_xinput2(void)
 
     mask.mask = NULL;
     mask.mask_len = 0;
+    mask.deviceid = XIAllDevices;
 
-    for (i = 0; i < data->xi2_device_count; ++i)
-    {
-        if (devices[i].use == XISlavePointer && devices[i].attachment == data->xi2_core_pointer)
-        {
-            mask.deviceid = devices[i].deviceid;
-            pXISelectEvents( data->display, DefaultRootWindow( data->display ), &mask, 1 );
-        }
-    }
-    pXIFreeDeviceInfo( devices );
+    pXISelectEvents( data->display, DefaultRootWindow( data->display ), &mask, 1 );
+    pXIFreeDeviceInfo( data->xi2_devices );
+    data->x_rel_valuator.number = -1;
+    data->y_rel_valuator.number = -1;
     data->xi2_devices = NULL;
-    data->xi2_device_count = 0;
+    data->xi2_core_pointer = 0;
+    data->xi2_current_slave = 0;
 #endif
 }
 
@@ -588,7 +627,6 @@ static void send_mouse_input( HWND hwnd, Window window, unsigned int state, INPU
     {
         RECT rect;
         SetRect( &rect, pt.x, pt.y, pt.x + 1, pt.y + 1 );
-        MapWindowPoints( 0, hwnd, (POINT *)&rect, 2 );
 
         SERVER_START_REQ( update_window_zorder )
         {
@@ -780,58 +818,58 @@ cleanup:
 struct system_cursors
 {
     WORD id;
-    const char *name;
+    const char *names[8];
 };
 
 static const struct system_cursors user32_cursors[] =
 {
-    { OCR_NORMAL,      "left_ptr" },
-    { OCR_IBEAM,       "xterm" },
-    { OCR_WAIT,        "watch" },
-    { OCR_CROSS,       "cross" },
-    { OCR_UP,          "center_ptr" },
-    { OCR_SIZE,        "fleur" },
-    { OCR_SIZEALL,     "fleur" },
-    { OCR_ICON,        "icon" },
-    { OCR_SIZENWSE,    "nwse-resize" },
-    { OCR_SIZENESW,    "nesw-resize" },
-    { OCR_SIZEWE,      "ew-resize" },
-    { OCR_SIZENS,      "ns-resize" },
-    { OCR_NO,          "not-allowed" },
-    { OCR_HAND,        "hand2" },
-    { OCR_APPSTARTING, "left_ptr_watch" },
-    { OCR_HELP,        "question_arrow" },
+    { OCR_NORMAL,      { "left_ptr" }},
+    { OCR_IBEAM,       { "xterm", "text" }},
+    { OCR_WAIT,        { "watch", "wait" }},
+    { OCR_CROSS,       { "cross" }},
+    { OCR_UP,          { "center_ptr" }},
+    { OCR_SIZE,        { "fleur", "size_all" }},
+    { OCR_SIZEALL,     { "fleur", "size_all" }},
+    { OCR_ICON,        { "icon" }},
+    { OCR_SIZENWSE,    { "top_left_corner", "nw-resize" }},
+    { OCR_SIZENESW,    { "top_right_corner", "ne-resize" }},
+    { OCR_SIZEWE,      { "h_double_arrow", "size_hor", "ew-resize" }},
+    { OCR_SIZENS,      { "v_double_arrow", "size_ver", "ns-resize" }},
+    { OCR_NO,          { "not-allowed", "forbidden", "no-drop" }},
+    { OCR_HAND,        { "hand2", "pointer", "pointing-hand" }},
+    { OCR_APPSTARTING, { "left_ptr_watch" }},
+    { OCR_HELP,        { "question_arrow", "help" }},
     { 0 }
 };
 
 static const struct system_cursors comctl32_cursors[] =
 {
-    { 102, "move" },
-    { 104, "copy" },
-    { 105, "left_ptr" },
-    { 106, "col-resize" },
-    { 107, "col-resize" },
-    { 108, "hand2" },
-    { 135, "row-resize" },
+    { 102, { "move", "dnd-move" }},
+    { 104, { "copy", "dnd-copy" }},
+    { 105, { "left_ptr" }},
+    { 106, { "col-resize", "split_v" }},
+    { 107, { "col-resize", "split_v" }},
+    { 108, { "hand2", "pointer", "pointing-hand" }},
+    { 135, { "row-resize", "split_h" }},
     { 0 }
 };
 
 static const struct system_cursors ole32_cursors[] =
 {
-    { 1, "no-drop" },
-    { 2, "move" },
-    { 3, "copy" },
-    { 4, "alias" },
+    { 1, { "no-drop", "dnd-no-drop" }},
+    { 2, { "move", "dnd-move" }},
+    { 3, { "copy", "dnd-copy" }},
+    { 4, { "alias", "dnd-link" }},
     { 0 }
 };
 
 static const struct system_cursors riched20_cursors[] =
 {
-    { 105, "hand2" },
-    { 107, "right_ptr" },
-    { 109, "copy" },
-    { 110, "move" },
-    { 111, "no-drop" },
+    { 105, { "hand2", "pointer", "pointing-hand" }},
+    { 107, { "right_ptr" }},
+    { 109, { "copy", "dnd-copy" }},
+    { 110, { "move", "dnd-move" }},
+    { 111, { "no-drop", "dnd-no-drop" }},
     { 0 }
 };
 
@@ -885,6 +923,7 @@ static const struct cursor_font_fallback fallbacks[] =
     { "fleur",               XC_fleur },
     { "gobbler",             XC_gobbler },
     { "gumby",               XC_gumby },
+    { "h_double_arrow",      XC_sb_h_double_arrow },
     { "hand1",               XC_hand1 },
     { "hand2",               XC_hand2 },
     { "heart",               XC_heart },
@@ -932,6 +971,7 @@ static const struct cursor_font_fallback fallbacks[] =
     { "ul_angle",            XC_ul_angle },
     { "umbrella",            XC_umbrella },
     { "ur_angle",            XC_ur_angle },
+    { "v_double_arrow",      XC_sb_v_double_arrow },
     { "watch",               XC_watch },
     { "xterm",               XC_xterm }
 };
@@ -946,7 +986,7 @@ static int find_fallback_shape( const char *name )
 {
     struct cursor_font_fallback *fallback;
 
-    if ((fallback = bsearch( name, fallbacks, sizeof(fallbacks) / sizeof(fallbacks[0]),
+    if ((fallback = bsearch( name, fallbacks, ARRAY_SIZE( fallbacks ),
                              sizeof(*fallback), fallback_cmp )))
         return fallback->shape;
     return -1;
@@ -965,9 +1005,10 @@ static Cursor create_xcursor_system_cursor( const ICONINFOEXW *info )
     Cursor cursor = 0;
     HMODULE module;
     HKEY key;
+    const char * const *names = NULL;
     WCHAR *p, name[MAX_PATH * 2], valueW[64];
     char valueA[64];
-    DWORD size, ret;
+    DWORD ret;
 
     if (!info->szModName[0]) return 0;
 
@@ -982,7 +1023,7 @@ static Cursor create_xcursor_system_cursor( const ICONINFOEXW *info )
     /* @@ Wine registry key: HKCU\Software\Wine\X11 Driver\Cursors */
     if (!RegOpenKeyA( HKEY_CURRENT_USER, "Software\\Wine\\X11 Driver\\Cursors", &key ))
     {
-        size = sizeof(valueW) / sizeof(WCHAR);
+        DWORD size = sizeof(valueW);
         ret = RegQueryValueExW( key, name, NULL, NULL, (BYTE *)valueW, &size );
         RegCloseKey( key );
         if (!ret)
@@ -997,15 +1038,16 @@ static Cursor create_xcursor_system_cursor( const ICONINFOEXW *info )
     if (info->szResName[0]) goto done;  /* only integer resources are supported here */
     if (!(module = GetModuleHandleW( info->szModName ))) goto done;
 
-    for (i = 0; i < sizeof(module_cursors)/sizeof(module_cursors[0]); i++)
+    for (i = 0; i < ARRAY_SIZE( module_cursors ); i++)
         if (GetModuleHandleW( module_cursors[i].name ) == module) break;
-    if (i == sizeof(module_cursors)/sizeof(module_cursors[0])) goto done;
+    if (i == ARRAY_SIZE( module_cursors )) goto done;
 
     cursors = module_cursors[i].cursors;
     for (i = 0; cursors[i].id; i++)
         if (cursors[i].id == info->wResID)
         {
-            strcpy( valueA, cursors[i].name );
+            strcpy( valueA, cursors[i].names[0] );
+            names = cursors[i].names;
             break;
         }
 
@@ -1013,7 +1055,13 @@ done:
     if (valueA[0])
     {
 #ifdef SONAME_LIBXCURSOR
-        if (pXcursorLibraryLoadCursor) cursor = pXcursorLibraryLoadCursor( gdi_display, valueA );
+        if (pXcursorLibraryLoadCursor)
+        {
+            if (!names)
+                cursor = pXcursorLibraryLoadCursor( gdi_display, valueA );
+            else
+                while (*names && !cursor) cursor = pXcursorLibraryLoadCursor( gdi_display, *names++ );
+        }
 #endif
         if (!cursor)
         {
@@ -1117,6 +1165,43 @@ static Cursor create_xlib_monochrome_cursor( HDC hdc, const ICONINFOEXW *icon, i
 
 done:
     HeapFree( GetProcessHeap(), 0, mask_bits );
+    return cursor;
+}
+
+/***********************************************************************
+ *		create_xlib_load_mono_cursor
+ *
+ * Create a monochrome X cursor from a color Windows one by trying to load the monochrome resource.
+ */
+static Cursor create_xlib_load_mono_cursor( HDC hdc, HANDLE handle, int width, int height )
+{
+    Cursor cursor = None;
+    HANDLE mono;
+    ICONINFOEXW info;
+    BITMAP bm;
+
+    if (!(mono = CopyImage( handle, IMAGE_CURSOR, width, height, LR_MONOCHROME | LR_COPYFROMRESOURCE )))
+        return None;
+
+    info.cbSize = sizeof(info);
+    if (GetIconInfoExW( mono, &info ))
+    {
+        if (!info.hbmColor)
+        {
+            GetObjectW( info.hbmMask, sizeof(bm), &bm );
+            bm.bmHeight = max( 1, bm.bmHeight / 2 );
+            /* make sure hotspot is valid */
+            if (info.xHotspot >= bm.bmWidth || info.yHotspot >= bm.bmHeight)
+            {
+                info.xHotspot = bm.bmWidth / 2;
+                info.yHotspot = bm.bmHeight / 2;
+            }
+            cursor = create_xlib_monochrome_cursor( hdc, &info, bm.bmWidth, bm.bmHeight );
+        }
+        else DeleteObject( info.hbmColor );
+        DeleteObject( info.hbmMask );
+    }
+    DestroyCursor( mono );
     return cursor;
 }
 
@@ -1295,6 +1380,7 @@ static Cursor create_cursor( HANDLE handle )
         if (pXcursorImagesLoadCursor)
             cursor = create_xcursor_cursor( hdc, &info, handle, bm.bmWidth, bm.bmHeight );
 #endif
+        if (!cursor) cursor = create_xlib_load_mono_cursor( hdc, handle, bm.bmWidth, bm.bmHeight );
         if (!cursor) cursor = create_xlib_color_cursor( hdc, &info, bm.bmWidth, bm.bmHeight );
         DeleteObject( info.hbmColor );
     }
@@ -1616,6 +1702,22 @@ BOOL X11DRV_EnterNotify( HWND hwnd, XEvent *xev )
 #ifdef HAVE_X11_EXTENSIONS_XINPUT2_H
 
 /***********************************************************************
+ *           X11DRV_DeviceChanged
+ */
+static BOOL X11DRV_DeviceChanged( XGenericEventCookie *xev )
+{
+    XIDeviceChangedEvent *event = xev->data;
+    struct x11drv_thread_data *data = x11drv_thread_data();
+
+    if (event->deviceid != data->xi2_core_pointer) return FALSE;
+    if (event->reason != XISlaveSwitch) return FALSE;
+
+    update_relative_valuators( event->classes, event->num_classes );
+    data->xi2_current_slave = event->sourceid;
+    return TRUE;
+}
+
+/***********************************************************************
  *           X11DRV_RawMotion
  */
 static BOOL X11DRV_RawMotion( XGenericEventCookie *xev )
@@ -1624,13 +1726,37 @@ static BOOL X11DRV_RawMotion( XGenericEventCookie *xev )
     const double *values = event->valuators.values;
     RECT virtual_rect;
     INPUT input;
-    int i, j;
-    double dx = 0, dy = 0;
+    int i;
+    double dx = 0, dy = 0, val;
     struct x11drv_thread_data *thread_data = x11drv_thread_data();
-    XIDeviceInfo *devices = thread_data->xi2_devices;
+    struct x11drv_valuator_data *x_rel, *y_rel;
 
+    if (thread_data->x_rel_valuator.number < 0 || thread_data->y_rel_valuator.number < 0) return FALSE;
     if (!event->valuators.mask_len) return FALSE;
     if (thread_data->xi2_state != xi_enabled) return FALSE;
+
+    /* If there is no slave currently detected, no previous motion nor device
+     * change events were received. Look it up now on the device list in this
+     * case.
+     */
+    if (!thread_data->xi2_current_slave)
+    {
+        XIDeviceInfo *devices = thread_data->xi2_devices;
+
+        for (i = 0; i < thread_data->xi2_device_count; i++)
+        {
+            if (devices[i].use != XISlavePointer) continue;
+            if (devices[i].deviceid != event->deviceid) continue;
+            if (devices[i].attachment != thread_data->xi2_core_pointer) continue;
+            thread_data->xi2_current_slave = event->deviceid;
+            break;
+        }
+    }
+
+    if (event->deviceid != thread_data->xi2_current_slave) return FALSE;
+
+    x_rel = &thread_data->x_rel_valuator;
+    y_rel = &thread_data->y_rel_valuator;
 
     input.u.mi.mouseData   = 0;
     input.u.mi.dwFlags     = MOUSEEVENTF_MOVE;
@@ -1640,36 +1766,25 @@ static BOOL X11DRV_RawMotion( XGenericEventCookie *xev )
     input.u.mi.dy          = 0;
 
     virtual_rect = get_virtual_screen_rect();
-    for (i = 0; i < thread_data->xi2_device_count; ++i)
-    {
-        if (devices[i].deviceid != event->deviceid) continue;
-        for (j = 0; j < devices[i].num_classes; j++)
-        {
-            XIValuatorClassInfo *class = (XIValuatorClassInfo *)devices[i].classes[j];
 
-            if (devices[i].classes[j]->type != XIValuatorClass) continue;
-            if (XIMaskIsSet( event->valuators.mask, class->number ))
-            {
-                double val = *values++;
-                if (class->label == x11drv_atom( Rel_X ) ||
-                    (!class->label && class->number == 0 && class->mode == XIModeRelative))
-                {
-                    input.u.mi.dx = dx = val;
-                    if (class->min < class->max)
-                        input.u.mi.dx = val * (virtual_rect.right - virtual_rect.left)
-                                            / (class->max - class->min);
-                }
-                else if (class->label == x11drv_atom( Rel_Y ) ||
-                         (!class->label && class->number == 1 && class->mode == XIModeRelative))
-                {
-                    input.u.mi.dy = dy = val;
-                    if (class->min < class->max)
-                        input.u.mi.dy = val * (virtual_rect.bottom - virtual_rect.top)
-                                            / (class->max - class->min);
-                }
-            }
+    for (i = 0; i <= max ( x_rel->number, y_rel->number ); i++)
+    {
+        if (!XIMaskIsSet( event->valuators.mask, i )) continue;
+        val = *values++;
+        if (i == x_rel->number)
+        {
+            input.u.mi.dx = dx = val;
+            if (x_rel->min < x_rel->max)
+                input.u.mi.dx = val * (virtual_rect.right - virtual_rect.left)
+                                    / (x_rel->max - x_rel->min);
         }
-        break;
+        if (i == y_rel->number)
+        {
+            input.u.mi.dy = dy = val;
+            if (y_rel->min < y_rel->max)
+                input.u.mi.dy = val * (virtual_rect.bottom - virtual_rect.top)
+                                    / (y_rel->max - y_rel->min);
+        }
     }
 
     if (broken_rawevents && is_old_motion_event( xev->serial ))
@@ -1743,6 +1858,9 @@ BOOL X11DRV_GenericEvent( HWND hwnd, XEvent *xev )
 
     switch (event->evtype)
     {
+    case XI_DeviceChanged:
+        ret = X11DRV_DeviceChanged( event );
+        break;
     case XI_RawMotion:
         ret = X11DRV_RawMotion( event );
         break;

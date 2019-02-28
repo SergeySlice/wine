@@ -71,7 +71,7 @@ static ULONG STDMETHODCALLTYPE d3d11_buffer_AddRef(ID3D11Buffer *iface)
 
     if (refcount == 1)
     {
-        ID3D11Device_AddRef(buffer->device);
+        ID3D11Device2_AddRef(buffer->device);
         wined3d_mutex_lock();
         wined3d_buffer_incref(buffer->wined3d_buffer);
         wined3d_mutex_unlock();
@@ -89,14 +89,14 @@ static ULONG STDMETHODCALLTYPE d3d11_buffer_Release(ID3D11Buffer *iface)
 
     if (!refcount)
     {
-        ID3D11Device *device = buffer->device;
+        ID3D11Device2 *device = buffer->device;
 
         wined3d_mutex_lock();
         wined3d_buffer_decref(buffer->wined3d_buffer);
         wined3d_mutex_unlock();
         /* Release the device last, it may cause the wined3d device to be
          * destroyed. */
-        ID3D11Device_Release(device);
+        ID3D11Device2_Release(device);
     }
 
     return refcount;
@@ -108,7 +108,7 @@ static void STDMETHODCALLTYPE d3d11_buffer_GetDevice(ID3D11Buffer *iface, ID3D11
 
     TRACE("iface %p, device %p.\n", iface, device);
 
-    *device = buffer->device;
+    *device = (ID3D11Device *)buffer->device;
     ID3D11Device_AddRef(*device);
 }
 
@@ -242,7 +242,7 @@ static void STDMETHODCALLTYPE d3d10_buffer_GetDevice(ID3D10Buffer *iface, ID3D10
 
     TRACE("iface %p, device %p.\n", iface, device);
 
-    ID3D11Device_QueryInterface(buffer->device, &IID_ID3D10Device, (void **)device);
+    ID3D11Device2_QueryInterface(buffer->device, &IID_ID3D10Device, (void **)device);
 }
 
 static HRESULT STDMETHODCALLTYPE d3d10_buffer_GetPrivateData(ID3D10Buffer *iface,
@@ -379,13 +379,61 @@ static void STDMETHODCALLTYPE d3d_buffer_wined3d_object_released(void *parent)
     struct d3d_buffer *buffer = parent;
 
     wined3d_private_store_cleanup(&buffer->private_store);
-    HeapFree(GetProcessHeap(), 0, parent);
+    heap_free(parent);
 }
 
 static const struct wined3d_parent_ops d3d_buffer_wined3d_parent_ops =
 {
     d3d_buffer_wined3d_object_released,
 };
+
+static BOOL validate_buffer_desc(D3D11_BUFFER_DESC *desc, D3D_FEATURE_LEVEL feature_level)
+{
+    if (!validate_d3d11_resource_access_flags(D3D11_RESOURCE_DIMENSION_BUFFER,
+            desc->Usage, desc->BindFlags, desc->CPUAccessFlags, feature_level))
+        return FALSE;
+
+    if (desc->MiscFlags & D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS)
+    {
+        if (desc->MiscFlags & D3D11_RESOURCE_MISC_BUFFER_STRUCTURED)
+        {
+            WARN("Raw and structure buffers are mutually exclusive.\n");
+            return FALSE;
+        }
+        if (!(desc->BindFlags & (D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS)))
+        {
+            WARN("Invalid bind flags %#x for raw buffer.\n", desc->BindFlags);
+            return FALSE;
+        }
+    }
+
+    if (desc->MiscFlags & D3D11_RESOURCE_MISC_BUFFER_STRUCTURED)
+    {
+        if (!desc->StructureByteStride || desc->StructureByteStride % 4)
+        {
+            WARN("Invalid structure byte stride %u.\n", desc->StructureByteStride);
+            return FALSE;
+        }
+        if (desc->ByteWidth % desc->StructureByteStride)
+        {
+            WARN("Byte width %u is not divisible by structure byte stride %u.\n",
+                    desc->ByteWidth, desc->StructureByteStride);
+            return FALSE;
+        }
+    }
+    else
+    {
+        desc->StructureByteStride = 0;
+    }
+
+    if (desc->MiscFlags & D3D11_RESOURCE_MISC_GENERATE_MIPS)
+    {
+        WARN("Buffer with the D3D11_RESOURCE_MISC_GENERATE_MIPS flag.\n");
+        return FALSE;
+    }
+
+    return TRUE;
+}
 
 static HRESULT d3d_buffer_init(struct d3d_buffer *buffer, struct d3d_device *device,
         const D3D11_BUFFER_DESC *desc, const D3D11_SUBRESOURCE_DATA *data)
@@ -396,51 +444,20 @@ static HRESULT d3d_buffer_init(struct d3d_buffer *buffer, struct d3d_device *dev
     buffer->ID3D11Buffer_iface.lpVtbl = &d3d11_buffer_vtbl;
     buffer->ID3D10Buffer_iface.lpVtbl = &d3d10_buffer_vtbl;
     buffer->refcount = 1;
-    wined3d_mutex_lock();
-    wined3d_private_store_init(&buffer->private_store);
     buffer->desc = *desc;
 
-    if (buffer->desc.MiscFlags & D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS)
-    {
-        if (buffer->desc.MiscFlags & D3D11_RESOURCE_MISC_BUFFER_STRUCTURED)
-        {
-            WARN("Raw and structure buffers are mutually exclusive.\n");
-            return E_INVALIDARG;
-        }
-        if (!(buffer->desc.BindFlags & (D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS)))
-        {
-            WARN("Invalid bind flags %#x for raw buffer.\n", buffer->desc.BindFlags);
-            return E_INVALIDARG;
-        }
-    }
-
-    if (buffer->desc.MiscFlags & D3D11_RESOURCE_MISC_BUFFER_STRUCTURED)
-    {
-        if (!buffer->desc.StructureByteStride || buffer->desc.StructureByteStride % 4)
-        {
-            WARN("Invalid structure byte stride %u.\n", buffer->desc.StructureByteStride);
-            return E_INVALIDARG;
-        }
-        if (buffer->desc.ByteWidth % buffer->desc.StructureByteStride)
-        {
-            WARN("Byte width %u is not divisible by structure byte stride %u.\n",
-                    buffer->desc.ByteWidth, buffer->desc.StructureByteStride);
-            return E_INVALIDARG;
-        }
-    }
-    else
-    {
-        buffer->desc.StructureByteStride = 0;
-    }
+    if (!validate_buffer_desc(&buffer->desc, device->feature_level))
+        return E_INVALIDARG;
 
     wined3d_desc.byte_width = buffer->desc.ByteWidth;
-    wined3d_desc.usage = wined3d_usage_from_d3d11(0, buffer->desc.Usage);
-    wined3d_desc.bind_flags = buffer->desc.BindFlags;
-    wined3d_desc.cpu_access_flags = buffer->desc.CPUAccessFlags;
+    wined3d_desc.usage = wined3d_usage_from_d3d11(buffer->desc.Usage);
+    wined3d_desc.bind_flags = wined3d_bind_flags_from_d3d11(buffer->desc.BindFlags);
+    wined3d_desc.access = wined3d_access_from_d3d11(buffer->desc.Usage, buffer->desc.CPUAccessFlags);
     wined3d_desc.misc_flags = buffer->desc.MiscFlags;
+    wined3d_desc.structure_byte_stride = buffer->desc.StructureByteStride;
 
-    if (buffer->desc.StructureByteStride)
-        FIXME("Ignoring structure byte stride %u.\n", buffer->desc.StructureByteStride);
+    wined3d_mutex_lock();
+    wined3d_private_store_init(&buffer->private_store);
 
     if (FAILED(hr = wined3d_buffer_create(device->wined3d_device, &wined3d_desc,
             (const struct wined3d_sub_resource_data *)data, buffer,
@@ -453,8 +470,7 @@ static HRESULT d3d_buffer_init(struct d3d_buffer *buffer, struct d3d_device *dev
     }
     wined3d_mutex_unlock();
 
-    buffer->device = &device->ID3D11Device_iface;
-    ID3D11Device_AddRef(buffer->device);
+    ID3D11Device2_AddRef(buffer->device = &device->ID3D11Device2_iface);
 
     return S_OK;
 }
@@ -465,13 +481,13 @@ HRESULT d3d_buffer_create(struct d3d_device *device, const D3D11_BUFFER_DESC *de
     struct d3d_buffer *object;
     HRESULT hr;
 
-    if (!(object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*object))))
+    if (!(object = heap_alloc_zero(sizeof(*object))))
         return E_OUTOFMEMORY;
 
     if (FAILED(hr = d3d_buffer_init(object, device, desc, data)))
     {
         WARN("Failed to initialize buffer, hr %#x.\n", hr);
-        HeapFree(GetProcessHeap(), 0, object);
+        heap_free(object);
         return hr;
     }
 

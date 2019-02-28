@@ -120,7 +120,7 @@
 120 stdcall GdipCreateRegionRectI(ptr ptr)
 121 stdcall GdipCreateRegionRgnData(ptr long ptr)
 122 stdcall GdipCreateSolidFill(long ptr)
-123 stdcall GdipCreateStreamOnFile(ptr long ptr)
+123 stdcall GdipCreateStreamOnFile(wstr long ptr)
 124 stdcall GdipCreateStringFormat(long long ptr)
 125 stdcall GdipCreateTexture2(ptr long float float float float ptr)
 126 stdcall GdipCreateTexture2I(ptr long long long long long ptr)
@@ -534,7 +534,7 @@
 534 stdcall GdipSetPathGradientFocusScales(ptr float float)
 535 stdcall GdipSetPathGradientGammaCorrection(ptr long)
 536 stdcall GdipSetPathGradientLinearBlend(ptr float float)
-537 stub GdipSetPathGradientPath
+537 stdcall GdipSetPathGradientPath(ptr ptr)
 538 stdcall GdipSetPathGradientPresetBlend(ptr ptr ptr long)
 539 stdcall GdipSetPathGradientSigmaBlend(ptr float float)
 540 stdcall GdipSetPathGradientSurroundColorsWithCount(ptr ptr ptr)
@@ -615,14 +615,14 @@
 615 stub GdipGetEffectParameterSize
 616 stub GdipGetEffectParameters
 617 stdcall GdipSetEffectParameters(ptr ptr long)
-618 stub GdipInitializePalette
+618 stdcall GdipInitializePalette(ptr long long long ptr)
 619 stdcall GdipBitmapCreateApplyEffect(ptr long ptr ptr ptr ptr long ptr ptr)
 620 stdcall GdipBitmapApplyEffect(ptr ptr ptr long ptr ptr)
 621 stdcall GdipBitmapGetHistogram(ptr long long ptr ptr ptr ptr)
 622 stdcall GdipBitmapGetHistogramSize(long ptr)
 623 stdcall GdipBitmapConvertFormat(ptr long long long ptr float)
 624 stdcall GdipImageSetAbort(ptr ptr)
-625 stub GdipGraphicsSetAbort
+625 stdcall GdipGraphicsSetAbort(ptr ptr)
 626 stub GdipDrawImageFX
 627 stdcall GdipConvertToEmfPlus(ptr ptr ptr long ptr ptr)
 628 stdcall GdipConvertToEmfPlusToFile(ptr ptr ptr ptr long ptr ptr)

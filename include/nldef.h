@@ -28,6 +28,15 @@ typedef enum
     IpPrefixOriginUnchanged = 16,
 } NL_PREFIX_ORIGIN;
 
+typedef enum _NL_ROUTE_ORIGIN
+{
+    NlroManual,
+    NlroWellKnown,
+    NlroDHCP,
+    NlroRouterAdvertisement,
+    Nlro6to4,
+} NL_ROUTE_ORIGIN, *PNL_ROUTE_ORIGIN;
+
 typedef enum
 {
     IpSuffixOriginOther = 0,
@@ -48,6 +57,21 @@ typedef enum
     IpDadStatePreferred,
 } NL_DAD_STATE;
 
+typedef enum _NL_LINK_LOCAL_ADDRESS_BEHAVIOR
+{
+    LinkLocalAlwaysOff = 0,
+    LinkLocalDelayed,
+    LinkLocalAlwaysOn,
+    LinkLocalUnchanged = -1,
+} NL_LINK_LOCAL_ADDRESS_BEHAVIOR;
+
+typedef enum _NL_ROUTER_DISCOVERY_BEHAVIOR
+{
+    RouterDiscoveryDisabled = 0,
+    RouterDiscoveryEnabled,
+    RouterDiscoveryDhcp,
+    RouterDiscoveryUnchanged = -1,
+} NL_ROUTER_DISCOVERY_BEHAVIOR;
 
 typedef enum
 {
@@ -75,5 +99,28 @@ typedef enum
     MAKE_ROUTE_PROTOCOL(NT_STATIC_NON_DOD, 10007),
 } NL_ROUTE_PROTOCOL, *PNL_ROUTE_PROTOCOL;
 
+typedef struct _NL_INTERFACE_OFFLOAD_ROD
+{
+    BOOLEAN NlChecksumSupported : 1;
+    BOOLEAN NlOptionsSupported : 1;
+    BOOLEAN TlDatagramChecksumSupported : 1;
+    BOOLEAN TlStreamChecksumSupported : 1;
+    BOOLEAN TlStreamOptionsSupported : 1;
+    BOOLEAN FastPathCompatible : 1;
+    BOOLEAN TlLargeSendOffloadSupported : 1;
+    BOOLEAN TlGiantSendOffloadSupported : 1;
+} NL_INTERFACE_OFFLOAD_ROD, *PNL_INTERFACE_OFFLOAD_ROD;
+
+typedef enum _NL_NEIGHBOR_STATE
+{
+    NlnsUnreachable,
+    NlnsIncomplete,
+    NlnsProbe,
+    NlnsDelay,
+    NlnsStale,
+    NlnsReachable,
+    NlnsPermanent,
+    NlnsMaximum,
+} NL_NEIGHBOR_STATE, *PNL_NEIGHBOR_STATE;
 
 #endif /* __WINE_NLDEF_H */

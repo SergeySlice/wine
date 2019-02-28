@@ -19,6 +19,7 @@
  */
 
 #include "config.h"
+#include "wine/port.h"
 #include "d3d8_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3d8);
@@ -90,6 +91,12 @@ static ULONG WINAPI d3d8_surface_Release(IDirect3DSurface8 *iface)
         return IDirect3DBaseTexture8_Release(&surface->texture->IDirect3DBaseTexture8_iface);
     }
 
+    if (!surface->resource.refcount)
+    {
+        WARN("Surface does not have any references.\n");
+        return 0;
+    }
+
     refcount = InterlockedDecrement(&surface->resource.refcount);
     TRACE("%p decreasing refcount to %u.\n", iface, refcount);
 
@@ -151,9 +158,6 @@ static HRESULT WINAPI d3d8_surface_FreePrivateData(IDirect3DSurface8 *iface, REF
 {
     struct d3d8_surface *surface = impl_from_IDirect3DSurface8(iface);
     TRACE("iface %p, guid %s.\n", iface, debugstr_guid(guid));
-    if (!surface) {
-        return D3DERR_INVALIDCALL;
-    }
 
     return d3d8_resource_free_private_data(&surface->resource, guid);
 }
@@ -164,9 +168,6 @@ static HRESULT WINAPI d3d8_surface_GetContainer(IDirect3DSurface8 *iface, REFIID
     HRESULT hr;
 
     TRACE("iface %p, riid %s, container %p.\n", iface, debugstr_guid(riid), container);
-    if (!surface) {
-        return D3DERR_INVALIDCALL;
-    }
 
     if (!surface->container)
         return E_NOINTERFACE;
@@ -184,9 +185,6 @@ static HRESULT WINAPI d3d8_surface_GetDesc(IDirect3DSurface8 *iface, D3DSURFACE_
     struct wined3d_sub_resource_desc wined3d_desc;
 
     TRACE("iface %p, desc %p.\n", iface, desc);
-    if (!surface) {
-        return D3DERR_INVALIDCALL;
-    }
 
     wined3d_mutex_lock();
     wined3d_texture_get_sub_resource_desc(surface->wined3d_texture, surface->sub_resource_idx, &wined3d_desc);
@@ -194,8 +192,8 @@ static HRESULT WINAPI d3d8_surface_GetDesc(IDirect3DSurface8 *iface, D3DSURFACE_
 
     desc->Format = d3dformat_from_wined3dformat(wined3d_desc.format);
     desc->Type = D3DRTYPE_SURFACE;
-    desc->Usage = wined3d_desc.usage & WINED3DUSAGE_MASK;
-    desc->Pool = wined3d_desc.pool;
+    desc->Usage = d3dusage_from_wined3dusage(wined3d_desc.usage, wined3d_desc.bind_flags);
+    desc->Pool = d3dpool_from_wined3daccess(wined3d_desc.access, wined3d_desc.usage);
     desc->Size = wined3d_desc.size;
     desc->MultiSampleType = wined3d_desc.multisample_type;
     desc->Width = wined3d_desc.width;
@@ -215,9 +213,6 @@ static HRESULT WINAPI d3d8_surface_LockRect(IDirect3DSurface8 *iface,
 
     TRACE("iface %p, locked_rect %p, rect %s, flags %#x.\n",
             iface, locked_rect, wine_dbgstr_rect(rect), flags);
-    if (!surface) {
-        return D3DERR_INVALIDCALL;
-    }
 
     wined3d_mutex_lock();
 
@@ -246,16 +241,11 @@ static HRESULT WINAPI d3d8_surface_LockRect(IDirect3DSurface8 *iface,
             locked_rect->pBits = NULL;
             return D3DERR_INVALIDCALL;
         }
-        box.left = rect->left;
-        box.top = rect->top;
-        box.right = rect->right;
-        box.bottom = rect->bottom;
-        box.front = 0;
-        box.back = 1;
+        wined3d_box_set(&box, rect->left, rect->top, rect->right, rect->bottom, 0, 1);
     }
 
     hr = wined3d_resource_map(wined3d_texture_get_resource(surface->wined3d_texture), surface->sub_resource_idx,
-            &map_desc, rect ? &box : NULL, flags);
+            &map_desc, rect ? &box : NULL, wined3dmapflags_from_d3dmapflags(flags, 0));
     wined3d_mutex_unlock();
 
     if (SUCCEEDED(hr))
@@ -269,6 +259,8 @@ static HRESULT WINAPI d3d8_surface_LockRect(IDirect3DSurface8 *iface,
         locked_rect->pBits = NULL;
     }
 
+    if (hr == E_INVALIDARG)
+        return D3DERR_INVALIDCALL;
     return hr;
 }
 
@@ -278,9 +270,6 @@ static HRESULT WINAPI d3d8_surface_UnlockRect(IDirect3DSurface8 *iface)
     HRESULT hr;
 
     TRACE("iface %p.\n", iface);
-    if (!surface) {
-        return D3DERR_INVALIDCALL;
-    }
 
     wined3d_mutex_lock();
     hr = wined3d_resource_unmap(wined3d_texture_get_resource(surface->wined3d_texture), surface->sub_resource_idx);
@@ -319,12 +308,8 @@ static const IDirect3DSurface8Vtbl d3d8_surface_vtbl =
 static void STDMETHODCALLTYPE surface_wined3d_object_destroyed(void *parent)
 {
     struct d3d8_surface *surface = parent;
-    if (!surface) {
-        return;
-    }
-
     d3d8_resource_cleanup(&surface->resource);
-    HeapFree(GetProcessHeap(), 0, surface);
+    heap_free(surface);
 }
 
 static const struct wined3d_parent_ops d3d8_surface_wined3d_parent_ops =
@@ -336,10 +321,6 @@ void surface_init(struct d3d8_surface *surface, struct wined3d_texture *wined3d_
         const struct wined3d_parent_ops **parent_ops)
 {
     IDirect3DBaseTexture8 *texture;
-
-    if (!surface) {
-        return;
-    }
 
     surface->IDirect3DSurface8_iface.lpVtbl = &d3d8_surface_vtbl;
     d3d8_resource_init(&surface->resource);
@@ -362,10 +343,6 @@ void surface_init(struct d3d8_surface *surface, struct wined3d_texture *wined3d_
 static void STDMETHODCALLTYPE view_wined3d_object_destroyed(void *parent)
 {
     struct d3d8_surface *surface = parent;
-
-    if (!surface) {
-        return;
-    }
 
     /* If the surface reference count drops to zero, we release our reference
      * to the view, but don't clear the pointer yet, in case e.g. a
@@ -396,9 +373,6 @@ struct wined3d_rendertarget_view *d3d8_surface_acquire_rendertarget_view(struct 
 {
     HRESULT hr;
 
-    if (!surface) {
-        return NULL;
-    }
     /* The surface reference count can be equal to 0 when this function is
      * called. In order to properly manage the render target view reference
      * count, we temporarily increment the surface reference count. */

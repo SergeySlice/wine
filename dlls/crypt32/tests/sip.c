@@ -176,8 +176,8 @@ static void test_SIPRetrieveSubjectGUID(void)
         GetLastError() == ERROR_PATH_NOT_FOUND,
         "Expected ERROR_FILE_NOT_FOUND or ERROR_PATH_NOT_FOUND, got %d.\n",
         GetLastError());
-    ok ( !memcmp(&subject, &nullSubject, sizeof(GUID)),
-        "Expected a NULL GUID for c:\\deadbeef.dbf, not %s\n", wine_dbgstr_guid(&subject));
+    ok(IsEqualGUID(&subject, &nullSubject),
+       "Expected a NULL GUID for c:\\deadbeef.dbf, not %s\n", wine_dbgstr_guid(&subject));
 
     /* Now with an executable that should exist
      *
@@ -187,16 +187,15 @@ static void test_SIPRetrieveSubjectGUID(void)
     ok (ret > 0, "expected GEVA(windir) to succeed, last error %d\n", GetLastError());
     strcat(regeditPath, "\\");
     strcat(regeditPath, regeditExe);
-    MultiByteToWideChar( CP_ACP, 0, regeditPath,
-                         strlen(regeditPath)+1, regeditPathW,
-                         sizeof(regeditPathW)/sizeof(regeditPathW[0]) );
+    MultiByteToWideChar(CP_ACP, 0, regeditPath, strlen(regeditPath)+1, regeditPathW,
+                        ARRAY_SIZE(regeditPathW));
 
     SetLastError(0xdeadbeef);
     memset(&subject, 1, sizeof(GUID));
     ret = CryptSIPRetrieveSubjectGuid(regeditPathW, NULL, &subject);
     ok ( ret, "Expected CryptSIPRetrieveSubjectGuid to succeed\n");
-    ok ( !memcmp(&subject, &unknownGUID, sizeof(GUID)),
-        "Expected (%s), got (%s).\n", wine_dbgstr_guid(&unknownGUID), wine_dbgstr_guid(&subject));
+    ok(IsEqualGUID(&subject, &unknownGUID),
+       "Expected (%s), got (%s).\n", wine_dbgstr_guid(&unknownGUID), wine_dbgstr_guid(&subject));
 
     /* The same thing but now with a handle instead of a filename */
     file = CreateFileA(regeditPath, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
@@ -204,8 +203,8 @@ static void test_SIPRetrieveSubjectGUID(void)
     memset(&subject, 1, sizeof(GUID));
     ret = CryptSIPRetrieveSubjectGuid(NULL, file, &subject);
     ok ( ret, "Expected CryptSIPRetrieveSubjectGuid to succeed\n");
-    ok ( !memcmp(&subject, &unknownGUID, sizeof(GUID)),
-        "Expected (%s), got (%s).\n", wine_dbgstr_guid(&unknownGUID), wine_dbgstr_guid(&subject));
+    ok(IsEqualGUID(&subject, &unknownGUID),
+       "Expected (%s), got (%s).\n", wine_dbgstr_guid(&unknownGUID), wine_dbgstr_guid(&subject));
     CloseHandle(file);
 
     /* And both */
@@ -214,16 +213,14 @@ static void test_SIPRetrieveSubjectGUID(void)
     memset(&subject, 1, sizeof(GUID));
     ret = CryptSIPRetrieveSubjectGuid(regeditPathW, file, &subject);
     ok ( ret, "Expected CryptSIPRetrieveSubjectGuid to succeed\n");
-    ok ( !memcmp(&subject, &unknownGUID, sizeof(GUID)),
-        "Expected (%s), got (%s).\n", wine_dbgstr_guid(&unknownGUID), wine_dbgstr_guid(&subject));
+    ok(IsEqualGUID(&subject, &unknownGUID),
+       "Expected (%s), got (%s).\n", wine_dbgstr_guid(&unknownGUID), wine_dbgstr_guid(&subject));
     CloseHandle(file);
 
     /* Now with an empty file */
     GetTempPathA(sizeof(path), path);
     GetTempFileNameA(path, "sip", 0 , tempfile);
-    MultiByteToWideChar( CP_ACP, 0, tempfile,
-                         strlen(tempfile)+1, tempfileW,
-                         sizeof(tempfileW)/sizeof(tempfileW[0]) );
+    MultiByteToWideChar(CP_ACP, 0, tempfile, strlen(tempfile)+1, tempfileW, ARRAY_SIZE(tempfileW));
 
     SetLastError(0xdeadbeef);
     memset(&subject, 1, sizeof(GUID));
@@ -234,8 +231,8 @@ static void test_SIPRetrieveSubjectGUID(void)
          GetLastError() == ERROR_SUCCESS /* most Win98 */ ||
          GetLastError() == TRUST_E_SUBJECT_FORM_UNKNOWN /* some Win98 */,
         "Expected ERROR_FILE_INVALID, ERROR_INVALID_PARAMETER, ERROR_SUCCESS or TRUST_E_SUBJECT_FORM_UNKNOWN, got 0x%08x\n", GetLastError());
-    ok ( !memcmp(&subject, &nullSubject, sizeof(GUID)),
-        "Expected a NULL GUID for empty file %s, not %s\n", tempfile, wine_dbgstr_guid(&subject));
+    ok(IsEqualGUID(&subject, &nullSubject),
+       "Expected a NULL GUID for empty file %s, not %s\n", tempfile, wine_dbgstr_guid(&subject));
 
     /* Use a file with a size of 3 (at least < 4) */
     file = CreateFileA(tempfile, GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
@@ -250,8 +247,8 @@ static void test_SIPRetrieveSubjectGUID(void)
          GetLastError() == ERROR_SUCCESS /* most Win98 */ ||
          GetLastError() == TRUST_E_SUBJECT_FORM_UNKNOWN /* some Win98 */,
         "Expected ERROR_INVALID_PARAMETER, ERROR_SUCCESS or TRUST_E_SUBJECT_FORM_UNKNOWN, got 0x%08x\n", GetLastError());
-    ok ( !memcmp(&subject, &nullSubject, sizeof(GUID)),
-        "Expected a NULL GUID for empty file %s, not %s\n", tempfile, wine_dbgstr_guid(&subject));
+    ok(IsEqualGUID(&subject, &nullSubject),
+       "Expected a NULL GUID for empty file %s, not %s\n", tempfile, wine_dbgstr_guid(&subject));
 
     /* And now >= 4 */
     file = CreateFileA(tempfile, GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
@@ -265,8 +262,8 @@ static void test_SIPRetrieveSubjectGUID(void)
     ok ( GetLastError() == TRUST_E_SUBJECT_FORM_UNKNOWN ||
          GetLastError() == ERROR_SUCCESS /* Win98 */,
         "Expected TRUST_E_SUBJECT_FORM_UNKNOWN or ERROR_SUCCESS, got 0x%08x\n", GetLastError());
-    ok ( !memcmp(&subject, &nullSubject, sizeof(GUID)),
-        "Expected a NULL GUID for empty file %s, not %s\n", tempfile, wine_dbgstr_guid(&subject));
+    ok(IsEqualGUID(&subject, &nullSubject),
+       "Expected a NULL GUID for empty file %s, not %s\n", tempfile, wine_dbgstr_guid(&subject));
 
     /* Clean up */
     DeleteFileA(tempfile);
@@ -283,8 +280,8 @@ static void test_SIPRetrieveSubjectGUID(void)
     ret = CryptSIPRetrieveSubjectGuid(tempfileW, NULL, &subject);
     ok( ret, "CryptSIPRetrieveSubjectGuid failed: %d (0x%08x)\n",
             GetLastError(), GetLastError() );
-    ok ( !memcmp(&subject, &cabGUID, sizeof(GUID)),
-        "Expected GUID %s for cabinet file, not %s\n", wine_dbgstr_guid(&cabGUID), wine_dbgstr_guid(&subject));
+    ok(IsEqualGUID(&subject, &cabGUID),
+       "Expected GUID %s for cabinet file, not %s\n", wine_dbgstr_guid(&cabGUID), wine_dbgstr_guid(&subject));
 
     /* Clean up */
     DeleteFileA(tempfile);
@@ -301,8 +298,8 @@ static void test_SIPRetrieveSubjectGUID(void)
     ret = CryptSIPRetrieveSubjectGuid(tempfileW, NULL, &subject);
     ok( ret, "CryptSIPRetrieveSubjectGuid failed: %d (0x%08x)\n",
             GetLastError(), GetLastError() );
-    ok ( !memcmp(&subject, &cabGUID, sizeof(GUID)),
-        "Expected GUID %s for cabinet file, not %s\n", wine_dbgstr_guid(&cabGUID), wine_dbgstr_guid(&subject));
+    ok(IsEqualGUID(&subject, &cabGUID),
+       "Expected GUID %s for cabinet file, not %s\n", wine_dbgstr_guid(&cabGUID), wine_dbgstr_guid(&subject));
 
     /* Clean up */
     DeleteFileA(tempfile);

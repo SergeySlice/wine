@@ -259,16 +259,64 @@ static UINT WHERE_fetch_stream( struct tagMSIVIEW *view, UINT row, UINT col, ISt
     return table->view->ops->fetch_stream( table->view, rows[table->table_index], col, stm );
 }
 
-static UINT WHERE_get_row( struct tagMSIVIEW *view, UINT row, MSIRECORD **rec )
+static UINT WHERE_set_int(struct tagMSIVIEW *view, UINT row, UINT col, int val)
 {
-    MSIWHEREVIEW *wv = (MSIWHEREVIEW *)view;
+    MSIWHEREVIEW *wv = (MSIWHEREVIEW*)view;
+    JOINTABLE *table;
+    UINT *rows;
+    UINT r;
 
-    TRACE("%p %d %p\n", wv, row, rec );
+    TRACE("view %p, row %u, col %u, val %d.\n", wv, row, col, val );
 
-    if (!wv->tables)
+    r = find_row(wv, row, &rows);
+    if (r != ERROR_SUCCESS)
+        return r;
+
+    table = find_table(wv, col, &col);
+    if (!table)
         return ERROR_FUNCTION_FAILED;
 
-    return msi_view_get_row( wv->db, view, row, rec );
+    return table->view->ops->set_int(table->view, rows[table->table_index], col, val);
+}
+
+static UINT WHERE_set_string(struct tagMSIVIEW *view, UINT row, UINT col, const WCHAR *val, int len)
+{
+    MSIWHEREVIEW *wv = (MSIWHEREVIEW*)view;
+    JOINTABLE *table;
+    UINT *rows;
+    UINT r;
+
+    TRACE("view %p, row %u, col %u, val %s.\n", wv, row, col, debugstr_wn(val, len));
+
+    r = find_row(wv, row, &rows);
+    if (r != ERROR_SUCCESS)
+        return r;
+
+    table = find_table(wv, col, &col);
+    if (!table)
+        return ERROR_FUNCTION_FAILED;
+
+    return table->view->ops->set_string(table->view, rows[table->table_index], col, val, len);
+}
+
+static UINT WHERE_set_stream(MSIVIEW *view, UINT row, UINT col, IStream *stream)
+{
+    MSIWHEREVIEW *wv = (MSIWHEREVIEW*)view;
+    JOINTABLE *table;
+    UINT *rows;
+    UINT r;
+
+    TRACE("view %p, row %u, col %u, stream %p.\n", wv, row, col, stream);
+
+    r = find_row(wv, row, &rows);
+    if (r != ERROR_SUCCESS)
+        return r;
+
+    table = find_table(wv, col, &col);
+    if (!table)
+        return ERROR_FUNCTION_FAILED;
+
+    return table->view->ops->set_stream(table->view, rows[table->table_index], col, stream);
 }
 
 static UINT WHERE_set_row( struct tagMSIVIEW *view, UINT row, MSIRECORD *rec, UINT mask )
@@ -944,8 +992,8 @@ static UINT WHERE_modify( struct tagMSIVIEW *view, MSIMODIFY eModifyMode,
     {
         UINT *rows;
 
-        if (find_row(wv, row - 1, &rows) == ERROR_SUCCESS)
-            row = rows[0] + 1;
+        if (find_row(wv, row, &rows) == ERROR_SUCCESS)
+            row = rows[0];
         else
             row = -1;
 
@@ -1015,36 +1063,6 @@ static UINT WHERE_delete( struct tagMSIVIEW *view )
     return ERROR_SUCCESS;
 }
 
-static UINT WHERE_find_matching_rows( struct tagMSIVIEW *view, UINT col,
-    UINT val, UINT *row, MSIITERHANDLE *handle )
-{
-    MSIWHEREVIEW *wv = (MSIWHEREVIEW*)view;
-    UINT i, row_value;
-
-    TRACE("%p, %d, %u, %p\n", view, col, val, *handle);
-
-    if (!wv->tables)
-         return ERROR_FUNCTION_FAILED;
-
-    if (col == 0 || col > wv->col_count)
-        return ERROR_INVALID_PARAMETER;
-
-    for (i = PtrToUlong(*handle); i < wv->row_count; i++)
-    {
-        if (view->ops->fetch_int( view, i, col, &row_value ) != ERROR_SUCCESS)
-            continue;
-
-        if (row_value == val)
-        {
-            *row = i;
-            *handle = UlongToPtr(i + 1);
-            return ERROR_SUCCESS;
-        }
-    }
-
-    return ERROR_NO_MORE_ITEMS;
-}
-
 static UINT WHERE_sort(struct tagMSIVIEW *view, column_info *columns)
 {
     MSIWHEREVIEW *wv = (MSIWHEREVIEW *)view;
@@ -1098,7 +1116,9 @@ static const MSIVIEWOPS where_ops =
 {
     WHERE_fetch_int,
     WHERE_fetch_stream,
-    WHERE_get_row,
+    WHERE_set_int,
+    WHERE_set_string,
+    WHERE_set_stream,
     WHERE_set_row,
     NULL,
     WHERE_delete_row,
@@ -1108,8 +1128,6 @@ static const MSIVIEWOPS where_ops =
     WHERE_get_column_info,
     WHERE_modify,
     WHERE_delete,
-    WHERE_find_matching_rows,
-    NULL,
     NULL,
     NULL,
     NULL,

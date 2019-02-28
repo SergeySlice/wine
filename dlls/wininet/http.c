@@ -145,8 +145,6 @@ static const WCHAR emptyW[] = {0};
 
 #define COLLECT_TIME 60000
 
-#define ARRAYSIZE(array) (sizeof(array)/sizeof((array)[0]))
-
 struct HttpAuthInfo
 {
     LPWSTR scheme;
@@ -206,13 +204,13 @@ static BOOL HTTP_DeleteCustomHeader(http_request_t *req, DWORD index);
 static LPWSTR HTTP_build_req( LPCWSTR *list, int len );
 static DWORD HTTP_HttpQueryInfoW(http_request_t*, DWORD, LPVOID, LPDWORD, LPDWORD);
 static UINT HTTP_DecodeBase64(LPCWSTR base64, LPSTR bin);
-static BOOL drain_content(http_request_t*,BOOL);
+static DWORD drain_content(http_request_t*,BOOL);
 
 static CRITICAL_SECTION connection_pool_cs;
 static CRITICAL_SECTION_DEBUG connection_pool_debug =
 {
     0, 0, &connection_pool_cs,
-    { &critsect_debug.ProcessLocksList, &critsect_debug.ProcessLocksList },
+    { &connection_pool_debug.ProcessLocksList, &connection_pool_debug.ProcessLocksList },
       0, 0, { (DWORD_PTR)(__FILE__ ": connection_pool_cs") }
 };
 static CRITICAL_SECTION connection_pool_cs = { &connection_pool_debug, -1, 0, 0, 0, 0 };
@@ -273,7 +271,7 @@ server_t *get_server(substr_t name, INTERNET_PORT port, BOOL is_https, BOOL do_c
     EnterCriticalSection(&connection_pool_cs);
 
     LIST_FOR_EACH_ENTRY(iter, &connection_pool, server_t, entry) {
-        if(iter->port == port && name.len == strlenW(iter->name) && !strncmpW(iter->name, name.str, name.len)
+        if(iter->port == port && name.len == strlenW(iter->name) && !strncmpiW(iter->name, name.str, name.len)
                 && iter->is_https == is_https) {
             server = iter;
             server_addref(server);
@@ -380,17 +378,10 @@ static WCHAR *get_host_header( http_request_t *req )
     return ret;
 }
 
-typedef enum {
-    BLOCKING_ALLOW,
-    BLOCKING_DISALLOW,
-    BLOCKING_WAITALL
-} blocking_mode_t;
-
 struct data_stream_vtbl_t {
-    DWORD (*get_avail_data)(data_stream_t*,http_request_t*);
     BOOL (*end_of_data)(data_stream_t*,http_request_t*);
-    DWORD (*read)(data_stream_t*,http_request_t*,BYTE*,DWORD,DWORD*,blocking_mode_t);
-    BOOL (*drain_content)(data_stream_t*,http_request_t*);
+    DWORD (*read)(data_stream_t*,http_request_t*,BYTE*,DWORD,DWORD*,BOOL);
+    DWORD (*drain_content)(data_stream_t*,http_request_t*,BOOL);
     void (*destroy)(data_stream_t*);
 };
 
@@ -408,7 +399,8 @@ typedef struct {
         CHUNKED_STREAM_STATE_READING_CHUNK,
         CHUNKED_STREAM_STATE_DISCARD_EOL_AFTER_DATA,
         CHUNKED_STREAM_STATE_DISCARD_EOL_AT_END,
-        CHUNKED_STREAM_STATE_END_OF_STREAM
+        CHUNKED_STREAM_STATE_END_OF_STREAM,
+        CHUNKED_STREAM_STATE_ERROR
     } state;
 } chunked_stream_t;
 
@@ -446,12 +438,6 @@ typedef struct {
     BOOL end_of_data;
 } gzip_stream_t;
 
-static DWORD gzip_get_avail_data(data_stream_t *stream, http_request_t *req)
-{
-    /* Allow reading only from read buffer */
-    return 0;
-}
-
 static BOOL gzip_end_of_data(data_stream_t *stream, http_request_t *req)
 {
     gzip_stream_t *gzip_stream = (gzip_stream_t*)stream;
@@ -460,7 +446,7 @@ static BOOL gzip_end_of_data(data_stream_t *stream, http_request_t *req)
 }
 
 static DWORD gzip_read(data_stream_t *stream, http_request_t *req, BYTE *buf, DWORD size,
-        DWORD *read, blocking_mode_t blocking_mode)
+        DWORD *read, BOOL allow_blocking)
 {
     gzip_stream_t *gzip_stream = (gzip_stream_t*)stream;
     z_stream *zstream = &gzip_stream->zstream;
@@ -468,7 +454,7 @@ static DWORD gzip_read(data_stream_t *stream, http_request_t *req, BYTE *buf, DW
     int zres;
     DWORD res = ERROR_SUCCESS;
 
-    TRACE("(%d %d)\n", size, blocking_mode);
+    TRACE("(%d %x)\n", size, allow_blocking);
 
     while(size && !gzip_stream->end_of_data) {
         if(!gzip_stream->buf_size) {
@@ -478,16 +464,14 @@ static DWORD gzip_read(data_stream_t *stream, http_request_t *req, BYTE *buf, DW
                 gzip_stream->buf_pos = 0;
             }
             res = gzip_stream->parent_stream->vtbl->read(gzip_stream->parent_stream, req, gzip_stream->buf+gzip_stream->buf_size,
-                    sizeof(gzip_stream->buf)-gzip_stream->buf_size, &current_read, blocking_mode);
-            gzip_stream->buf_size += current_read;
+                    sizeof(gzip_stream->buf)-gzip_stream->buf_size, &current_read, allow_blocking);
             if(res != ERROR_SUCCESS)
                 break;
 
+            gzip_stream->buf_size += current_read;
             if(!current_read) {
-                if(blocking_mode != BLOCKING_DISALLOW) {
-                    WARN("unexpected end of data\n");
-                    gzip_stream->end_of_data = TRUE;
-                }
+                WARN("unexpected end of data\n");
+                gzip_stream->end_of_data = TRUE;
                 break;
             }
         }
@@ -513,19 +497,21 @@ static DWORD gzip_read(data_stream_t *stream, http_request_t *req, BYTE *buf, DW
             break;
         }
 
-        if(ret_read && blocking_mode == BLOCKING_ALLOW)
-            blocking_mode = BLOCKING_DISALLOW;
+        if(ret_read)
+            allow_blocking = FALSE;
     }
 
     TRACE("read %u bytes\n", ret_read);
+    if(ret_read)
+        res = ERROR_SUCCESS;
     *read = ret_read;
     return res;
 }
 
-static BOOL gzip_drain_content(data_stream_t *stream, http_request_t *req)
+static DWORD gzip_drain_content(data_stream_t *stream, http_request_t *req, BOOL allow_blocking)
 {
     gzip_stream_t *gzip_stream = (gzip_stream_t*)stream;
-    return gzip_stream->parent_stream->vtbl->drain_content(gzip_stream->parent_stream, req);
+    return gzip_stream->parent_stream->vtbl->drain_content(gzip_stream->parent_stream, req, allow_blocking);
 }
 
 static void gzip_destroy(data_stream_t *stream)
@@ -540,7 +526,6 @@ static void gzip_destroy(data_stream_t *stream)
 }
 
 static const data_stream_vtbl_t gzip_stream_vtbl = {
-    gzip_get_avail_data,
     gzip_end_of_data,
     gzip_read,
     gzip_drain_content,
@@ -823,12 +808,12 @@ static inline BOOL is_basic_auth_value( LPCWSTR pszAuthValue, LPWSTR *pszRealm )
     static const WCHAR szBasic[] = {'B','a','s','i','c'}; /* Note: not nul-terminated */
     static const WCHAR szRealm[] = {'r','e','a','l','m'}; /* Note: not nul-terminated */
     BOOL is_basic;
-    is_basic = !strncmpiW(pszAuthValue, szBasic, ARRAYSIZE(szBasic)) &&
-        ((pszAuthValue[ARRAYSIZE(szBasic)] == ' ') || !pszAuthValue[ARRAYSIZE(szBasic)]);
+    is_basic = !strncmpiW(pszAuthValue, szBasic, ARRAY_SIZE(szBasic)) &&
+        ((pszAuthValue[ARRAY_SIZE(szBasic)] == ' ') || !pszAuthValue[ARRAY_SIZE(szBasic)]);
     if (is_basic && pszRealm)
     {
         LPCWSTR token;
-        LPCWSTR ptr = &pszAuthValue[ARRAYSIZE(szBasic)];
+        LPCWSTR ptr = &pszAuthValue[ARRAY_SIZE(szBasic)];
         LPCWSTR realm;
         ptr++;
         *pszRealm=NULL;
@@ -838,8 +823,8 @@ static inline BOOL is_basic_auth_value( LPCWSTR pszAuthValue, LPWSTR *pszRealm )
         realm = ptr;
         while (*realm == ' ')
             realm++;
-        if(!strncmpiW(realm, szRealm, ARRAYSIZE(szRealm)) &&
-            (realm[ARRAYSIZE(szRealm)] == ' ' || realm[ARRAYSIZE(szRealm)] == '='))
+        if(!strncmpiW(realm, szRealm, ARRAY_SIZE(szRealm)) &&
+            (realm[ARRAY_SIZE(szRealm)] == ' ' || realm[ARRAY_SIZE(szRealm)] == '='))
         {
             token++;
             while (*token == ' ')
@@ -1350,7 +1335,7 @@ BOOL WINAPI HttpAddRequestHeadersW(HINTERNET hHttpRequest,
     http_request_t *request;
     DWORD res = ERROR_INTERNET_INCORRECT_HANDLE_TYPE;
 
-    TRACE("%p, %s, %i, %i\n", hHttpRequest, debugstr_wn(lpszHeader, dwHeaderLength), dwHeaderLength, dwModifier);
+    TRACE("%p, %s, %u, %08x\n", hHttpRequest, debugstr_wn(lpszHeader, dwHeaderLength), dwHeaderLength, dwModifier);
 
     if (!lpszHeader) 
       return TRUE;
@@ -1382,7 +1367,7 @@ BOOL WINAPI HttpAddRequestHeadersA(HINTERNET hHttpRequest,
     WCHAR *headers = NULL;
     BOOL r;
 
-    TRACE("%p, %s, %i, %i\n", hHttpRequest, debugstr_an(lpszHeader, dwHeaderLength), dwHeaderLength, dwModifier);
+    TRACE("%p, %s, %u, %08x\n", hHttpRequest, debugstr_an(lpszHeader, dwHeaderLength), dwHeaderLength, dwModifier);
 
     if(lpszHeader)
         headers = heap_strndupAtoW(lpszHeader, dwHeaderLength, &dwHeaderLength);
@@ -1579,9 +1564,9 @@ static UINT HTTP_DecodeBase64( LPCWSTR base64, LPSTR bin )
     {
         signed char in[4];
 
-        if (base64[0] >= ARRAYSIZE(HTTP_Base64Dec) ||
+        if (base64[0] >= ARRAY_SIZE(HTTP_Base64Dec) ||
             ((in[0] = HTTP_Base64Dec[base64[0]]) == -1) ||
-            base64[1] >= ARRAYSIZE(HTTP_Base64Dec) ||
+            base64[1] >= ARRAY_SIZE(HTTP_Base64Dec) ||
             ((in[1] = HTTP_Base64Dec[base64[1]]) == -1))
         {
             WARN("invalid base64: %s\n", debugstr_w(base64));
@@ -1593,7 +1578,7 @@ static UINT HTTP_DecodeBase64( LPCWSTR base64, LPSTR bin )
 
         if ((base64[2] == '=') && (base64[3] == '='))
             break;
-        if (base64[2] > ARRAYSIZE(HTTP_Base64Dec) ||
+        if (base64[2] > ARRAY_SIZE(HTTP_Base64Dec) ||
             ((in[2] = HTTP_Base64Dec[base64[2]]) == -1))
         {
             WARN("invalid base64: %s\n", debugstr_w(&base64[2]));
@@ -1605,7 +1590,7 @@ static UINT HTTP_DecodeBase64( LPCWSTR base64, LPSTR bin )
 
         if (base64[3] == '=')
             break;
-        if (base64[3] > ARRAYSIZE(HTTP_Base64Dec) ||
+        if (base64[3] > ARRAY_SIZE(HTTP_Base64Dec) ||
             ((in[3] = HTTP_Base64Dec[base64[3]]) == -1))
         {
             WARN("invalid base64: %s\n", debugstr_w(&base64[3]));
@@ -1727,7 +1712,7 @@ static BOOL HTTP_DomainMatches(LPCWSTR server, substr_t domain)
     const WCHAR *dot, *ptr;
     int len;
 
-    if(domain.len == sizeof(localW)/sizeof(WCHAR)-1 && !strncmpiW(domain.str, localW, domain.len) && !strchrW(server, '.' ))
+    if(domain.len == ARRAY_SIZE(localW)-1 && !strncmpiW(domain.str, localW, domain.len) && !strchrW(server, '.' ))
         return TRUE;
 
     if(domain.len && *domain.str != '*')
@@ -1745,7 +1730,7 @@ static BOOL HTTP_DomainMatches(LPCWSTR server, substr_t domain)
         return FALSE;
 
     len = strlenW(dot + 1);
-    if(len <= domain.len - 2)
+    if(len < domain.len - 2)
         return FALSE;
 
     /* The server's domain is longer than the wildcard, so it
@@ -2021,7 +2006,7 @@ static void HTTPREQ_CloseConnection(object_header_t *hdr)
 {
     http_request_t *req = (http_request_t*)hdr;
 
-    http_release_netconn(req, drain_content(req, FALSE));
+    http_release_netconn(req, drain_content(req, FALSE) == ERROR_SUCCESS);
 }
 
 static DWORD str_to_buffer(const WCHAR *str, void *buffer, DWORD *size, BOOL unicode)
@@ -2424,8 +2409,8 @@ static void create_cache_entry(http_request_t *req)
                 if(!end)
                     end = ptr + strlenW(ptr);
 
-                if(!strncmpiW(ptr, no_cacheW, sizeof(no_cacheW)/sizeof(*no_cacheW)-1)
-                        || !strncmpiW(ptr, no_storeW, sizeof(no_storeW)/sizeof(*no_storeW)-1)) {
+                if(!strncmpiW(ptr, no_cacheW, ARRAY_SIZE(no_cacheW)-1)
+                        || !strncmpiW(ptr, no_storeW, ARRAY_SIZE(no_storeW)-1)) {
                     b = FALSE;
                     break;
                 }
@@ -2567,11 +2552,13 @@ static BOOL end_of_read_data( http_request_t *req )
     return !req->read_size && req->data_stream->vtbl->end_of_data(req->data_stream, req);
 }
 
-static DWORD read_http_stream(http_request_t *req, BYTE *buf, DWORD size, DWORD *read, blocking_mode_t blocking_mode)
+static DWORD read_http_stream(http_request_t *req, BYTE *buf, DWORD size, DWORD *read, BOOL allow_blocking)
 {
     DWORD res;
 
-    res = req->data_stream->vtbl->read(req->data_stream, req, buf, size, read, blocking_mode);
+    res = req->data_stream->vtbl->read(req->data_stream, req, buf, size, read, allow_blocking);
+    if(res != ERROR_SUCCESS)
+        *read = 0;
     assert(*read <= size);
 
     if(req->hCacheFile) {
@@ -2584,7 +2571,7 @@ static DWORD read_http_stream(http_request_t *req, BYTE *buf, DWORD size, DWORD 
                 FIXME("WriteFile failed: %u\n", GetLastError());
         }
 
-        if(req->data_stream->vtbl->end_of_data(req->data_stream, req))
+        if((res == ERROR_SUCCESS && !*read) || req->data_stream->vtbl->end_of_data(req->data_stream, req))
             commit_cache_entry(req);
     }
 
@@ -2592,7 +2579,7 @@ static DWORD read_http_stream(http_request_t *req, BYTE *buf, DWORD size, DWORD 
 }
 
 /* fetch some more data into the read buffer (the read section must be held) */
-static DWORD refill_read_buffer(http_request_t *req, blocking_mode_t blocking_mode, DWORD *read_bytes)
+static DWORD refill_read_buffer(http_request_t *req, BOOL allow_blocking, DWORD *read_bytes)
 {
     DWORD res, read=0;
 
@@ -2606,40 +2593,16 @@ static DWORD refill_read_buffer(http_request_t *req, blocking_mode_t blocking_mo
     }
 
     res = read_http_stream(req, req->read_buf+req->read_size, sizeof(req->read_buf) - req->read_size,
-            &read, blocking_mode);
+            &read, allow_blocking);
+    if(res != ERROR_SUCCESS)
+        return res;
+
     req->read_size += read;
 
     TRACE("read %u bytes, read_size %u\n", read, req->read_size);
     if(read_bytes)
         *read_bytes = read;
     return res;
-}
-
-/* return the size of data available to be read immediately (the read section must be held) */
-static DWORD get_avail_data( http_request_t *req )
-{
-    DWORD avail = req->read_size;
-
-    /*
-     * Different Windows versions have different limits of returned data, but all
-     * of them return no more than centrain amount. We use READ_BUFFER_SIZE as a limit.
-     */
-    if(avail < READ_BUFFER_SIZE)
-        avail += req->data_stream->vtbl->get_avail_data(req->data_stream, req);
-
-    return min(avail, READ_BUFFER_SIZE);
-}
-
-static DWORD netconn_get_avail_data(data_stream_t *stream, http_request_t *req)
-{
-    netconn_stream_t *netconn_stream = (netconn_stream_t*)stream;
-    DWORD avail = 0;
-
-    if(is_valid_netconn(req->netconn))
-        NETCON_query_data_available(req->netconn, &avail);
-    return netconn_stream->content_length == ~0u
-        ? avail
-        : min(avail, netconn_stream->content_length-netconn_stream->content_read);
 }
 
 static BOOL netconn_end_of_data(data_stream_t *stream, http_request_t *req)
@@ -2649,52 +2612,50 @@ static BOOL netconn_end_of_data(data_stream_t *stream, http_request_t *req)
 }
 
 static DWORD netconn_read(data_stream_t *stream, http_request_t *req, BYTE *buf, DWORD size,
-        DWORD *read, blocking_mode_t blocking_mode)
+        DWORD *read, BOOL allow_blocking)
 {
     netconn_stream_t *netconn_stream = (netconn_stream_t*)stream;
     DWORD res = ERROR_SUCCESS;
-    int len = 0, ret = 0;
+    int ret = 0;
 
     size = min(size, netconn_stream->content_length-netconn_stream->content_read);
 
     if(size && is_valid_netconn(req->netconn)) {
-        while((res = NETCON_recv(req->netconn, buf+ret, size-ret, blocking_mode != BLOCKING_DISALLOW, &len)) == ERROR_SUCCESS) {
-            if(!len) {
+        res = NETCON_recv(req->netconn, buf, size, allow_blocking, &ret);
+        if(res == ERROR_SUCCESS) {
+            if(!ret)
                 netconn_stream->content_length = netconn_stream->content_read;
-                break;
-            }
-            ret += len;
-            netconn_stream->content_read += len;
-            if(blocking_mode != BLOCKING_WAITALL || size == ret)
-                break;
+            netconn_stream->content_read += ret;
         }
-
-        if(ret || (blocking_mode == BLOCKING_DISALLOW && res == WSAEWOULDBLOCK))
-            res = ERROR_SUCCESS;
     }
 
-    TRACE("read %u bytes\n", ret);
+    TRACE("res %u read %u bytes\n", res, ret);
     *read = ret;
     return res;
 }
 
-static BOOL netconn_drain_content(data_stream_t *stream, http_request_t *req)
+static DWORD netconn_drain_content(data_stream_t *stream, http_request_t *req, BOOL allow_blocking)
 {
     netconn_stream_t *netconn_stream = (netconn_stream_t*)stream;
     BYTE buf[1024];
-    int len;
+    int len, res;
+    size_t size;
 
-    if(netconn_end_of_data(stream, req))
-        return TRUE;
+    if(netconn_stream->content_length == ~0u)
+        return WSAEISCONN;
 
-    do {
-        if(NETCON_recv(req->netconn, buf, sizeof(buf), FALSE, &len) != ERROR_SUCCESS)
-            return FALSE;
+    while(netconn_stream->content_read < netconn_stream->content_length) {
+        size = min(sizeof(buf), netconn_stream->content_length-netconn_stream->content_read);
+        res = NETCON_recv(req->netconn, buf, size, allow_blocking, &len);
+        if(res)
+            return res;
+        if(!len)
+            return WSAECONNABORTED;
 
         netconn_stream->content_read += len;
-    }while(netconn_stream->content_read < netconn_stream->content_length);
+    }
 
-    return TRUE;
+    return ERROR_SUCCESS;
 }
 
 static void netconn_destroy(data_stream_t *stream)
@@ -2702,7 +2663,6 @@ static void netconn_destroy(data_stream_t *stream)
 }
 
 static const data_stream_vtbl_t netconn_stream_vtbl = {
-    netconn_get_avail_data,
     netconn_end_of_data,
     netconn_read,
     netconn_drain_content,
@@ -2720,11 +2680,18 @@ static char next_chunked_data_char(chunked_stream_t *stream)
 static BOOL chunked_end_of_data(data_stream_t *stream, http_request_t *req)
 {
     chunked_stream_t *chunked_stream = (chunked_stream_t*)stream;
-    return chunked_stream->state == CHUNKED_STREAM_STATE_END_OF_STREAM;
+    switch(chunked_stream->state) {
+    case CHUNKED_STREAM_STATE_DISCARD_EOL_AT_END:
+    case CHUNKED_STREAM_STATE_END_OF_STREAM:
+    case CHUNKED_STREAM_STATE_ERROR:
+        return TRUE;
+    default:
+        return FALSE;
+    }
 }
 
 static DWORD chunked_read(data_stream_t *stream, http_request_t *req, BYTE *buf, DWORD size,
-        DWORD *read, blocking_mode_t blocking_mode)
+        DWORD *read, BOOL allow_blocking)
 {
     chunked_stream_t *chunked_stream = (chunked_stream_t*)stream;
     DWORD ret_read = 0, res = ERROR_SUCCESS;
@@ -2737,20 +2704,28 @@ static DWORD chunked_read(data_stream_t *stream, http_request_t *req, BYTE *buf,
 
         /* Ensure that we have data in the buffer for states that need it. */
         if(!chunked_stream->buf_size) {
+            BOOL blocking_read = allow_blocking;
+
             switch(chunked_stream->state) {
-            case CHUNKED_STREAM_STATE_READING_CHUNK_SIZE:
-            case CHUNKED_STREAM_STATE_DISCARD_EOL_AFTER_SIZE:
-            case CHUNKED_STREAM_STATE_DISCARD_EOL_AFTER_DATA:
             case CHUNKED_STREAM_STATE_DISCARD_EOL_AT_END:
+            case CHUNKED_STREAM_STATE_DISCARD_EOL_AFTER_SIZE:
+                /* never allow blocking after 0 chunk size */
+                if(!chunked_stream->chunk_size)
+                    blocking_read = FALSE;
+                /* fall through */
+            case CHUNKED_STREAM_STATE_READING_CHUNK_SIZE:
+            case CHUNKED_STREAM_STATE_DISCARD_EOL_AFTER_DATA:
                 chunked_stream->buf_pos = 0;
-                res = NETCON_recv(req->netconn, chunked_stream->buf, sizeof(chunked_stream->buf), blocking_mode != BLOCKING_DISALLOW, &read_bytes);
+                res = NETCON_recv(req->netconn, chunked_stream->buf, sizeof(chunked_stream->buf), blocking_read, &read_bytes);
                 if(res == ERROR_SUCCESS && read_bytes) {
                     chunked_stream->buf_size += read_bytes;
                 }else if(res == WSAEWOULDBLOCK) {
+                    if(ret_read || allow_blocking)
+                        res = ERROR_SUCCESS;
                     continue_read = FALSE;
                     continue;
                 }else {
-                    chunked_stream->state = CHUNKED_STREAM_STATE_END_OF_STREAM;
+                    chunked_stream->state = CHUNKED_STREAM_STATE_ERROR;
                 }
                 break;
             default:
@@ -2805,14 +2780,14 @@ static DWORD chunked_read(data_stream_t *stream, http_request_t *req, BYTE *buf,
                 chunked_stream->buf_size -= read_bytes;
             }else {
                 res = NETCON_recv(req->netconn, (char*)buf+ret_read, read_bytes,
-                                  blocking_mode != BLOCKING_DISALLOW, (int*)&read_bytes);
+                                  allow_blocking, (int*)&read_bytes);
                 if(res != ERROR_SUCCESS) {
                     continue_read = FALSE;
                     break;
                 }
 
                 if(!read_bytes) {
-                    chunked_stream->state = CHUNKED_STREAM_STATE_END_OF_STREAM;
+                    chunked_stream->state = CHUNKED_STREAM_STATE_ERROR;
                     continue;
                 }
             }
@@ -2822,8 +2797,7 @@ static DWORD chunked_read(data_stream_t *stream, http_request_t *req, BYTE *buf,
             ret_read += read_bytes;
             if(!chunked_stream->chunk_size)
                 chunked_stream->state = CHUNKED_STREAM_STATE_DISCARD_EOL_AFTER_DATA;
-            if(blocking_mode == BLOCKING_ALLOW)
-                blocking_mode = BLOCKING_DISALLOW;
+            allow_blocking = FALSE;
             break;
 
         case CHUNKED_STREAM_STATE_DISCARD_EOL_AFTER_DATA:
@@ -2843,6 +2817,7 @@ static DWORD chunked_read(data_stream_t *stream, http_request_t *req, BYTE *buf,
             break;
 
         case CHUNKED_STREAM_STATE_END_OF_STREAM:
+        case CHUNKED_STREAM_STATE_ERROR:
             continue_read = FALSE;
             break;
         }
@@ -2850,7 +2825,7 @@ static DWORD chunked_read(data_stream_t *stream, http_request_t *req, BYTE *buf,
 
     if(ret_read)
         res = ERROR_SUCCESS;
-    if(res != ERROR_SUCCESS && res != WSAEWOULDBLOCK)
+    if(res != ERROR_SUCCESS)
         return res;
 
     TRACE("read %d bytes\n", ret_read);
@@ -2858,30 +2833,22 @@ static DWORD chunked_read(data_stream_t *stream, http_request_t *req, BYTE *buf,
     return ERROR_SUCCESS;
 }
 
-static DWORD chunked_get_avail_data(data_stream_t *stream, http_request_t *req)
+static DWORD chunked_drain_content(data_stream_t *stream, http_request_t *req, BOOL allow_blocking)
 {
     chunked_stream_t *chunked_stream = (chunked_stream_t*)stream;
-    DWORD avail = 0;
+    BYTE buf[1024];
+    DWORD size, res;
 
-    if(chunked_stream->state != CHUNKED_STREAM_STATE_READING_CHUNK) {
-        DWORD res, read;
-
-        /* try to process to the next chunk */
-        res = chunked_read(stream, req, NULL, 0, &read, BLOCKING_DISALLOW);
-        if(res != ERROR_SUCCESS || chunked_stream->state != CHUNKED_STREAM_STATE_READING_CHUNK)
-            return 0;
+    while(chunked_stream->state != CHUNKED_STREAM_STATE_END_OF_STREAM
+          && chunked_stream->state != CHUNKED_STREAM_STATE_ERROR) {
+        res = chunked_read(stream, req, buf, sizeof(buf), &size, allow_blocking);
+        if(res != ERROR_SUCCESS)
+            return res;
     }
 
-    if(is_valid_netconn(req->netconn) && chunked_stream->buf_size < chunked_stream->chunk_size)
-        NETCON_query_data_available(req->netconn, &avail);
-
-    return min(avail + chunked_stream->buf_size, chunked_stream->chunk_size);
-}
-
-static BOOL chunked_drain_content(data_stream_t *stream, http_request_t *req)
-{
-    chunked_stream_t *chunked_stream = (chunked_stream_t*)stream;
-    return chunked_stream->state == CHUNKED_STREAM_STATE_END_OF_STREAM;
+    if(chunked_stream->state != CHUNKED_STREAM_STATE_END_OF_STREAM)
+        return ERROR_NO_DATA;
+    return ERROR_SUCCESS;
 }
 
 static void chunked_destroy(data_stream_t *stream)
@@ -2891,7 +2858,6 @@ static void chunked_destroy(data_stream_t *stream)
 }
 
 static const data_stream_vtbl_t chunked_stream_vtbl = {
-    chunked_get_avail_data,
     chunked_end_of_data,
     chunked_read,
     chunked_drain_content,
@@ -2982,48 +2948,38 @@ static void send_request_complete(http_request_t *req, DWORD_PTR result, DWORD e
             sizeof(INTERNET_ASYNC_RESULT));
 }
 
-static void HTTP_ReceiveRequestData(http_request_t *req, BOOL first_notif, DWORD *ret_size)
+static void HTTP_ReceiveRequestData(http_request_t *req)
 {
-    DWORD res, read = 0, avail = 0;
-    blocking_mode_t mode;
+    DWORD res, read = 0;
 
     TRACE("%p\n", req);
 
     EnterCriticalSection( &req->read_section );
 
-    mode = first_notif && req->read_size ? BLOCKING_DISALLOW : BLOCKING_ALLOW;
-    res = refill_read_buffer(req, mode, &read);
+    res = refill_read_buffer(req, FALSE, &read);
     if(res == ERROR_SUCCESS)
-        avail = get_avail_data(req);
+        read += req->read_size;
 
     LeaveCriticalSection( &req->read_section );
 
-    if(res != ERROR_SUCCESS || (mode != BLOCKING_DISALLOW && !read)) {
+    if(res != WSAEWOULDBLOCK && (res != ERROR_SUCCESS || !read)) {
         WARN("res %u read %u, closing connection\n", res, read);
         http_release_netconn(req, FALSE);
     }
 
-    if(res != ERROR_SUCCESS) {
+    if(res != ERROR_SUCCESS && res != WSAEWOULDBLOCK) {
         send_request_complete(req, 0, res);
         return;
     }
 
-    if(ret_size)
-        *ret_size = avail;
-    if(first_notif)
-        avail = 0;
-
-    send_request_complete(req, req->session->hdr.dwInternalFlags & INET_OPENURL ? (DWORD_PTR)req->hdr.hInternet : 1, avail);
+    send_request_complete(req, req->session->hdr.dwInternalFlags & INET_OPENURL ? (DWORD_PTR)req->hdr.hInternet : 1, 0);
 }
 
 /* read data from the http connection (the read section must be held) */
-static DWORD HTTPREQ_Read(http_request_t *req, void *buffer, DWORD size, DWORD *read)
+static DWORD HTTPREQ_Read(http_request_t *req, void *buffer, DWORD size, DWORD *read, BOOL allow_blocking)
 {
     DWORD current_read = 0, ret_read = 0;
-    blocking_mode_t blocking_mode;
     DWORD res = ERROR_SUCCESS;
-
-    blocking_mode = req->session->appInfo->hdr.dwFlags & INTERNET_FLAG_ASYNC ? BLOCKING_ALLOW : BLOCKING_WAITALL;
 
     EnterCriticalSection( &req->read_section );
 
@@ -3032,172 +2988,184 @@ static DWORD HTTPREQ_Read(http_request_t *req, void *buffer, DWORD size, DWORD *
         memcpy(buffer, req->read_buf+req->read_pos, ret_read);
         req->read_size -= ret_read;
         req->read_pos += ret_read;
-        if(blocking_mode == BLOCKING_ALLOW)
-            blocking_mode = BLOCKING_DISALLOW;
+        allow_blocking = FALSE;
     }
 
     if(ret_read < size) {
-        res = read_http_stream(req, (BYTE*)buffer+ret_read, size-ret_read, &current_read, blocking_mode);
-        ret_read += current_read;
+        res = read_http_stream(req, (BYTE*)buffer+ret_read, size-ret_read, &current_read, allow_blocking);
+        if(res == ERROR_SUCCESS)
+            ret_read += current_read;
+        else if(res == WSAEWOULDBLOCK && ret_read)
+            res = ERROR_SUCCESS;
     }
 
     LeaveCriticalSection( &req->read_section );
 
     *read = ret_read;
-    TRACE( "retrieved %u bytes (%u)\n", ret_read, req->contentLength );
+    TRACE( "retrieved %u bytes (res %u)\n", ret_read, res );
 
-    if(size && !ret_read)
-        http_release_netconn(req, res == ERROR_SUCCESS);
+    if(res != WSAEWOULDBLOCK) {
+        if(res != ERROR_SUCCESS)
+            http_release_netconn(req, FALSE);
+        else if(!ret_read && drain_content(req, FALSE) == ERROR_SUCCESS)
+            http_release_netconn(req, TRUE);
+    }
 
     return res;
 }
 
-static BOOL drain_content(http_request_t *req, BOOL blocking)
+static DWORD drain_content(http_request_t *req, BOOL blocking)
 {
-    BOOL ret;
+    DWORD res;
 
-    if(!is_valid_netconn(req->netconn) || req->contentLength == -1)
-        return FALSE;
+    TRACE("%p\n", req->netconn);
+
+    if(!is_valid_netconn(req->netconn))
+        return ERROR_NO_DATA;
 
     if(!strcmpW(req->verb, szHEAD))
-        return TRUE;
-
-    if(!blocking)
-        return req->data_stream->vtbl->drain_content(req->data_stream, req);
+        return ERROR_SUCCESS;
 
     EnterCriticalSection( &req->read_section );
-
-    while(1) {
-        DWORD bytes_read, res;
-        BYTE buf[4096];
-
-        res = HTTPREQ_Read(req, buf, sizeof(buf), &bytes_read);
-        if(res != ERROR_SUCCESS) {
-            ret = FALSE;
-            break;
-        }
-        if(!bytes_read) {
-            ret = TRUE;
-            break;
-        }
-    }
-
+    res = req->data_stream->vtbl->drain_content(req->data_stream, req, blocking);
     LeaveCriticalSection( &req->read_section );
-    return ret;
+    return res;
 }
 
 typedef struct {
     task_header_t hdr;
     void *buf;
     DWORD size;
+    DWORD read_pos;
     DWORD *ret_read;
-} read_file_ex_task_t;
+} read_file_task_t;
 
-static void AsyncReadFileExProc(task_header_t *hdr)
+static void async_read_file_proc(task_header_t *hdr)
 {
-    read_file_ex_task_t *task = (read_file_ex_task_t*)hdr;
+    read_file_task_t *task = (read_file_task_t*)hdr;
     http_request_t *req = (http_request_t*)task->hdr.hdr;
-    DWORD res = ERROR_SUCCESS, read = 0, buffered = 0;
+    DWORD res = ERROR_SUCCESS, read = task->read_pos, complete_arg = 0;
 
-    TRACE("%p\n", req);
+    TRACE("req %p buf %p size %u read_pos %u ret_read %p\n", req, task->buf, task->size, task->read_pos, task->ret_read);
 
-    if(task->ret_read)
-        res = HTTPREQ_Read(req, task->buf, task->size, &read);
-    if(res == ERROR_SUCCESS)
-        res = refill_read_buffer(req, task->ret_read ? BLOCKING_DISALLOW : BLOCKING_ALLOW, &buffered);
-    if (res == ERROR_SUCCESS)
-    {
+    if(task->buf) {
+        DWORD read_bytes;
+        while (read < task->size) {
+            res = HTTPREQ_Read(req, (char*)task->buf + read, task->size - read, &read_bytes, TRUE);
+            if (res != ERROR_SUCCESS || !read_bytes)
+                break;
+            read += read_bytes;
+        }
+    }else {
+        EnterCriticalSection(&req->read_section);
+        res = refill_read_buffer(req, TRUE, &read);
+        LeaveCriticalSection(&req->read_section);
+
         if(task->ret_read)
-            *task->ret_read = read;
-        read += buffered;
-        INTERNET_SendCallback(&req->hdr, req->hdr.dwContext, INTERNET_STATUS_RESPONSE_RECEIVED,
-                &read, sizeof(read));
+            complete_arg = read; /* QueryDataAvailable reports read bytes in request complete notification */
+        if(res != ERROR_SUCCESS || !read)
+            http_release_netconn(req, drain_content(req, FALSE) == ERROR_SUCCESS);
     }
 
-    send_request_complete(req, res == ERROR_SUCCESS, res);
+    TRACE("res %u read %u\n", res, read);
+
+    if(task->ret_read)
+        *task->ret_read = read;
+
+    /* FIXME: We should report bytes transferred before decoding content. */
+    INTERNET_SendCallback(&req->hdr, req->hdr.dwContext, INTERNET_STATUS_RESPONSE_RECEIVED, &read, sizeof(read));
+
+    if(res != ERROR_SUCCESS)
+        complete_arg = res;
+    send_request_complete(req, res == ERROR_SUCCESS, complete_arg);
 }
 
-static DWORD HTTPREQ_ReadFileEx(object_header_t *hdr, void *buf, DWORD size, DWORD *ret_read,
+static DWORD async_read(http_request_t *req, void *buf, DWORD size, DWORD read_pos, DWORD *ret_read)
+{
+    read_file_task_t *task;
+
+    task = alloc_async_task(&req->hdr, async_read_file_proc, sizeof(*task));
+    if(!task)
+        return ERROR_OUTOFMEMORY;
+
+    task->buf = buf;
+    task->size = size;
+    task->read_pos = read_pos;
+    task->ret_read = ret_read;
+
+    INTERNET_AsyncCall(&task->hdr);
+    return ERROR_IO_PENDING;
+}
+
+static DWORD HTTPREQ_ReadFile(object_header_t *hdr, void *buf, DWORD size, DWORD *ret_read,
         DWORD flags, DWORD_PTR context)
 {
-
     http_request_t *req = (http_request_t*)hdr;
-    DWORD res, read, cread, error = ERROR_SUCCESS;
+    DWORD res = ERROR_SUCCESS, read = 0, cread, error = ERROR_SUCCESS;
+    BOOL allow_blocking, notify_received = FALSE;
 
     TRACE("(%p %p %u %x)\n", req, buf, size, flags);
 
     if (flags & ~(IRF_ASYNC|IRF_NO_WAIT))
         FIXME("these dwFlags aren't implemented: 0x%x\n", flags & ~(IRF_ASYNC|IRF_NO_WAIT));
 
-    INTERNET_SendCallback(&req->hdr, req->hdr.dwContext, INTERNET_STATUS_RECEIVING_RESPONSE, NULL, 0);
+    allow_blocking = !(req->session->appInfo->hdr.dwFlags & INTERNET_FLAG_ASYNC);
 
-    if (req->session->appInfo->hdr.dwFlags & INTERNET_FLAG_ASYNC)
-    {
-        read_file_ex_task_t *task;
+    if(allow_blocking || TryEnterCriticalSection(&req->read_section)) {
+        if(allow_blocking)
+            EnterCriticalSection(&req->read_section);
+        if(hdr->dwError == ERROR_SUCCESS)
+            hdr->dwError = INTERNET_HANDLE_IN_USE;
+        else if(hdr->dwError == INTERNET_HANDLE_IN_USE)
+            hdr->dwError = ERROR_INTERNET_INTERNAL_ERROR;
 
-        if (TryEnterCriticalSection( &req->read_section ))
-        {
-            if (get_avail_data(req) || end_of_read_data(req))
-            {
-                res = HTTPREQ_Read(req, buf, size, &read);
-                LeaveCriticalSection( &req->read_section );
-                goto done;
-            }
-            LeaveCriticalSection( &req->read_section );
+        if(req->read_size) {
+            read = min(size, req->read_size);
+            memcpy(buf, req->read_buf + req->read_pos, read);
+            req->read_size -= read;
+            req->read_pos += read;
         }
 
-        task = alloc_async_task(&req->hdr, AsyncReadFileExProc, sizeof(*task));
-        task->buf = buf;
-        task->size = size;
-        task->ret_read = (flags & IRF_NO_WAIT) ? NULL : ret_read;
+        if(read < size && (!read || !(flags & IRF_NO_WAIT)) && !end_of_read_data(req)) {
+            LeaveCriticalSection(&req->read_section);
+            INTERNET_SendCallback(&req->hdr, req->hdr.dwContext, INTERNET_STATUS_RECEIVING_RESPONSE, NULL, 0);
+            EnterCriticalSection( &req->read_section );
+            notify_received = TRUE;
 
-        INTERNET_AsyncCall(&task->hdr);
+            while(read < size) {
+                res = HTTPREQ_Read(req, (char*)buf+read, size-read, &cread, allow_blocking);
+                read += cread;
+                if (res != ERROR_SUCCESS || !cread)
+                    break;
+            }
+        }
 
-        return ERROR_IO_PENDING;
-    }
-
-    read = 0;
-
-    EnterCriticalSection( &req->read_section );
-    if(hdr->dwError == ERROR_SUCCESS)
-        hdr->dwError = INTERNET_HANDLE_IN_USE;
-    else if(hdr->dwError == INTERNET_HANDLE_IN_USE)
-        hdr->dwError = ERROR_INTERNET_INTERNAL_ERROR;
-
-    while(1) {
-        res = HTTPREQ_Read(req, (char*)buf+read, size-read, &cread);
-        if(res != ERROR_SUCCESS)
-            break;
-
-        read += cread;
-        if(read == size || end_of_read_data(req))
-            break;
+        if(hdr->dwError == INTERNET_HANDLE_IN_USE)
+            hdr->dwError = ERROR_SUCCESS;
+        else
+            error = hdr->dwError;
 
         LeaveCriticalSection( &req->read_section );
-
-        INTERNET_SendCallback(&req->hdr, req->hdr.dwContext, INTERNET_STATUS_RESPONSE_RECEIVED,
-                &cread, sizeof(cread));
-        INTERNET_SendCallback(&req->hdr, req->hdr.dwContext,
-                INTERNET_STATUS_RECEIVING_RESPONSE, NULL, 0);
-
-        EnterCriticalSection( &req->read_section );
+    }else {
+        res = WSAEWOULDBLOCK;
     }
 
-    if(hdr->dwError == INTERNET_HANDLE_IN_USE)
-        hdr->dwError = ERROR_SUCCESS;
-    else
-        error = hdr->dwError;
+    if(res == WSAEWOULDBLOCK) {
+        if(!(flags & IRF_NO_WAIT))
+            return async_read(req, buf, size, read, ret_read);
+        if(!read)
+            return async_read(req, NULL, 0, 0, NULL);
+        res = ERROR_SUCCESS;
+    }
 
-    LeaveCriticalSection( &req->read_section );
-
-done:
     *ret_read = read;
-    if (res == ERROR_SUCCESS) {
+    if (res != ERROR_SUCCESS)
+        return res;
+
+    if(notify_received)
         INTERNET_SendCallback(&req->hdr, req->hdr.dwContext, INTERNET_STATUS_RESPONSE_RECEIVED,
                 &read, sizeof(read));
-    }
-
-    return res==ERROR_SUCCESS ? error : res;
+    return error;
 }
 
 static DWORD HTTPREQ_WriteFile(object_header_t *hdr, const void *buffer, DWORD size, DWORD *written)
@@ -3216,99 +3184,60 @@ static DWORD HTTPREQ_WriteFile(object_header_t *hdr, const void *buffer, DWORD s
     return res;
 }
 
-static DWORD HTTPREQ_ReadFile(object_header_t *hdr, void *buffer, DWORD size, DWORD *read)
-{
-    http_request_t *req = (http_request_t*)hdr;
-    DWORD res;
-
-    if (req->session->appInfo->hdr.dwFlags & INTERNET_FLAG_ASYNC)
-    {
-        read_file_ex_task_t *task;
-
-        if (TryEnterCriticalSection( &req->read_section ))
-        {
-            if (get_avail_data(req) || end_of_read_data(req))
-            {
-                res = HTTPREQ_Read(req, buffer, size, read);
-                LeaveCriticalSection( &req->read_section );
-                return res;
-            }
-            LeaveCriticalSection( &req->read_section );
-        }
-
-        task = alloc_async_task(&req->hdr, AsyncReadFileExProc, sizeof(*task));
-        task->buf = buffer;
-        task->size = size;
-        task->ret_read = read;
-
-        *read = 0;
-        INTERNET_AsyncCall(&task->hdr);
-
-        return ERROR_IO_PENDING;
-    }
-
-    EnterCriticalSection( &req->read_section );
-    if(hdr->dwError == INTERNET_HANDLE_IN_USE)
-        hdr->dwError = ERROR_INTERNET_INTERNAL_ERROR;
-
-    res = HTTPREQ_Read(req, buffer, size, read);
-    if(res == ERROR_SUCCESS)
-        res = hdr->dwError;
-    LeaveCriticalSection( &req->read_section );
-
-    return res;
-}
-
-typedef struct {
-    task_header_t hdr;
-    DWORD *ret_size;
-} http_data_available_task_t;
-
-static void AsyncQueryDataAvailableProc(task_header_t *hdr)
-{
-    http_data_available_task_t *task = (http_data_available_task_t*)hdr;
-
-    HTTP_ReceiveRequestData((http_request_t*)task->hdr.hdr, FALSE, task->ret_size);
-}
-
 static DWORD HTTPREQ_QueryDataAvailable(object_header_t *hdr, DWORD *available, DWORD flags, DWORD_PTR ctx)
 {
     http_request_t *req = (http_request_t*)hdr;
+    DWORD res = ERROR_SUCCESS, avail = 0, error = ERROR_SUCCESS;
+    BOOL allow_blocking, notify_received = FALSE;
 
     TRACE("(%p %p %x %lx)\n", req, available, flags, ctx);
 
-    if (req->session->appInfo->hdr.dwFlags & INTERNET_FLAG_ASYNC)
-    {
-        http_data_available_task_t *task;
+    if (flags & ~(IRF_ASYNC|IRF_NO_WAIT))
+        FIXME("these dwFlags aren't implemented: 0x%x\n", flags & ~(IRF_ASYNC|IRF_NO_WAIT));
 
-        /* never wait, if we can't enter the section we queue an async request right away */
-        if (TryEnterCriticalSection( &req->read_section ))
-        {
-            refill_read_buffer(req, BLOCKING_DISALLOW, NULL);
-            if ((*available = get_avail_data( req ))) goto done;
-            if (end_of_read_data( req )) goto done;
-            LeaveCriticalSection( &req->read_section );
+    *available = 0;
+    allow_blocking = !(req->session->appInfo->hdr.dwFlags & INTERNET_FLAG_ASYNC);
+
+    if(allow_blocking || TryEnterCriticalSection(&req->read_section)) {
+        if(allow_blocking)
+            EnterCriticalSection(&req->read_section);
+        if(hdr->dwError == ERROR_SUCCESS)
+            hdr->dwError = INTERNET_HANDLE_IN_USE;
+        else if(hdr->dwError == INTERNET_HANDLE_IN_USE)
+            hdr->dwError = ERROR_INTERNET_INTERNAL_ERROR;
+
+        avail = req->read_size;
+
+        if(!avail && !end_of_read_data(req)) {
+            LeaveCriticalSection(&req->read_section);
+            INTERNET_SendCallback(&req->hdr, req->hdr.dwContext, INTERNET_STATUS_RECEIVING_RESPONSE, NULL, 0);
+            EnterCriticalSection( &req->read_section );
+            notify_received = TRUE;
+
+            res = refill_read_buffer(req, allow_blocking, &avail);
         }
 
-        task = alloc_async_task(&req->hdr, AsyncQueryDataAvailableProc, sizeof(*task));
-        task->ret_size = available;
-        INTERNET_AsyncCall(&task->hdr);
-        return ERROR_IO_PENDING;
+        if(hdr->dwError == INTERNET_HANDLE_IN_USE)
+            hdr->dwError = ERROR_SUCCESS;
+        else
+            error = hdr->dwError;
+
+        LeaveCriticalSection( &req->read_section );
+    }else {
+        res = WSAEWOULDBLOCK;
     }
 
-    EnterCriticalSection( &req->read_section );
+    if(res == WSAEWOULDBLOCK)
+        return async_read(req, NULL, 0, 0, available);
 
-    if (!(*available = get_avail_data( req )) && !end_of_read_data( req ))
-    {
-        refill_read_buffer( req, BLOCKING_ALLOW, NULL );
-        *available = get_avail_data( req );
-    }
+    if (res != ERROR_SUCCESS)
+        return res;
 
-done:
-    LeaveCriticalSection( &req->read_section );
-
-    TRACE( "returning %u\n", *available );
-    return ERROR_SUCCESS;
+    *available = avail;
+    if(notify_received)
+        INTERNET_SendCallback(&req->hdr, req->hdr.dwContext, INTERNET_STATUS_RESPONSE_RECEIVED,
+                &avail, sizeof(avail));
+    return error;
 }
 
 static DWORD HTTPREQ_LockRequestFile(object_header_t *hdr, req_file_t **ret)
@@ -3332,7 +3261,6 @@ static const object_vtbl_t HTTPREQVtbl = {
     HTTPREQ_QueryOption,
     HTTPREQ_SetOption,
     HTTPREQ_ReadFile,
-    HTTPREQ_ReadFileEx,
     HTTPREQ_WriteFile,
     HTTPREQ_QueryDataAvailable,
     NULL,
@@ -3585,8 +3513,6 @@ static const LPCWSTR header_lookup[] = {
     szUnless_Modified_Since,	/* HTTP_QUERY_UNLESS_MODIFIED_SINCE = 70 */
 };
 
-#define LAST_TABLE_HEADER (sizeof(header_lookup)/sizeof(header_lookup[0]))
-
 /***********************************************************************
  *           HTTP_HttpQueryInfoW (internal)
  */
@@ -3772,9 +3698,9 @@ static DWORD HTTP_HttpQueryInfoW(http_request_t *request, DWORD dwInfoLevel,
         return res;
     }
     default:
-        assert (LAST_TABLE_HEADER == (HTTP_QUERY_UNLESS_MODIFIED_SINCE + 1));
+        assert (ARRAY_SIZE(header_lookup) == (HTTP_QUERY_UNLESS_MODIFIED_SINCE + 1));
 
-        if (level < LAST_TABLE_HEADER && header_lookup[level])
+        if (level < ARRAY_SIZE(header_lookup) && header_lookup[level])
             index = HTTP_GetCustomHeaderIndex(request, header_lookup[level],
                                               requested_index,request_only);
     }
@@ -3945,18 +3871,18 @@ BOOL WINAPI HttpQueryInfoW(HINTERNET hHttpRequest, DWORD dwInfoLevel,
 
 	TRACE("(%p, 0x%08x)--> %d\n", hHttpRequest, dwInfoLevel, info);
 	TRACE("  Attribute:");
-	for (i = 0; i < (sizeof(query_flags) / sizeof(query_flags[0])); i++) {
+        for (i = 0; i < ARRAY_SIZE(query_flags); i++) {
 	    if (query_flags[i].val == info) {
 		TRACE(" %s", query_flags[i].name);
 		break;
 	    }
 	}
-	if (i == (sizeof(query_flags) / sizeof(query_flags[0]))) {
+        if (i == ARRAY_SIZE(query_flags)) {
 	    TRACE(" Unknown (%08x)", info);
 	}
 
 	TRACE(" Modifier:");
-	for (i = 0; i < (sizeof(modifier_flags) / sizeof(modifier_flags[0])); i++) {
+        for (i = 0; i < ARRAY_SIZE(modifier_flags); i++) {
 	    if (modifier_flags[i].val & info_mod) {
 		TRACE(" %s", modifier_flags[i].name);
 		info_mod &= ~ modifier_flags[i].val;
@@ -4080,7 +4006,16 @@ static WCHAR *get_redirect_url(http_request_t *request)
         return NULL;
     }
 
+    urlComponents.dwSchemeLength = 1;
+    b = InternetCrackUrlW(redirect_url, url_length / sizeof(WCHAR), 0, &urlComponents);
+    if(b && urlComponents.dwSchemeLength &&
+       urlComponents.nScheme != INTERNET_SCHEME_HTTP && urlComponents.nScheme != INTERNET_SCHEME_HTTPS) {
+        TRACE("redirect to non-http URL\n");
+        return NULL;
+    }
+
     urlComponents.lpszScheme = (request->hdr.dwFlags & INTERNET_FLAG_SECURE) ? szHttps : szHttp;
+    urlComponents.dwSchemeLength = 0;
     urlComponents.lpszHostName = request->server->name;
     urlComponents.nPort = request->server->port;
     urlComponents.lpszUserName = session->userName;
@@ -4117,27 +4052,36 @@ static WCHAR *get_redirect_url(http_request_t *request)
 /***********************************************************************
  *           HTTP_HandleRedirect (internal)
  */
-static DWORD HTTP_HandleRedirect(http_request_t *request, LPCWSTR lpszUrl)
+static DWORD HTTP_HandleRedirect(http_request_t *request, WCHAR *url)
 {
+    URL_COMPONENTSW urlComponents = { sizeof(urlComponents) };
     http_session_t *session = request->session;
-    WCHAR *path;
+    size_t url_len = strlenW(url);
 
-    if(lpszUrl[0]=='/')
+    if(url[0] == '/')
     {
         /* if it's an absolute path, keep the same session info */
-        path = heap_strdupW(lpszUrl);
+        urlComponents.lpszUrlPath = url;
+        urlComponents.dwUrlPathLength = url_len;
     }
     else
     {
-        URL_COMPONENTSW urlComponents = { sizeof(urlComponents) };
-        BOOL custom_port = FALSE;
-        substr_t host;
-
         urlComponents.dwHostNameLength = 1;
         urlComponents.dwUserNameLength = 1;
         urlComponents.dwUrlPathLength = 1;
-        if(!InternetCrackUrlW(lpszUrl, strlenW(lpszUrl), 0, &urlComponents))
+        if(!InternetCrackUrlW(url, url_len, 0, &urlComponents))
             return INTERNET_GetLastError();
+
+        if(!urlComponents.dwHostNameLength)
+            return ERROR_INTERNET_INVALID_URL;
+    }
+
+    INTERNET_SendCallback(&request->hdr, request->hdr.dwContext, INTERNET_STATUS_REDIRECT,
+                          url, (url_len + 1) * sizeof(WCHAR));
+
+    if(urlComponents.dwHostNameLength) {
+        BOOL custom_port = FALSE;
+        substr_t host;
 
         if(urlComponents.nScheme == INTERNET_SCHEME_HTTP) {
             if(request->hdr.dwFlags & INTERNET_FLAG_SECURE) {
@@ -4184,17 +4128,18 @@ static DWORD HTTP_HandleRedirect(http_request_t *request, LPCWSTR lpszUrl)
             HTTP_ProcessHeader(request, hostW, request->server->host_port, HTTP_ADDREQ_FLAG_ADD | HTTP_ADDREQ_FLAG_REPLACE | HTTP_ADDHDR_FLAG_REQ);
         else
             HTTP_ProcessHeader(request, hostW, request->server->name, HTTP_ADDREQ_FLAG_ADD | HTTP_ADDREQ_FLAG_REPLACE | HTTP_ADDHDR_FLAG_REQ);
-
-        path = heap_strndupW(urlComponents.lpszUrlPath, urlComponents.dwUrlPathLength);
     }
+
     heap_free(request->path);
     request->path = NULL;
-    if (*path)
+    if(urlComponents.dwUrlPathLength)
     {
         DWORD needed = 1;
         HRESULT rc;
         WCHAR dummy = 0;
+        WCHAR *path;
 
+        path = heap_strndupW(urlComponents.lpszUrlPath, urlComponents.dwUrlPathLength);
         rc = UrlEscapeW(path, &dummy, &needed, URL_ESCAPE_SPACES_ONLY);
         if (rc != E_POINTER)
             ERR("Unable to escape string!(%s) (%d)\n",debugstr_w(path),rc);
@@ -4206,9 +4151,8 @@ static DWORD HTTP_HandleRedirect(http_request_t *request, LPCWSTR lpszUrl)
             ERR("Unable to escape string!(%s) (%d)\n",debugstr_w(path),rc);
             strcpyW(request->path, path);
         }
+        heap_free(path);
     }
-
-    heap_free(path);
 
     /* Remove custom content-type/length headers on redirects.  */
     remove_header(request, szContent_Type, TRUE);
@@ -4264,7 +4208,7 @@ static WORD HTTP_ParseWkday(LPCWSTR day)
                                      { 'f','r','i',0 },
                                      { 's','a','t',0 }};
     unsigned int i;
-    for (i = 0; i < sizeof(days)/sizeof(*days); i++)
+    for (i = 0; i < ARRAY_SIZE(days); i++)
         if (!strcmpiW(day, days[i]))
             return i;
 
@@ -4369,7 +4313,7 @@ static BOOL HTTP_ParseDateAsAsctime(LPCWSTR value, FILETIME *ft)
     unsigned long num;
 
     for (ptr = value, dayPtr = day; *ptr && !isspaceW(*ptr) &&
-         dayPtr - day < sizeof(day) / sizeof(day[0]) - 1; ptr++, dayPtr++)
+         dayPtr - day < ARRAY_SIZE(day) - 1; ptr++, dayPtr++)
         *dayPtr = *ptr;
     *dayPtr = 0;
     st.wDayOfWeek = HTTP_ParseWkday(day);
@@ -4382,8 +4326,7 @@ static BOOL HTTP_ParseDateAsAsctime(LPCWSTR value, FILETIME *ft)
     while (isspaceW(*ptr))
         ptr++;
 
-    for (monthPtr = month; !isspace(*ptr) &&
-         monthPtr - month < sizeof(month) / sizeof(month[0]) - 1;
+    for (monthPtr = month; !isspaceW(*ptr) && monthPtr - month < ARRAY_SIZE(month) - 1;
          monthPtr++, ptr++)
         *monthPtr = *ptr;
     *monthPtr = 0;
@@ -4479,8 +4422,7 @@ static BOOL HTTP_ParseRfc1123Date(LPCWSTR value, FILETIME *ft)
     while (isspaceW(*ptr))
         ptr++;
 
-    for (monthPtr = month; !isspace(*ptr) &&
-         monthPtr - month < sizeof(month) / sizeof(month[0]) - 1;
+    for (monthPtr = month; !isspaceW(*ptr) && monthPtr - month < ARRAY_SIZE(month) - 1;
          monthPtr++, ptr++)
         *monthPtr = *ptr;
     *monthPtr = 0;
@@ -4527,7 +4469,7 @@ static WORD HTTP_ParseWeekday(LPCWSTR day)
                                      { 'f','r','i','d','a','y',0 },
                                      { 's','a','t','u','r','d','a','y',0 }};
     unsigned int i;
-    for (i = 0; i < sizeof(days)/sizeof(*days); i++)
+    for (i = 0; i < ARRAY_SIZE(days); i++)
         if (!strcmpiW(day, days[i]))
             return i;
 
@@ -4557,7 +4499,7 @@ static BOOL HTTP_ParseRfc850Date(LPCWSTR value, FILETIME *ft)
             return FALSE;
         }
     }
-    else if (ptr - value < sizeof(day) / sizeof(day[0]))
+    else if (ptr - value < ARRAY_SIZE(day))
     {
         memcpy(day, value, (ptr - value) * sizeof(WCHAR));
         day[ptr - value + 1] = 0;
@@ -4594,8 +4536,7 @@ static BOOL HTTP_ParseRfc850Date(LPCWSTR value, FILETIME *ft)
     }
     ptr++;
 
-    for (monthPtr = month; *ptr != '-' &&
-         monthPtr - month < sizeof(month) / sizeof(month[0]) - 1;
+    for (monthPtr = month; *ptr != '-' && monthPtr - month < ARRAY_SIZE(month) - 1;
          monthPtr++, ptr++)
         *monthPtr = *ptr;
     *monthPtr = 0;
@@ -4793,25 +4734,24 @@ static void http_process_keep_alive(http_request_t *req)
 
 static DWORD open_http_connection(http_request_t *request, BOOL *reusing)
 {
-    const BOOL is_https = (request->hdr.dwFlags & INTERNET_FLAG_SECURE) != 0;
     netconn_t *netconn = NULL;
     DWORD res;
 
-    reset_data_stream(request);
-
     if (request->netconn)
     {
-        if (is_valid_netconn(request->netconn) && NETCON_is_alive(request->netconn))
+        if (NETCON_is_alive(request->netconn) && drain_content(request, TRUE) == ERROR_SUCCESS)
         {
+            reset_data_stream(request);
             *reusing = TRUE;
             return ERROR_SUCCESS;
         }
-        else
-        {
-            free_netconn(request->netconn);
-            request->netconn = NULL;
-        }
+
+        TRACE("freeing netconn\n");
+        free_netconn(request->netconn);
+        request->netconn = NULL;
     }
+
+    reset_data_stream(request);
 
     res = HTTP_ResolveName(request);
     if(res != ERROR_SUCCESS)
@@ -4848,7 +4788,7 @@ static DWORD open_http_connection(http_request_t *request, BOOL *reusing)
                           request->server->addr_str,
                           strlen(request->server->addr_str)+1);
 
-    res = create_netconn(is_https, request->proxy ? request->proxy : request->server, request->security_flags,
+    res = create_netconn(request->proxy ? request->proxy : request->server, request->security_flags,
                          (request->hdr.ErrorMask & INTERNET_ERROR_MASK_COMBINED_SEC_CERT) != 0,
                          request->connect_timeout, &netconn);
     if(res != ERROR_SUCCESS) {
@@ -4884,7 +4824,7 @@ static void set_content_length_header( http_request_t *request, DWORD len, DWORD
 {
     static const WCHAR fmtW[] =
         {'C','o','n','t','e','n','t','-','L','e','n','g','t','h',':',' ','%','u','\r','\n',0};
-    WCHAR buf[sizeof(fmtW)/sizeof(fmtW[0]) + 10];
+    WCHAR buf[ARRAY_SIZE(fmtW) + 10];
 
     sprintfW( buf, fmtW, len );
     HTTP_HttpAddRequestHeadersW( request, buf, ~0u, flags );
@@ -4905,7 +4845,7 @@ static DWORD HTTP_HttpSendRequestW(http_request_t *request, LPCWSTR lpszHeaders,
 	DWORD dwContentLength, BOOL bEndRequest)
 {
     BOOL redirected = FALSE, secure_proxy_connect = FALSE, loop_next;
-    LPWSTR requestString = NULL;
+    WCHAR *request_header = NULL;
     INT responseLen, cnt;
     DWORD res;
 
@@ -5015,12 +4955,12 @@ static DWORD HTTP_HttpSendRequestW(http_request_t *request, LPCWSTR lpszHeaders,
             if (HTTP_GetCustomHeaderIndex(request, szContent_Length, 0, TRUE) >= 0)
                 set_content_length_header(request, 0, HTTP_ADDREQ_FLAG_REPLACE);
 
-            requestString = build_request_header(request, connectW, target, g_szHttp1_1, TRUE);
+            request_header = build_request_header(request, connectW, target, g_szHttp1_1, TRUE);
         }
         else if (request->proxy && !(request->hdr.dwFlags & INTERNET_FLAG_SECURE))
         {
             WCHAR *url = build_proxy_path_url(request);
-            requestString = build_request_header(request, request->verb, url, request->version, TRUE);
+            request_header = build_request_header(request, request->verb, url, request->version, TRUE);
             heap_free(url);
         }
         else
@@ -5028,16 +4968,17 @@ static DWORD HTTP_HttpSendRequestW(http_request_t *request, LPCWSTR lpszHeaders,
             if (request->proxy && HTTP_GetCustomHeaderIndex(request, szContent_Length, 0, TRUE) >= 0)
                 set_content_length_header(request, dwContentLength, HTTP_ADDREQ_FLAG_REPLACE);
 
-            requestString = build_request_header(request, request->verb, request->path, request->version, TRUE);
+            request_header = build_request_header(request, request->verb, request->path, request->version, TRUE);
         }
 
-        TRACE("Request header -> %s\n", debugstr_w(requestString) );
+        TRACE("Request header -> %s\n", debugstr_w(request_header) );
 
         /* send the request as ASCII, tack on the optional data */
         if (!lpOptional || redirected || secure_proxy_connect)
             data_len = 0;
 
-        ascii_req = build_ascii_request( requestString, lpOptional, data_len, &len );
+        ascii_req = build_ascii_request(request_header, lpOptional, data_len, &len);
+        heap_free(request_header);
         TRACE("full request -> %s\n", debugstr_a(ascii_req) );
 
         INTERNET_SendCallback(&request->hdr, request->hdr.dwContext,
@@ -5095,7 +5036,7 @@ static DWORD HTTP_HttpSendRequestW(http_request_t *request, LPCWSTR lpszHeaders,
             res = set_content_length(request);
             if(res != ERROR_SUCCESS)
                 goto lend;
-            if(!request->contentLength)
+            if(!request->contentLength && !secure_proxy_connect)
                 http_release_netconn(request, TRUE);
 
             if (!(request->hdr.dwFlags & INTERNET_FLAG_NO_AUTO_REDIRECT) && responseLen)
@@ -5117,15 +5058,11 @@ static DWORD HTTP_HttpSendRequestW(http_request_t *request, LPCWSTR lpszHeaders,
                         heap_free(request->verb);
                         request->verb = heap_strdupW(szGET);
                     }
-                    http_release_netconn(request, drain_content(request, FALSE));
-                    INTERNET_SendCallback(&request->hdr, request->hdr.dwContext, INTERNET_STATUS_REDIRECT,
-                                          new_url, (strlenW(new_url) + 1) * sizeof(WCHAR));
+                    http_release_netconn(request, drain_content(request, FALSE) == ERROR_SUCCESS);
                     res = HTTP_HandleRedirect(request, new_url);
                     heap_free(new_url);
-                    if (res == ERROR_SUCCESS) {
-                        heap_free(requestString);
+                    if (res == ERROR_SUCCESS)
                         loop_next = TRUE;
-                    }
                     redirected = TRUE;
                 }
             }
@@ -5144,8 +5081,8 @@ static DWORD HTTP_HttpSendRequestW(http_request_t *request, LPCWSTR lpszHeaders,
                                                  request->session->userName,
                                                  request->session->password, host))
                         {
-                            heap_free(requestString);
-                            if(!drain_content(request, TRUE)) {
+                            if (drain_content(request, TRUE) != ERROR_SUCCESS)
+                            {
                                 FIXME("Could not drain content\n");
                                 http_release_netconn(request, FALSE);
                             }
@@ -5172,8 +5109,8 @@ static DWORD HTTP_HttpSendRequestW(http_request_t *request, LPCWSTR lpszHeaders,
                                                  request->session->appInfo->proxyPassword,
                                                  NULL))
                         {
-                            heap_free(requestString);
-                            if(!drain_content(request, TRUE)) {
+                            if (drain_content(request, TRUE) != ERROR_SUCCESS)
+                            {
                                 FIXME("Could not drain content\n");
                                 http_release_netconn(request, FALSE);
                             }
@@ -5201,6 +5138,8 @@ static DWORD HTTP_HttpSendRequestW(http_request_t *request, LPCWSTR lpszHeaders,
                 remove_header(request, szProxy_Authorization, TRUE);
                 destroy_authinfo(request->proxyAuthInfo);
                 request->proxyAuthInfo = NULL;
+                request->contentLength = 0;
+                request->netconn_stream.content_length = 0;
 
                 secure_proxy_connect = FALSE;
                 loop_next = TRUE;
@@ -5212,8 +5151,6 @@ static DWORD HTTP_HttpSendRequestW(http_request_t *request, LPCWSTR lpszHeaders,
     while (loop_next);
 
 lend:
-    heap_free(requestString);
-
     /* TODO: send notification for P3P header */
 
     if(res == ERROR_SUCCESS)
@@ -5223,7 +5160,7 @@ lend:
     {
         if (res == ERROR_SUCCESS) {
             if(bEndRequest && request->contentLength && request->bytesWritten == request->bytesToWrite)
-                HTTP_ReceiveRequestData(request, TRUE, NULL);
+                HTTP_ReceiveRequestData(request);
             else
                 send_request_complete(request,
                         request->session->hdr.dwInternalFlags & INET_OPENURL ? (DWORD_PTR)request->hdr.hInternet : 1, 0);
@@ -5315,9 +5252,7 @@ static DWORD HTTP_HttpEndRequestW(http_request_t *request, DWORD dwFlags, DWORD_
                 heap_free(request->verb);
                 request->verb = heap_strdupW(szGET);
             }
-            http_release_netconn(request, drain_content(request, FALSE));
-            INTERNET_SendCallback(&request->hdr, request->hdr.dwContext, INTERNET_STATUS_REDIRECT,
-                                  new_url, (strlenW(new_url) + 1) * sizeof(WCHAR));
+            http_release_netconn(request, drain_content(request, FALSE) == ERROR_SUCCESS);
             res = HTTP_HandleRedirect(request, new_url);
             heap_free(new_url);
             if (res == ERROR_SUCCESS)
@@ -5330,7 +5265,7 @@ static DWORD HTTP_HttpEndRequestW(http_request_t *request, DWORD dwFlags, DWORD_
         create_cache_entry(request);
 
     if (res == ERROR_SUCCESS && request->contentLength)
-        HTTP_ReceiveRequestData(request, TRUE, NULL);
+        HTTP_ReceiveRequestData(request);
     else
         send_request_complete(request, res == ERROR_SUCCESS, res);
 
@@ -5820,7 +5755,6 @@ static const object_vtbl_t HTTPSESSIONVtbl = {
     NULL,
     NULL,
     NULL,
-    NULL,
     NULL
 };
 
@@ -5869,8 +5803,7 @@ DWORD HTTP_Connect(appinfo_t *hIC, LPCWSTR lpszServerName,
     session->hostName = heap_strdupW(lpszServerName);
     if (lpszUserName && lpszUserName[0])
         session->userName = heap_strdupW(lpszUserName);
-    if (lpszPassword && lpszPassword[0])
-        session->password = heap_strdupW(lpszPassword);
+    session->password = heap_strdupW(lpszPassword);
     session->hostPort = serverPort;
     session->connect_timeout = hIC->connect_timeout;
     session->send_timeout = 0;

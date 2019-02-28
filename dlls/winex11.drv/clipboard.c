@@ -78,12 +78,16 @@
 #include <time.h>
 #include <assert.h>
 
-#include "windef.h"
-#include "winbase.h"
+#include "x11drv.h"
+
+#ifdef HAVE_X11_EXTENSIONS_XFIXES_H
+#include <X11/extensions/Xfixes.h>
+#endif
+
 #include "shlobj.h"
 #include "shellapi.h"
 #include "shlwapi.h"
-#include "x11drv.h"
+#include "wine/library.h"
 #include "wine/list.h"
 #include "wine/debug.h"
 #include "wine/unicode.h"
@@ -183,7 +187,6 @@ static const struct
 
 static struct list format_list = LIST_INIT( format_list );
 
-#define NB_BUILTIN_FORMATS (sizeof(builtin_formats) / sizeof(builtin_formats[0]))
 #define GET_ATOM(prop)  (((prop) < FIRST_XATOM) ? (Atom)(prop) : X11DRV_Atoms[(prop) - FIRST_XATOM])
 
 static DWORD clipboard_thread_id;
@@ -196,6 +199,7 @@ static UINT rendered_formats;
 static ULONG64 last_clipboard_update;
 static struct clipboard_format **current_x11_formats;
 static unsigned int nb_current_x11_formats;
+static BOOL use_xfixes;
 
 Display *clipboard_display = NULL;
 
@@ -290,9 +294,9 @@ static void register_builtin_formats(void)
     struct clipboard_format *formats;
     unsigned int i;
 
-    if (!(formats = HeapAlloc( GetProcessHeap(), 0, NB_BUILTIN_FORMATS * sizeof(*formats)))) return;
+    if (!(formats = HeapAlloc( GetProcessHeap(), 0, ARRAY_SIZE(builtin_formats) * sizeof(*formats)))) return;
 
-    for (i = 0; i < NB_BUILTIN_FORMATS; i++)
+    for (i = 0; i < ARRAY_SIZE(builtin_formats); i++)
     {
         if (builtin_formats[i].name)
             formats[i].id = RegisterClipboardFormatW( builtin_formats[i].name );
@@ -978,7 +982,7 @@ static HANDLE import_targets( Atom type, const void *data, size_t size )
     register_x11_formats( properties, count );
 
     /* the builtin formats contain duplicates, so allocate some extra space */
-    if (!(formats = HeapAlloc( GetProcessHeap(), 0, (count + NB_BUILTIN_FORMATS) * sizeof(*formats ))))
+    if (!(formats = HeapAlloc( GetProcessHeap(), 0, (count + ARRAY_SIZE(builtin_formats)) * sizeof(*formats ))))
         return 0;
 
     pos = 0;
@@ -1082,8 +1086,9 @@ static HANDLE render_format( UINT id )
     for (i = 0; i < nb_current_x11_formats; i++)
     {
         if (current_x11_formats[i]->id != id) continue;
-        handle = import_selection( display, import_window, current_selection, current_x11_formats[i] );
-        if (handle) SetClipboardData( id, handle );
+        if (!(handle = import_selection( display, import_window,
+                                         current_selection, current_x11_formats[i] ))) continue;
+        SetClipboardData( id, handle );
         break;
     }
     return handle;
@@ -1130,7 +1135,7 @@ static char *string_from_unicode_text( UINT codepage, HANDLE handle, UINT *size 
             if (str[i] == '\r' && (i == len - 1 || str[i + 1] == '\n')) continue;
             str[j++] = str[i];
         }
-        if (j && !str[j - 1]) j--;  /* remove trailing null */
+        while (j && !str[j - 1]) j--;  /* remove trailing nulls */
         *size = j;
         TRACE( "returning %s\n", debugstr_an( str, j ));
     }
@@ -1293,28 +1298,6 @@ static BOOL export_enhmetafile( Display *display, Window win, Atom prop, Atom ta
 
 
 /**************************************************************************
- *		get_html_description_field
- *
- *  Find the value of a field in an HTML Format description.
- */
-static LPCSTR get_html_description_field(LPCSTR data, LPCSTR keyword)
-{
-    LPCSTR pos=data;
-
-    while (pos && *pos && *pos != '<')
-    {
-        if (memcmp(pos, keyword, strlen(keyword)) == 0)
-            return pos+strlen(keyword);
-
-        pos = strchr(pos, '\n');
-        if (pos) pos++;
-    }
-
-    return NULL;
-}
-
-
-/**************************************************************************
  *		export_text_html
  *
  *  Export HTML Format to text/html.
@@ -1323,36 +1306,27 @@ static LPCSTR get_html_description_field(LPCSTR data, LPCSTR keyword)
  */
 static BOOL export_text_html( Display *display, Window win, Atom prop, Atom target, HANDLE handle )
 {
-    LPCSTR data, field_value;
-    UINT fragmentstart, fragmentend;
+    const char *p, *data;
+    UINT start = 0, end = 0;
+    BOOL ret = TRUE;
 
-    data = GlobalLock( handle );
+    if (!(data = GlobalLock( handle ))) return FALSE;
 
-    /* read the important fields */
-    field_value = get_html_description_field(data, "StartFragment:");
-    if (!field_value)
+    p = data;
+    while (*p && *p != '<')
     {
-        ERR("Couldn't find StartFragment value\n");
-        goto failed;
+        if (!strncmp( p, "StartFragment:", 14 )) start = atoi( p + 14 );
+        else if (!strncmp( p, "EndFragment:", 12 )) end = atoi( p + 12 );
+        if (!(p = strpbrk( p, "\r\n" ))) break;
+        while (*p == '\r' || *p == '\n') p++;
     }
-    fragmentstart = atoi(field_value);
+    if (start && start < end && end <= GlobalSize( handle ))
+        put_property( display, win, prop, target, 8, data + start, end - start );
+    else
+        ret = FALSE;
 
-    field_value = get_html_description_field(data, "EndFragment:");
-    if (!field_value)
-    {
-        ERR("Couldn't find EndFragment value\n");
-        goto failed;
-    }
-    fragmentend = atoi(field_value);
-
-    /* export only the fragment */
-    put_property( display, win, prop, target, 8, &data[fragmentstart], fragmentend - fragmentstart );
     GlobalUnlock( handle );
-    return TRUE;
-
-failed:
-    GlobalUnlock( handle );
-    return FALSE;
+    return ret;
 }
 
 
@@ -1479,7 +1453,8 @@ static BOOL export_targets( Display *display, Window win, Atom prop, Atom target
     if (!(formats = get_clipboard_formats( &count ))) return FALSE;
 
     /* the builtin formats contain duplicates, so allocate some extra space */
-    if (!(targets = HeapAlloc( GetProcessHeap(), 0, (count + NB_BUILTIN_FORMATS) * sizeof(*targets) )))
+    if (!(targets = HeapAlloc( GetProcessHeap(), 0,
+                               (count + ARRAY_SIZE(builtin_formats)) * sizeof(*targets) )))
     {
         HeapFree( GetProcessHeap(), 0, formats );
         return FALSE;
@@ -1897,7 +1872,8 @@ static BOOL request_selection_contents( Display *display, BOOL changed )
     last_size = size;
     last_clipboard_update = GetTickCount64();
     CloseClipboard();
-    SetTimer( clipboard_hwnd, 1, SELECTION_UPDATE_DELAY, NULL );
+    if (!use_xfixes)
+        SetTimer( clipboard_hwnd, 1, SELECTION_UPDATE_DELAY, NULL );
     return TRUE;
 }
 
@@ -1909,6 +1885,7 @@ static BOOL request_selection_contents( Display *display, BOOL changed )
  */
 BOOL update_clipboard( HWND hwnd )
 {
+    if (use_xfixes) return TRUE;
     if (hwnd != clipboard_hwnd) return TRUE;
     if (!is_clipboard_owner) return TRUE;
     if (GetTickCount64() - last_clipboard_update <= SELECTION_UPDATE_DELAY) return TRUE;
@@ -1956,12 +1933,12 @@ static LRESULT CALLBACK clipboard_wndproc( HWND hwnd, UINT msg, WPARAM wp, LPARA
 static BOOL wait_clipboard_mutex(void)
 {
     static const WCHAR prefix[] = {'_','_','w','i','n','e','_','c','l','i','p','b','o','a','r','d','_'};
-    WCHAR buffer[MAX_PATH + sizeof(prefix) / sizeof(WCHAR)];
+    WCHAR buffer[MAX_PATH + ARRAY_SIZE( prefix )];
     HANDLE mutex;
 
     memcpy( buffer, prefix, sizeof(prefix) );
     if (!GetUserObjectInformationW( GetProcessWindowStation(), UOI_NAME,
-                                    buffer + sizeof(prefix) / sizeof(WCHAR),
+                                    buffer + ARRAY_SIZE( prefix ),
                                     sizeof(buffer) - sizeof(prefix), NULL ))
     {
         ERR( "failed to get winstation name\n" );
@@ -1974,6 +1951,75 @@ static BOOL wait_clipboard_mutex(void)
         WaitForSingleObject( mutex, INFINITE );
     }
     return TRUE;
+}
+
+
+/**************************************************************************
+ *              selection_notify_event
+ *
+ * Called when x11 clipboard content changes
+ */
+#ifdef SONAME_LIBXFIXES
+static BOOL selection_notify_event( HWND hwnd, XEvent *event )
+{
+    XFixesSelectionNotifyEvent *req = (XFixesSelectionNotifyEvent*)event;
+
+    if (!is_clipboard_owner) return FALSE;
+    if (req->owner == selection_window) return FALSE;
+    request_selection_contents( req->display, TRUE );
+    return FALSE;
+}
+#endif
+
+/**************************************************************************
+ *		xfixes_init
+ *
+ * Initialize xfixes to receive clipboard update notifications
+ */
+static void xfixes_init(void)
+{
+#ifdef SONAME_LIBXFIXES
+    typeof(XFixesSelectSelectionInput) *pXFixesSelectSelectionInput;
+    typeof(XFixesQueryExtension) *pXFixesQueryExtension;
+    typeof(XFixesQueryVersion) *pXFixesQueryVersion;
+
+    int event_base, error_base;
+    int major = 3, minor = 0;
+    void *handle;
+
+    handle = wine_dlopen(SONAME_LIBXFIXES, RTLD_NOW, NULL, 0);
+    if (!handle) return;
+
+    pXFixesQueryExtension = wine_dlsym(handle, "XFixesQueryExtension", NULL, 0);
+    if (!pXFixesQueryExtension) return;
+    pXFixesQueryVersion = wine_dlsym(handle, "XFixesQueryVersion", NULL, 0);
+    if (!pXFixesQueryVersion) return;
+    pXFixesSelectSelectionInput = wine_dlsym(handle, "XFixesSelectSelectionInput", NULL, 0);
+    if (!pXFixesSelectSelectionInput) return;
+
+    if (!pXFixesQueryExtension(clipboard_display, &event_base, &error_base))
+        return;
+    pXFixesQueryVersion(clipboard_display, &major, &minor);
+    use_xfixes = (major >= 1);
+    if (!use_xfixes) return;
+
+    pXFixesSelectSelectionInput(clipboard_display, import_window, x11drv_atom(CLIPBOARD),
+            XFixesSetSelectionOwnerNotifyMask |
+            XFixesSelectionWindowDestroyNotifyMask |
+            XFixesSelectionClientCloseNotifyMask);
+    if (use_primary_selection)
+    {
+        pXFixesSelectSelectionInput(clipboard_display, import_window, XA_PRIMARY,
+                XFixesSetSelectionOwnerNotifyMask |
+                XFixesSelectionWindowDestroyNotifyMask |
+                XFixesSelectionClientCloseNotifyMask);
+    }
+    X11DRV_register_event_handler(event_base + XFixesSelectionNotify,
+            selection_notify_event, "XFixesSelectionNotify");
+    TRACE("xfixes succesully initialized\n");
+#else
+    WARN("xfixes not supported\n");
+#endif
 }
 
 
@@ -2022,6 +2068,8 @@ static DWORD WINAPI clipboard_thread( void *arg )
     register_builtin_formats();
     request_selection_contents( clipboard_display, TRUE );
 
+    xfixes_init();
+
     TRACE( "clipboard thread %04x running\n", GetCurrentThreadId() );
     while (GetMessageW( &msg, 0, 0, 0 )) DispatchMessageW( &msg );
     return 0;
@@ -2037,6 +2085,7 @@ void CDECL X11DRV_UpdateClipboard(void)
     ULONG now;
     DWORD_PTR ret;
 
+    if (use_xfixes) return;
     if (GetCurrentThreadId() == clipboard_thread_id) return;
     now = GetTickCount();
     if ((int)(now - last_update) <= SELECTION_UPDATE_DELAY) return;

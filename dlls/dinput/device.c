@@ -39,6 +39,8 @@
 #include "device_private.h"
 #include "dinput_private.h"
 
+#define WM_WINE_NOTIFY_ACTIVITY WM_USER
+
 WINE_DEFAULT_DEBUG_CHANNEL(dinput);
 
 static inline IDirectInputDeviceImpl *impl_from_IDirectInputDevice8A(IDirectInputDevice8A *iface)
@@ -78,7 +80,7 @@ static void _dump_cooperativelevel_DI(DWORD dwFlags) {
 #undef FE
 	};
 	TRACE(" cooperative level : ");
-	for (i = 0; i < (sizeof(flags) / sizeof(flags[0])); i++)
+	for (i = 0; i < ARRAY_SIZE(flags); i++)
 	    if (flags[i].mask & dwFlags)
 		TRACE("%s ",flags[i].name);
 	TRACE("\n");
@@ -104,7 +106,7 @@ static void _dump_ObjectDataFormat_flags(DWORD dwFlags) {
     TRACE("Flags:");
 
     /* First the flags */
-    for (i = 0; i < (sizeof(flags) / sizeof(flags[0])); i++) {
+    for (i = 0; i < ARRAY_SIZE(flags); i++) {
         if (flags[i].mask & dwFlags)
         TRACE(" %s",flags[i].name);
     }
@@ -151,7 +153,7 @@ static void _dump_EnumObjects_flags(DWORD dwFlags) {
 	if (type == DIDFT_ALL) {
 	    TRACE(" DIDFT_ALL");
 	} else {
-	    for (i = 0; i < (sizeof(flags) / sizeof(flags[0])); i++) {
+	    for (i = 0; i < ARRAY_SIZE(flags); i++) {
 		if (flags[i].mask & type) {
 		    type &= ~flags[i].mask;
 		    TRACE(" %s",flags[i].name);
@@ -228,7 +230,7 @@ const char *_dump_dinput_GUID(const GUID *guid) {
     };
     if (guid == NULL)
 	return "null GUID";
-    for (i = 0; i < (sizeof(guids) / sizeof(guids[0])); i++) {
+    for (i = 0; i < ARRAY_SIZE(guids); i++) {
 	if (IsEqualGUID(guids[i].guid, guid)) {
 	    return guids[i].name;
 	}
@@ -914,7 +916,7 @@ HRESULT _set_action_map(LPDIRECTINPUTDEVICE8W iface, LPDIACTIONFORMATW lpdiaf, L
     if (dwFlags & DIDSAM_NOUSER)
         dps.wsz[0] = '\0';
     else
-        lstrcpynW(dps.wsz, username, sizeof(dps.wsz)/sizeof(WCHAR));
+        lstrcpynW(dps.wsz, username, ARRAY_SIZE(dps.wsz));
     IDirectInputDevice8_SetProperty(iface, DIPROP_USERNAME, &dps.diph);
 
     /* Save the settings to disk */
@@ -934,6 +936,8 @@ void queue_event(LPDIRECTINPUTDEVICE8A iface, int inst_id, DWORD data, DWORD tim
 
     /* Event is being set regardless of the queue state */
     if (This->hEvent) SetEvent(This->hEvent);
+
+    PostMessageW(GetDesktopWindow(), WM_WINE_NOTIFY_ACTIVITY, 0, 0);
 
     if (!This->queue_len || This->overflow || ofs < 0) return;
 
@@ -1308,11 +1312,24 @@ HRESULT WINAPI IDirectInputDevice2WImpl_GetProperty(LPDIRECTINPUTDEVICE8W iface,
         case (DWORD_PTR) DIPROP_USERNAME:
         {
             LPDIPROPSTRING ps = (LPDIPROPSTRING)pdiph;
+            struct DevicePlayer *device_player;
 
             if (pdiph->dwSize != sizeof(DIPROPSTRING)) return DIERR_INVALIDPARAM;
 
-            lstrcpynW(ps->wsz, This->username, sizeof(ps->wsz)/sizeof(WCHAR));
-            break;
+            LIST_FOR_EACH_ENTRY(device_player, &This->dinput->device_players,
+                struct DevicePlayer, entry)
+            {
+                if (IsEqualGUID(&device_player->instance_guid, &This->guid))
+                {
+                    if (*device_player->username)
+                    {
+                        lstrcpynW(ps->wsz, device_player->username, ARRAY_SIZE(ps->wsz));
+                        return DI_OK;
+                    }
+                    else break;
+                }
+            }
+            return S_FALSE;
         }
         case (DWORD_PTR) DIPROP_VIDPID:
             FIXME("DIPROP_VIDPID not implemented\n");
@@ -1390,10 +1407,28 @@ HRESULT WINAPI IDirectInputDevice2WImpl_SetProperty(
         case (DWORD_PTR) DIPROP_USERNAME:
         {
             LPCDIPROPSTRING ps = (LPCDIPROPSTRING)pdiph;
+            struct DevicePlayer *device_player;
+            BOOL found = FALSE;
 
             if (pdiph->dwSize != sizeof(DIPROPSTRING)) return DIERR_INVALIDPARAM;
 
-            lstrcpynW(This->username, ps->wsz, sizeof(This->username)/sizeof(WCHAR));
+            LIST_FOR_EACH_ENTRY(device_player, &This->dinput->device_players,
+                struct DevicePlayer, entry)
+            {
+                if (IsEqualGUID(&device_player->instance_guid, &This->guid))
+                {
+                    found = TRUE;
+                    break;
+                }
+            }
+            if (!found && (device_player =
+                    HeapAlloc(GetProcessHeap(), 0, sizeof(struct DevicePlayer))))
+            {
+                list_add_tail(&This->dinput->device_players, &device_player->entry);
+                device_player->instance_guid = This->guid;
+            }
+            if (device_player)
+                lstrcpynW(device_player->username, ps->wsz, ARRAY_SIZE(device_player->username));
             break;
         }
         default:

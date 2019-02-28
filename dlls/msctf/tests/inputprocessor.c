@@ -64,6 +64,7 @@ static DWORD tmSinkCookie;
 static DWORD tmSinkRefCount;
 static DWORD dmSinkCookie;
 static DWORD documentStatus;
+static DWORD key_trace_sink_cookie;
 static ITfDocumentMgr *test_CurrentFocus = NULL;
 static ITfDocumentMgr *test_PrevFocus = NULL;
 static ITfDocumentMgr *test_LastCurrentFocus = FOCUS_SAVE;
@@ -625,6 +626,51 @@ static HRESULT ThreadMgrEventSink_Constructor(IUnknown **ppOut)
     return S_OK;
 }
 
+static HRESULT WINAPI TfKeyTraceEventSink_QueryInterface(ITfKeyTraceEventSink *iface, REFIID riid, void **ppv)
+{
+    if(IsEqualGUID(&IID_IUnknown, riid) || IsEqualGUID(&IID_ITfKeyTraceEventSink, riid)) {
+        *ppv = iface;
+        return S_OK;
+    }
+
+    *ppv = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI TfKeyTraceEventSink_AddRef(ITfKeyTraceEventSink *iface)
+{
+    return 2;
+}
+
+static ULONG WINAPI TfKeyTraceEventSink_Release(ITfKeyTraceEventSink *iface)
+{
+    return 1;
+}
+
+static HRESULT WINAPI TfKeyTraceEventSink_OnKeyTraceDown(ITfKeyTraceEventSink *iface,
+                                                         WPARAM wparam, LPARAM lparam)
+{
+    ok(0, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI TfKeyTraceEventSink_OnKeyTraceUp(ITfKeyTraceEventSink *iface,
+                                                       WPARAM wparam, LPARAM lparam)
+{
+    ok(0, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static const ITfKeyTraceEventSinkVtbl TfKeyTraceEventSinkVtbl = {
+    TfKeyTraceEventSink_QueryInterface,
+    TfKeyTraceEventSink_AddRef,
+    TfKeyTraceEventSink_Release,
+    TfKeyTraceEventSink_OnKeyTraceDown,
+    TfKeyTraceEventSink_OnKeyTraceUp
+};
+
+static ITfKeyTraceEventSink TfKeyTraceEventSink = { &TfKeyTraceEventSinkVtbl };
+
 static HRESULT WINAPI TfTransitoryExtensionSink_QueryInterface(ITfTransitoryExtensionSink *iface, REFIID riid, void **ppv)
 {
     if(IsEqualGUID(&IID_IUnknown, riid) || IsEqualGUID(&IID_ITfTransitoryExtensionSink, riid)) {
@@ -897,7 +943,18 @@ DEFINE_GUID(GUID_COMPARTMENT_TIPUISTATUS,           0x148ca3ec,0x0366,0x401c,0x8
 static HRESULT initialize(void)
 {
     HRESULT hr;
+    HKEY hkey;
+
     CoInitialize(NULL);
+
+    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, "Software\\Microsoft\\CTF\\TIP", 0,
+                      KEY_READ|KEY_WRITE, &hkey) != ERROR_SUCCESS)
+    {
+        skip("Not enough permission to register input processor\n");
+        return E_FAIL;
+    }
+    RegCloseKey(hkey);
+
     hr = CoCreateInstance (&CLSID_TF_InputProcessorProfiles, NULL,
           CLSCTX_INPROC_SERVER, &IID_ITfInputProcessorProfiles, (void**)&g_ipp);
     if (SUCCEEDED(hr))
@@ -935,7 +992,8 @@ static void test_Register(void)
     ok(SUCCEEDED(hr),"Unable to register COM for TextService\n");
     hr = ITfInputProcessorProfiles_Register(g_ipp, &CLSID_FakeService);
     ok(SUCCEEDED(hr),"Unable to register text service(%x)\n",hr);
-    hr = ITfInputProcessorProfiles_AddLanguageProfile(g_ipp, &CLSID_FakeService, gLangid, &CLSID_FakeService, szDesc, sizeof(szDesc)/sizeof(WCHAR), szFile, sizeof(szFile)/sizeof(WCHAR), 1);
+    hr = ITfInputProcessorProfiles_AddLanguageProfile(g_ipp, &CLSID_FakeService, gLangid,
+            &CLSID_FakeService, szDesc, ARRAY_SIZE(szDesc), szFile, ARRAY_SIZE(szFile), 1);
     ok(SUCCEEDED(hr),"Unable to add Language Profile (%x)\n",hr);
 }
 
@@ -1070,13 +1128,18 @@ static void test_ThreadMgrAdviseSinks(void)
     tmSinkRefCount = 1;
     tmSinkCookie = 0;
     hr = ITfSource_AdviseSink(source,&IID_ITfThreadMgrEventSink, sink, &tmSinkCookie);
-    ok(SUCCEEDED(hr),"Failed to Advise Sink\n");
+    ok(hr == S_OK, "Failed to Advise Sink\n");
     ok(tmSinkCookie!=0,"Failed to get sink cookie\n");
 
     /* Advising the sink adds a ref, Releasing here lets the object be deleted
        when unadvised */
     tmSinkRefCount = 2;
     IUnknown_Release(sink);
+
+    hr = ITfSource_AdviseSink(source, &IID_ITfKeyTraceEventSink, (IUnknown*)&TfKeyTraceEventSink,
+                              &key_trace_sink_cookie);
+    ok(hr == S_OK, "Failed to Advise Sink\n");
+
     ITfSource_Release(source);
 }
 
@@ -1092,7 +1155,11 @@ static void test_ThreadMgrUnadviseSinks(void)
 
     tmSinkRefCount = 1;
     hr = ITfSource_UnadviseSink(source, tmSinkCookie);
-    ok(SUCCEEDED(hr),"Failed to unadvise Sink\n");
+    ok(hr == S_OK, "Failed to unadvise Sink\n");
+
+    hr = ITfSource_UnadviseSink(source, key_trace_sink_cookie);
+    ok(hr == S_OK, "Failed to unadvise Sink\n");
+
     ITfSource_Release(source);
 }
 
@@ -1692,6 +1759,7 @@ static void test_startSession(void)
     ITfContext_Release(cxt);
     ITfContext_Release(cxt2);
     ITfContext_Release(cxt3);
+    ITextStoreACP_Release(ts);
 }
 
 static void test_endSession(void)
@@ -1900,7 +1968,7 @@ TfEditCookie ec)
     ok(SUCCEEDED(hr),"ITfContext_GetSelection failed\n");
     ok(fetched == 1,"fetched incorrect\n");
     ok(selection.range != NULL,"NULL range\n");
-    sink_check_ok(&test_ACP_GetSelection,"ACP_GetSepection");
+    sink_check_ok(&test_ACP_GetSelection,"GetSelection");
     ITfRange_Release(selection.range);
 
     test_InsertAtSelection(ec, cxt);
@@ -2032,7 +2100,7 @@ static void enum_compartments(ITfCompartmentMgr *cmpmgr, REFGUID present, REFGUI
         {
             WCHAR str[50];
             CHAR strA[50];
-            StringFromGUID2(&g,str,sizeof(str)/sizeof(str[0]));
+            StringFromGUID2(&g,str,ARRAY_SIZE(str));
             WideCharToMultiByte(CP_ACP,0,str,-1,strA,sizeof(strA),0,0);
             trace("found %s\n",strA);
             if (present && IsEqualGUID(present,&g))

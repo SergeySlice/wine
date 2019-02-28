@@ -37,7 +37,7 @@
 #define expectf_(expected, got, precision) ok(fabs((expected) - (got)) < (precision), "Expected %f, got %f\n", (expected), (got))
 #define expectf(expected, got) expectf_((expected), (got), 0.001)
 
-#define expect_magic(value) ok(*(value) == RGNDATA_MAGIC || *(value) == RGNDATA_MAGIC2, "Expected a known magic value, got %8x\n", *(value))
+#define expect_magic(value) ok(broken(*(value) == RGNDATA_MAGIC) || *(value) == RGNDATA_MAGIC2, "Expected a known magic value, got %8x\n", *(value))
 #define expect_dword(value, expected) expect((expected), *(value))
 #define expect_float(value, expected) expectf((expected), *(FLOAT *)(value))
 
@@ -147,6 +147,8 @@ static void test_region_data(DWORD *data, UINT size, INT line)
     /* some Windows versions fail to properly clear the aligned DWORD */
     ok_(__FILE__, line)(data[size - 1] == buf[size - 1] || broken(data[size - 1] != buf[size - 1]),
         "off %u: %#x != %#x\n", size - 1, data[size - 1], buf[size - 1]);
+
+    GdipDeleteRegion(region);
 }
 
 static void test_getregiondata(void)
@@ -812,7 +814,8 @@ static void test_isinfinite(void)
 
     status = GdipCreateFromHDC(hdc, &graphics);
     expect(Ok, status);
-    GdipCreateRegion(&region);
+    status = GdipCreateRegion(&region);
+    expect(Ok, status);
 
     GdipCreateMatrix2(3.0, 0.0, 0.0, 1.0, 20.0, 30.0, &m);
 
@@ -858,7 +861,8 @@ static void test_isempty(void)
 
     status = GdipCreateFromHDC(hdc, &graphics);
     expect(Ok, status);
-    GdipCreateRegion(&region);
+    status = GdipCreateRegion(&region);
+    expect(Ok, status);
 
     /* NULL arguments */
     status = GdipIsEmptyRegion(NULL, NULL, NULL);
@@ -1116,6 +1120,8 @@ static void test_gethrgn(void)
     GpGraphics *graphics;
     HRGN hrgn;
     HDC hdc=GetDC(0);
+    INT rgntype;
+    RECT rgnbox;
     static const RECT empty_rect = {0,0,0,0};
     static const RECT test_rect = {10, 11, 20, 21};
     static const GpRectF test_rectF = {10.0, 11.0, 10.0, 10.0};
@@ -1236,6 +1242,35 @@ static void test_gethrgn(void)
     ok(status == Ok, "status %08x\n", status);
     status = GdipDeleteGraphics(graphics);
     ok(status == Ok, "status %08x\n", status);
+
+    /* test with gdi32 transform */
+    SetViewportOrgEx(hdc, 10, 10, NULL);
+
+    status = GdipCreateFromHDC(hdc, &graphics);
+    expect(Ok, status);
+
+    status = GdipCreateRegionRect(&test_rectF, &region);
+    expect(Ok, status);
+
+    status = GdipGetRegionHRgn(region, graphics, &hrgn);
+    expect(Ok, status);
+
+    rgntype = GetRgnBox(hrgn, &rgnbox);
+    DeleteObject(hrgn);
+
+    expect(SIMPLEREGION, rgntype);
+    expect(20, rgnbox.left);
+    expect(21, rgnbox.top);
+    expect(30, rgnbox.right);
+    expect(31, rgnbox.bottom);
+
+    status = GdipDeleteRegion(region);
+    expect(Ok, status);
+    status = GdipDeleteGraphics(graphics);
+    expect(Ok, status);
+
+    SetViewportOrgEx(hdc, 0, 0, NULL);
+
     ReleaseDC(0, hdc);
 }
 
@@ -1408,6 +1443,22 @@ static void test_translate(void)
     ReleaseDC(0, hdc);
 }
 
+static DWORD get_region_type(GpRegion *region)
+{
+    DWORD *data;
+    DWORD size;
+    DWORD result;
+    DWORD status;
+    status = GdipGetRegionDataSize(region, &size);
+    expect(Ok, status);
+    data = GdipAlloc(size);
+    status = GdipGetRegionData(region, (BYTE*)data, size, NULL);
+    ok(status == Ok || status == InsufficientBuffer, "unexpected status 0x%x\n", status);
+    result = data[4];
+    GdipFree(data);
+    return result;
+}
+
 static void test_transform(void)
 {
     GpRegion *region, *region2;
@@ -1418,6 +1469,7 @@ static void test_transform(void)
     GpStatus status;
     HDC hdc = GetDC(0);
     BOOL res;
+    DWORD type;
 
     status = GdipCreateFromHDC(hdc, &graphics);
     expect(Ok, status);
@@ -1450,6 +1502,8 @@ static void test_transform(void)
     status = GdipIsEqualRegion(region, region2, graphics, &res);
     expect(Ok, status);
     ok(res, "Expected to be equal.\n");
+    type = get_region_type(region);
+    expect(0x10000003 /* RegionDataInfiniteRect */, type);
 
     /* empty */
     status = GdipSetEmpty(region);
@@ -1464,6 +1518,8 @@ static void test_transform(void)
     status = GdipIsEqualRegion(region, region2, graphics, &res);
     expect(Ok, status);
     ok(res, "Expected to be equal.\n");
+    type = get_region_type(region);
+    expect(0x10000002 /* RegionDataEmptyRect */, type);
 
     /* rect */
     rectf.X = 10.0;
@@ -1483,6 +1539,8 @@ static void test_transform(void)
     status = GdipIsEqualRegion(region, region2, graphics, &res);
     expect(Ok, status);
     ok(res, "Expected to be equal.\n");
+    type = get_region_type(region);
+    expect(0x10000000 /* RegionDataRect */, type);
 
     /* path */
     status = GdipAddPathEllipse(path, 0.0, 10.0, 100.0, 150.0);
@@ -1501,6 +1559,21 @@ static void test_transform(void)
     status = GdipIsEqualRegion(region, region2, graphics, &res);
     expect(Ok, status);
     ok(res, "Expected to be equal.\n");
+    type = get_region_type(region);
+    expect(0x10000001 /* RegionDataPath */, type);
+
+    /* rotated rect -> path */
+    rectf.X = 10.0;
+    rectf.Y = 0.0;
+    rectf.Width = rectf.Height = 100.0;
+    status = GdipCombineRegionRect(region, &rectf, CombineModeReplace);
+    expect(Ok, status);
+    status = GdipRotateMatrix(matrix, 45.0, MatrixOrderAppend);
+    expect(Ok, status);
+    status = GdipTransformRegion(region, matrix);
+    expect(Ok, status);
+    type = get_region_type(region);
+    expect(0x10000001 /* RegionDataPath */, type);
 
     status = GdipDeleteRegion(region);
     expect(Ok, status);
@@ -1708,7 +1781,8 @@ static void test_getbounds(void)
     ok(rectf.Height == 100.0, "Expected height = 0.0, got %.2f\n", rectf.Height);
 
     /* the world and page transforms are ignored */
-    GdipScaleWorldTransform(graphics, 2.0, 2.0, MatrixOrderPrepend);
+    status = GdipScaleWorldTransform(graphics, 2.0, 2.0, MatrixOrderPrepend);
+    ok(status == Ok, "status %08x\n", status);
     GdipSetPageUnit(graphics, UnitInch);
     GdipSetPageScale(graphics, 2.0);
     status = GdipGetRegionBounds(region, graphics, &rectf);
@@ -2260,6 +2334,13 @@ START_TEST(region)
 {
     struct GdiplusStartupInput gdiplusStartupInput;
     ULONG_PTR gdiplusToken;
+    HMODULE hmsvcrt;
+    int (CDECL * _controlfp_s)(unsigned int *cur, unsigned int newval, unsigned int mask);
+
+    /* Enable all FP exceptions except _EM_INEXACT, which gdi32 can trigger */
+    hmsvcrt = LoadLibraryA("msvcrt");
+    _controlfp_s = (void*)GetProcAddress(hmsvcrt, "_controlfp_s");
+    if (_controlfp_s) _controlfp_s(0, 0, 0x0008001e);
 
     gdiplusStartupInput.GdiplusVersion              = 1;
     gdiplusStartupInput.DebugEventCallback          = NULL;

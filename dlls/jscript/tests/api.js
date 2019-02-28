@@ -294,6 +294,7 @@ obj = new Date();
 ok(!obj.hasOwnProperty('getTime'), "obj.hasOwnProperty('getTime') is true");
 ok(!Date.hasOwnProperty('getTime'), "Date.hasOwnProperty('getTime') is true");
 ok(Date.prototype.hasOwnProperty('getTime'), "Date.prototype.hasOwnProperty('getTime') is false");
+ok(!("now" in Date), "now found in Date");
 
 obj = new Number();
 ok(!obj.hasOwnProperty('toFixed'), "obj.hasOwnProperty('toFixed') is true");
@@ -406,6 +407,12 @@ var str = new String();
 ok(str.toString() === "", "str.toString() = " + str.toString());
 var str = new String("test", "abc");
 ok(str.toString() === "test", "str.toString() = " + str.toString());
+
+str = new String("test");
+ok(str.length === 4, "str.length = " + str.length);
+str.length = 3;
+str.length = 5;
+ok(str.length === 4, "str.length = " + str.length);
 
 var strObj = new Object();
 strObj.toString = function() { return "abcd" };
@@ -610,6 +617,28 @@ ok(r.length === 3, "r.length = " + r.length);
 ok(r[0] === "1", "r[0] = " + r[0]);
 ok(r[1] === "2", "r[1] = " + r[1]);
 ok(r[2] === "3", "r[1] = " + r[1]);
+
+r = "1,2,3".split(undefined);
+ok(typeof(r) === "object", "typeof(r) = " + typeof(r));
+ok(r.length === 1, "r.length = " + r.length);
+ok(r[0] === "1,2,3", "r[0] = " + r[0]);
+
+r = "1,undefined2undefined,3".split(undefined);
+ok(typeof(r) === "object", "typeof(r) = " + typeof(r));
+ok(r.length === 3, "r.length = " + r.length);
+ok(r[0] === "1,", "r[0] = " + r[0]);
+ok(r[1] === "2", "r[1] = " + r[1]);
+ok(r[2] === ",3", "r[2] = " + r[2]);
+
+r = "1,undefined2undefined,3".split();
+ok(typeof(r) === "object", "typeof(r) = " + typeof(r));
+ok(r.length === 1, "r.length = " + r.length);
+ok(r[0] === "1,undefined2undefined,3", "r[0] = " + r[0]);
+
+r = "".split();
+ok(typeof(r) === "object", "typeof(r) = " + typeof(r));
+ok(r.length === 1, "r.length = " + r.length);
+ok(r[0] === "", "r[0] = " + r[0]);
 
 tmp = "abcd".indexOf("bc",0);
 ok(tmp === 1, "indexOf = " + tmp);
@@ -907,6 +936,8 @@ ok(tmp === undefined, "tmp = " + tmp);
 arr = [,,,,,];
 tmp = arr.pop();
 ok(arr.length === 5, "arr.length = " + arr.length);
+ok(tmp === undefined, "tmp = " + tmp);
+tmp = [1,2,,,].pop();
 ok(tmp === undefined, "tmp = " + tmp);
 
 function PseudoArray() {
@@ -1807,6 +1838,7 @@ ok(isNaN(tmp), "Math.tan(-Infinity) is not NaN");
         return;
 
     var stringify_tests = [
+        [[], undefined],
         [[true], "true"],
         [[false], "false"],
         [[null], "null"],
@@ -1832,6 +1864,9 @@ ok(isNaN(tmp), "Math.tan(-Infinity) is not NaN");
         ok(s === stringify_tests[i][1],
            "["+i+"] stringify(" + stringify_tests[i][0] + ") returned " + s + " expected " + stringify_tests[i][1]);
     }
+
+    s = JSON.stringify();
+    ok(s === undefined, "stringify() returned " + s + " expected undefined");
 
     s = JSON.stringify(testObj);
     ok(s === undefined || s === "undefined" /* broken on some old versions */,

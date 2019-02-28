@@ -198,8 +198,7 @@ static PTHEME_PROPERTY UXTHEME_SelectImage(HTHEME hTheme, HDC hdc, int iPartId, 
                 HBITMAP hBmp;
                 BOOL hasAlpha;
 
-                lstrcpynW(szPath, fileProp->lpValue, 
-                    min(fileProp->dwValueLen+1, sizeof(szPath)/sizeof(szPath[0])));
+                lstrcpynW(szPath, fileProp->lpValue, min(fileProp->dwValueLen+1, ARRAY_SIZE(szPath)));
                 hBmp = MSSTYLES_LoadBitmap(hTheme, szPath, &hasAlpha);
                 if(!hBmp) continue;
 
@@ -245,7 +244,7 @@ static HRESULT UXTHEME_LoadImage(HTHEME hTheme, HDC hdc, int iPartId, int iState
         FIXME("Couldn't determine image for part/state %d/%d, invalid theme?\n", iPartId, iStateId);
         return E_PROP_ID_UNSUPPORTED;
     }
-    lstrcpynW(szPath, tp->lpValue, min(tp->dwValueLen+1, sizeof(szPath)/sizeof(szPath[0])));
+    lstrcpynW(szPath, tp->lpValue, min(tp->dwValueLen+1, ARRAY_SIZE(szPath)));
     *hBmp = MSSTYLES_LoadBitmap(hTheme, szPath, hasImageAlpha);
     if(!*hBmp) {
         TRACE("Failed to load bitmap %s\n", debugstr_w(szPath));
@@ -1636,7 +1635,7 @@ HRESULT WINAPI DrawThemeText(HTHEME hTheme, HDC hdc, int iPartId, int iStateId,
                              LPCWSTR pszText, int iCharCount, DWORD flags,
                              DWORD flags2, const RECT *pRect)
 {
-    DTTOPTS opts;
+    DTTOPTS opts = { 0 };
     RECT rt;
 
     TRACE("%d %d\n", iPartId, iStateId);

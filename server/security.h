@@ -47,13 +47,15 @@ extern const PSID security_local_user_sid;
 extern const PSID security_local_system_sid;
 extern const PSID security_builtin_users_sid;
 extern const PSID security_builtin_admins_sid;
+extern const PSID security_high_label_sid;
 
 
 /* token functions */
 
 extern struct token *token_create_admin(void);
+extern int token_assign_label( struct token *token, PSID label );
 extern struct token *token_duplicate( struct token *src_token, unsigned primary,
-                                      int impersonation_level );
+                                      int impersonation_level, const struct security_descriptor *sd );
 extern int token_check_privileges( struct token *token, int all_required,
                                    const LUID_AND_ATTRIBUTES *reqprivs,
                                    unsigned int count, LUID_AND_ATTRIBUTES *usedprivs);
@@ -96,6 +98,8 @@ static inline int thread_single_check_privilege( struct thread *thread, const LU
 /* security descriptor helper functions */
 
 extern int sd_is_valid( const struct security_descriptor *sd, data_size_t size );
+extern ACL *extract_security_labels( const ACL *sacl );
+extern ACL *replace_security_labels( const ACL *old_sacl, const ACL *new_sacl );
 
 /* gets the discretionary access control list from a security descriptor */
 static inline const ACL *sd_get_dacl( const struct security_descriptor *sd, int *present )

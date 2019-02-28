@@ -68,36 +68,6 @@ enum fs_type
     FS_UDF       /* For reference [E] = Ecma-167.pdf, [U] = udf260.pdf */
 };
 
-/* read a Unix symlink; returned buffer must be freed by caller */
-static char *read_symlink( const char *path )
-{
-    char *buffer;
-    int ret, size = 128;
-
-    for (;;)
-    {
-        if (!(buffer = HeapAlloc( GetProcessHeap(), 0, size )))
-        {
-            SetLastError( ERROR_NOT_ENOUGH_MEMORY );
-            return 0;
-        }
-        ret = readlink( path, buffer, size );
-        if (ret == -1)
-        {
-            FILE_SetDosError();
-            HeapFree( GetProcessHeap(), 0, buffer );
-            return 0;
-        }
-        if (ret != size)
-        {
-            buffer[ret] = 0;
-            return buffer;
-        }
-        HeapFree( GetProcessHeap(), 0, buffer );
-        size *= 2;
-    }
-}
-
 /* get the path of a dos device symlink in the $WINEPREFIX/dosdevices directory */
 static char *get_dos_device_path( LPCWSTR name )
 {
@@ -450,7 +420,7 @@ static BOOL UDF_Find_PVD( HANDLE handle, BYTE pvd[] )
     DWORD offset;
     INT locations[] = { 256, -1, -257, 512 };
 
-    for(i=0; i<sizeof(locations)/sizeof(locations[0]); i++)
+    for(i=0; i<ARRAY_SIZE(locations); i++)
     {
         if (!VOLUME_ReadCDBlock(handle, pvd, locations[i]*BLOCK_SIZE))
             return FALSE;
@@ -1012,7 +982,7 @@ BOOL WINAPI GetVolumeNameForVolumeMountPointA( LPCSTR path, LPSTR volume, DWORD 
 {
     BOOL ret;
     WCHAR volumeW[50], *pathW = NULL;
-    DWORD len = min( sizeof(volumeW) / sizeof(WCHAR), size );
+    DWORD len = min(ARRAY_SIZE(volumeW), size );
 
     TRACE("(%s, %p, %x)\n", debugstr_a(path), volume, size);
 
@@ -1135,7 +1105,7 @@ BOOL WINAPI GetVolumeNameForVolumeMountPointW( LPCWSTR path, LPWSTR volume, DWOR
             debugstr_wn((WCHAR*)((char *)output + o1->DeviceNameOffset),
                             o1->DeviceNameLength/sizeof(WCHAR)));
 
-        if (!strncmpW( p, volumeW, sizeof(volumeW)/sizeof(WCHAR) ))
+        if (!strncmpW( p, volumeW, ARRAY_SIZE( volumeW )))
         {
             /* is there space in the return variable ?? */
             if ((o1->SymbolicLinkNameLength/sizeof(WCHAR))+2 > size)
@@ -1257,18 +1227,9 @@ BOOL WINAPI DefineDosDeviceA(DWORD flags, LPCSTR devname, LPCSTR targetpath)
  */
 DWORD WINAPI QueryDosDeviceW( LPCWSTR devname, LPWSTR target, DWORD bufsize )
 {
-    static const WCHAR auxW[] = {'A','U','X',0};
-    static const WCHAR prnW[] = {'P','R','N',0};
-    static const WCHAR comW[] = {'C','O','M',0};
-    static const WCHAR lptW[] = {'L','P','T',0};
-    static const WCHAR com0W[] = {'\\','?','?','\\','C','O','M','0',0};
-    static const WCHAR com1W[] = {'\\','D','o','s','D','e','v','i','c','e','s','\\','C','O','M','1',0,0};
-    static const WCHAR lpt1W[] = {'\\','D','o','s','D','e','v','i','c','e','s','\\','L','P','T','1',0,0};
     static const WCHAR dosdevW[] = {'\\','D','o','s','D','e','v','i','c','e','s','\\',0};
 
     UNICODE_STRING nt_name;
-    ANSI_STRING unix_name;
-    WCHAR nt_buffer[10];
     NTSTATUS status;
 
     if (!bufsize)
@@ -1279,8 +1240,7 @@ DWORD WINAPI QueryDosDeviceW( LPCWSTR devname, LPWSTR target, DWORD bufsize )
 
     if (devname)
     {
-        WCHAR *p, name[5];
-        char *path, *link;
+        WCHAR name[8];
         WCHAR *buffer;
         DWORD dosdev, ret = 0;
 
@@ -1300,72 +1260,13 @@ DWORD WINAPI QueryDosDeviceW( LPCWSTR devname, LPWSTR target, DWORD bufsize )
         strcatW( buffer, devname );
         status = read_nt_symlink( buffer, target, bufsize );
         HeapFree( GetProcessHeap(), 0, buffer );
-        if (!status)
-        {
-            ret = strlenW( target ) + 1;
-            goto done;
-        }
-        if (!dosdev)  /* not a special DOS device */
+        if (status)
         {
             SetLastError( RtlNtStatusToDosError(status) );
             return 0;
         }
-
-        /* FIXME: should read NT symlink for all devices */
-
-        if (!(path = get_dos_device_path( name ))) return 0;
-        link = read_symlink( path );
-        HeapFree( GetProcessHeap(), 0, path );
-
-        if (link)
-        {
-            ret = MultiByteToWideChar( CP_UNIXCP, 0, link, -1, target, bufsize );
-            HeapFree( GetProcessHeap(), 0, link );
-        }
-        else  /* look for device defaults */
-        {
-            if (!strcmpiW( name, auxW ))
-            {
-                if (bufsize >= sizeof(com1W)/sizeof(WCHAR))
-                {
-                    memcpy( target, com1W, sizeof(com1W) );
-                    ret = sizeof(com1W)/sizeof(WCHAR);
-                }
-                else SetLastError( ERROR_INSUFFICIENT_BUFFER );
-                return ret;
-            }
-            if (!strcmpiW( name, prnW ))
-            {
-                if (bufsize >= sizeof(lpt1W)/sizeof(WCHAR))
-                {
-                    memcpy( target, lpt1W, sizeof(lpt1W) );
-                    ret = sizeof(lpt1W)/sizeof(WCHAR);
-                }
-                else SetLastError( ERROR_INSUFFICIENT_BUFFER );
-                return ret;
-            }
-
-            nt_buffer[0] = '\\';
-            nt_buffer[1] = '?';
-            nt_buffer[2] = '?';
-            nt_buffer[3] = '\\';
-            strcpyW( nt_buffer + 4, name );
-            RtlInitUnicodeString( &nt_name, nt_buffer );
-            status = wine_nt_to_unix_file_name( &nt_name, &unix_name, FILE_OPEN, TRUE );
-            if (status) SetLastError( RtlNtStatusToDosError(status) );
-            else
-            {
-                ret = MultiByteToWideChar( CP_UNIXCP, 0, unix_name.Buffer, -1, target, bufsize );
-                RtlFreeAnsiString( &unix_name );
-            }
-        }
-    done:
-        if (ret)
-        {
-            if (ret < bufsize) target[ret++] = 0;  /* add an extra null */
-            for (p = target; *p; p++) if (*p == '/') *p = '\\';
-        }
-
+        ret = strlenW( target ) + 1;
+        if (ret < bufsize) target[ret++] = 0;  /* add an extra null */
         return ret;
     }
     else  /* return a list of all devices */
@@ -1373,59 +1274,6 @@ DWORD WINAPI QueryDosDeviceW( LPCWSTR devname, LPWSTR target, DWORD bufsize )
         OBJECT_ATTRIBUTES attr;
         HANDLE handle;
         WCHAR *p = target;
-        int i;
-
-        if (bufsize <= (sizeof(auxW)+sizeof(prnW))/sizeof(WCHAR))
-        {
-            SetLastError( ERROR_INSUFFICIENT_BUFFER );
-            return 0;
-        }
-
-        /* FIXME: these should be NT symlinks too */
-
-        memcpy( p, auxW, sizeof(auxW) );
-        p += sizeof(auxW) / sizeof(WCHAR);
-        memcpy( p, prnW, sizeof(prnW) );
-        p += sizeof(prnW) / sizeof(WCHAR);
-
-        strcpyW( nt_buffer, com0W );
-        RtlInitUnicodeString( &nt_name, nt_buffer );
-
-        for (i = 1; i <= 9; i++)
-        {
-            nt_buffer[7] = '0' + i;
-            if (!wine_nt_to_unix_file_name( &nt_name, &unix_name, FILE_OPEN, TRUE ))
-            {
-                RtlFreeAnsiString( &unix_name );
-                if (p + 5 >= target + bufsize)
-                {
-                    SetLastError( ERROR_INSUFFICIENT_BUFFER );
-                    return 0;
-                }
-                strcpyW( p, comW );
-                p[3] = '0' + i;
-                p[4] = 0;
-                p += 5;
-            }
-        }
-        strcpyW( nt_buffer + 4, lptW );
-        for (i = 1; i <= 9; i++)
-        {
-            nt_buffer[7] = '0' + i;
-            if (!wine_nt_to_unix_file_name( &nt_name, &unix_name, FILE_OPEN, TRUE ))
-            {
-                RtlFreeAnsiString( &unix_name );
-                if (p + 5 >= target + bufsize)
-                {
-                    SetLastError( ERROR_INSUFFICIENT_BUFFER );
-                    return 0;
-                }
-                strcpyW( p, lptW );
-                p[3] = '0' + i;
-                p[4] = 0;
-                p += 5;
-            }
-        }
 
         RtlInitUnicodeString( &nt_name, dosdevW );
         nt_name.Length -= sizeof(WCHAR);  /* without trailing slash */
@@ -1607,11 +1455,6 @@ UINT WINAPI GetDriveTypeW(LPCWSTR root) /* [in] String describing drive */
     NTSTATUS status;
     HANDLE handle;
     UINT ret;
-
-    /* patch 36546 by Bruno Jesus */
-    /* Some applications require the C drive as fixed, ensure it here
-     * instead of attempting to recognize it as memory or network drive. */
-    if (*root == 'C') return DRIVE_FIXED;
 
     if (!open_device_root( root, &handle ))
     {
@@ -1850,6 +1693,10 @@ BOOL WINAPI GetVolumePathNameW(LPCWSTR filename, LPWSTR volumepathname, DWORD bu
         return FALSE;
     }
     strcpyW( volumenameW, filename );
+
+    /* Normalize path */
+    for (c = volumenameW; *c; c++) if (*c == '/') *c = '\\';
+
     stop_pos = 0;
     /* stop searching slashes early for NT-type and nearly NT-type paths */
     if (strncmpW(ntprefixW, filename, strlenW(ntprefixW)) == 0)
@@ -1916,7 +1763,7 @@ BOOL WINAPI GetVolumePathNameW(LPCWSTR filename, LPWSTR volumepathname, DWORD bu
                 goto cleanup;
             }
         }
-        else if (GetCurrentDirectoryW( sizeof(cwdW)/sizeof(cwdW[0]), cwdW ))
+        else if (GetCurrentDirectoryW(ARRAY_SIZE(cwdW), cwdW ))
         {
             /* if the path is completely bogus then revert to the drive of the working directory */
             fallbackpathW[0] = cwdW[0];
@@ -1933,13 +1780,9 @@ BOOL WINAPI GetVolumePathNameW(LPCWSTR filename, LPWSTR volumepathname, DWORD bu
 
     if (last_pos + 1 <= buflen)
     {
-        WCHAR *p;
         memcpy(volumepathname, filename, last_pos * sizeof(WCHAR));
         if (last_pos + 2 <= buflen) volumepathname[last_pos++] = '\\';
         volumepathname[last_pos] = '\0';
-
-        /* Normalize path */
-        for (p = volumepathname; *p; p++) if (*p == '/') *p = '\\';
 
         /* DOS-style paths always return upper-case drive letters */
         if (volumepathname[1] == ':')
@@ -2099,12 +1942,12 @@ BOOL WINAPI GetVolumePathNamesForVolumeNameW(LPCWSTR volumename, LPWSTR volumepa
             linkname = (const WCHAR *)((const char *)link + link->MountPoints[j].SymbolicLinkNameOffset);
 
             if (link->MountPoints[j].SymbolicLinkNameLength == sizeof(dosdevicesW) + 2 * sizeof(WCHAR) &&
-                !memicmpW( linkname, dosdevicesW, sizeof(dosdevicesW) / sizeof(WCHAR) ))
+                !memicmpW( linkname, dosdevicesW, ARRAY_SIZE( dosdevicesW )))
             {
                 len += 4;
                 if (volumepathname && len < buflen)
                 {
-                    path[0] = linkname[sizeof(dosdevicesW) / sizeof(WCHAR)];
+                    path[0] = linkname[ARRAY_SIZE( dosdevicesW )];
                     path[1] = ':';
                     path[2] = '\\';
                     path[3] = 0;
@@ -2311,6 +2154,28 @@ BOOL WINAPI SetVolumeMountPointA(LPCSTR path, LPCSTR volume)
 BOOL WINAPI SetVolumeMountPointW(LPCWSTR path, LPCWSTR volume)
 {
     FIXME("(%s, %s), stub!\n", debugstr_w(path), debugstr_w(volume));
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
+
+/***********************************************************************
+ *           GetVolumeInformationByHandleW (KERNEL32.@)
+ */
+BOOL WINAPI GetVolumeInformationByHandleW(HANDLE handle, WCHAR *volnamebuf, DWORD volnamesize, DWORD *volserial, DWORD *maxlength, DWORD *flags, WCHAR *fsnamebuf, DWORD fsnamesize)
+{
+    FIXME("%p %p %d %p %p %p %p %d\n", handle, volnamebuf, volnamesize, volserial, maxlength, flags, fsnamebuf, fsnamesize);
+
+    if(volnamebuf && volnamesize)
+        *volnamebuf = 0;
+    if(volserial)
+        *volserial = 0;
+    if(maxlength)
+        *maxlength = 0;
+    if(flags)
+        *flags = 0;
+    if(fsnamebuf && fsnamesize)
+        *fsnamebuf = 0;
+
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return FALSE;
 }

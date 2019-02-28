@@ -179,7 +179,7 @@ static void update_visible_region( struct dce *dce )
         }
     }
 
-    if (!surface) top_rect = get_virtual_screen_rect();
+    if (!surface) SetRectEmpty( &top_rect );
     __wine_set_visible_region( dce->hdc, vis_rgn, &win_rect, &top_rect, surface );
     if (surface) window_surface_release( surface );
 }
@@ -367,9 +367,13 @@ void free_dce( struct dce *dce, HWND hwnd )
             if (dce->hwnd != hwnd) continue;
             if (!(dce->flags & DCX_CACHE)) break;
 
-            if (dce->count) WARN( "GetDC() without ReleaseDC() for window %p\n", hwnd );
-            dce->count = 0;
             release_dce( dce );
+            if (dce->count)
+            {
+                WARN( "GetDC() without ReleaseDC() for window %p\n", hwnd );
+                dce->count = 0;
+                SetHookFlags( dce->hdc, DCHF_DISABLEDC );
+            }
         }
     }
 
@@ -394,13 +398,13 @@ static void make_dc_dirty( struct dce *dce )
     if (!dce->count)
     {
         /* Don't bother with visible regions of unused DCEs */
-        TRACE("\tpurged %p dce [%p]\n", dce, dce->hwnd);
+        TRACE("purged %p hwnd %p\n", dce->hdc, dce->hwnd);
         release_dce( dce );
     }
     else
     {
         /* Set dirty bits in the hDC and DCE structs */
-        TRACE("\tfixed up %p dce [%p]\n", dce, dce->hwnd);
+        TRACE("fixed up %p hwnd %p\n", dce->hdc, dce->hwnd);
         SetHookFlags( dce->hdc, DCHF_INVALIDATEVISRGN );
     }
 }
@@ -417,10 +421,13 @@ static void make_dc_dirty( struct dce *dce )
  */
 void invalidate_dce( WND *win, const RECT *extra_rect )
 {
+    DPI_AWARENESS_CONTEXT context;
     RECT window_rect;
     struct dce *dce;
 
     if (!win->parent) return;
+
+    context = SetThreadDpiAwarenessContext( GetWindowDpiAwarenessContext( win->obj.handle ));
 
     GetWindowRect( win->obj.handle, &window_rect );
 
@@ -433,7 +440,7 @@ void invalidate_dce( WND *win, const RECT *extra_rect )
     {
         if (!dce->hwnd) continue;
 
-        TRACE( "%p: hwnd %p dcx %08x %s %s\n", dce, dce->hwnd, dce->flags,
+        TRACE( "%p: hwnd %p dcx %08x %s %s\n", dce->hdc, dce->hwnd, dce->flags,
                (dce->flags & DCX_CACHE) ? "Cache" : "Owned", dce->count ? "InUse" : "" );
 
         if ((dce->hwnd == win->parent) && !(dce->flags & DCX_CLIPCHILDREN))
@@ -456,6 +463,7 @@ void invalidate_dce( WND *win, const RECT *extra_rect )
                 make_dc_dirty( dce );
         }
     }
+    SetThreadDpiAwarenessContext( context );
 }
 
 /***********************************************************************
@@ -472,7 +480,7 @@ static INT release_dc( HWND hwnd, HDC hdc, BOOL end_paint )
 
     USER_Lock();
     dce = (struct dce *)GetDCHook( hdc, NULL );
-    if (dce && dce->count)
+    if (dce && dce->count && dce->hwnd)
     {
         if (!(dce->flags & DCX_NORESETATTRS)) SetHookFlags( dce->hdc, DCHF_RESETDC );
         if (end_paint || (dce->flags & DCX_CACHE)) delete_clip_rgn( dce );
@@ -648,12 +656,15 @@ static HRGN send_ncpaint( HWND hwnd, HWND *child, UINT *flags )
 
     if (whole_rgn)
     {
-        RECT client, update;
+        DPI_AWARENESS_CONTEXT context;
+        RECT client, window, update;
         INT type;
+
+        context = SetThreadDpiAwarenessContext( GetWindowDpiAwarenessContext( hwnd ));
 
         /* check if update rgn overlaps with nonclient area */
         type = GetRgnBox( whole_rgn, &update );
-        WIN_GetRectangles( hwnd, COORDS_SCREEN, 0, &client );
+        WIN_GetRectangles( hwnd, COORDS_SCREEN, &window, &client );
 
         if ((*flags & UPDATE_NONCLIENT) ||
             update.left < client.left || update.top < client.top ||
@@ -663,15 +674,10 @@ static HRGN send_ncpaint( HWND hwnd, HWND *child, UINT *flags )
             CombineRgn( client_rgn, client_rgn, whole_rgn, RGN_AND );
 
             /* check if update rgn contains complete nonclient area */
-            if (type == SIMPLEREGION)
+            if (type == SIMPLEREGION && EqualRect( &window, &update ))
             {
-                RECT window;
-                GetWindowRect( hwnd, &window );
-                if (EqualRect( &window, &update ))
-                {
-                    DeleteObject( whole_rgn );
-                    whole_rgn = (HRGN)1;
-                }
+                DeleteObject( whole_rgn );
+                whole_rgn = (HRGN)1;
             }
         }
         else
@@ -685,6 +691,7 @@ static HRGN send_ncpaint( HWND hwnd, HWND *child, UINT *flags )
             if (*flags & UPDATE_NONCLIENT) SendMessageW( hwnd, WM_NCPAINT, (WPARAM)whole_rgn, 0 );
             if (whole_rgn > (HRGN)1) DeleteObject( whole_rgn );
         }
+        SetThreadDpiAwarenessContext( context );
     }
     return client_rgn;
 }
@@ -760,6 +767,32 @@ void erase_now( HWND hwnd, UINT rdw_flags )
 
 
 /***********************************************************************
+ *           copy_bits_from_surface
+ *
+ * Copy bits from a window surface; helper for move_window_bits and move_window_bits_parent.
+ */
+static void copy_bits_from_surface( HWND hwnd, struct window_surface *surface,
+                                    const RECT *dst, const RECT *src )
+{
+    char buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
+    BITMAPINFO *info = (BITMAPINFO *)buffer;
+    void *bits;
+    UINT flags = UPDATE_NOCHILDREN | UPDATE_CLIPCHILDREN;
+    HRGN rgn = get_update_region( hwnd, &flags, NULL );
+    HDC hdc = GetDCEx( hwnd, rgn, DCX_CACHE | DCX_WINDOW | DCX_EXCLUDERGN );
+
+    bits = surface->funcs->get_info( surface, info );
+    surface->funcs->lock( surface );
+    SetDIBitsToDevice( hdc, dst->left, dst->top, dst->right - dst->left, dst->bottom - dst->top,
+                       src->left - surface->rect.left, surface->rect.bottom - src->bottom,
+                       0, surface->rect.bottom - surface->rect.top,
+                       bits, info, DIB_RGB_COLORS );
+    surface->funcs->unlock( surface );
+    ReleaseDC( hwnd, hdc );
+}
+
+
+/***********************************************************************
  *           move_window_bits
  *
  * Move the window bits when a window is resized or its surface recreated.
@@ -767,7 +800,7 @@ void erase_now( HWND hwnd, UINT rdw_flags )
 void move_window_bits( HWND hwnd, struct window_surface *old_surface,
                        struct window_surface *new_surface,
                        const RECT *visible_rect, const RECT *old_visible_rect,
-                       const RECT *client_rect, const RECT *valid_rects )
+                       const RECT *window_rect, const RECT *valid_rects )
 {
     RECT dst = valid_rects[0];
     RECT src = valid_rects[1];
@@ -776,25 +809,46 @@ void move_window_bits( HWND hwnd, struct window_surface *old_surface,
         src.left - old_visible_rect->left != dst.left - visible_rect->left ||
         src.top - old_visible_rect->top != dst.top - visible_rect->top)
     {
-        char buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
-        BITMAPINFO *info = (BITMAPINFO *)buffer;
-        void *bits;
-        UINT flags = UPDATE_NOCHILDREN;
-        HRGN rgn = get_update_region( hwnd, &flags, NULL );
-        HDC hdc = GetDCEx( hwnd, rgn, DCX_CACHE | DCX_EXCLUDERGN );
-
-        OffsetRect( &dst, -client_rect->left, -client_rect->top );
-        TRACE( "copying  %s -> %s\n", wine_dbgstr_rect(&src), wine_dbgstr_rect(&dst) );
-        bits = old_surface->funcs->get_info( old_surface, info );
-        old_surface->funcs->lock( old_surface );
-        SetDIBitsToDevice( hdc, dst.left, dst.top, dst.right - dst.left, dst.bottom - dst.top,
-                           src.left - old_visible_rect->left - old_surface->rect.left,
-                           old_surface->rect.bottom - (src.bottom - old_visible_rect->top),
-                           0, old_surface->rect.bottom - old_surface->rect.top,
-                           bits, info, DIB_RGB_COLORS );
-        old_surface->funcs->unlock( old_surface );
-        ReleaseDC( hwnd, hdc );
+        TRACE( "copying %s -> %s\n", wine_dbgstr_rect( &src ), wine_dbgstr_rect( &dst ));
+        OffsetRect( &src, -old_visible_rect->left, -old_visible_rect->top );
+        OffsetRect( &dst, -window_rect->left, -window_rect->top );
+        copy_bits_from_surface( hwnd, old_surface, &dst, &src );
     }
+}
+
+
+/***********************************************************************
+ *		move_window_bits_parent
+ *
+ * Move the window bits in the parent surface when a child is moved.
+ */
+void move_window_bits_parent( HWND hwnd, HWND parent, const RECT *window_rect, const RECT *valid_rects )
+{
+    struct window_surface *surface;
+    RECT dst = valid_rects[0];
+    RECT src = valid_rects[1];
+    WND *win;
+
+    if (src.left == dst.left && src.top == dst.top) return;
+
+    if (!(win = WIN_GetPtr( parent ))) return;
+    if (win == WND_DESKTOP || win == WND_OTHER_PROCESS) return;
+    if (!(surface = win->surface))
+    {
+        WIN_ReleasePtr( win );
+        return;
+    }
+
+    TRACE( "copying %s -> %s\n", wine_dbgstr_rect( &src ), wine_dbgstr_rect( &dst ));
+    MapWindowPoints( GetAncestor( hwnd, GA_PARENT ), parent, (POINT *)&src, 2 );
+    OffsetRect( &src, win->client_rect.left - win->visible_rect.left,
+                win->client_rect.top - win->visible_rect.top );
+    OffsetRect( &dst, -window_rect->left, -window_rect->top );
+    window_surface_add_ref( surface );
+    WIN_ReleasePtr( win );
+
+    copy_bits_from_surface( hwnd, surface, &dst, &src );
+    window_surface_release( surface );
 }
 
 
@@ -1001,7 +1055,7 @@ HDC WINAPI GetDCEx( HWND hwnd, HRGN hrgnClip, DWORD flags )
             if (!dce->hwnd) dceEmpty = dce;
             else if ((dce->hwnd == hwnd) && !((dce->flags ^ flags) & clip_flags))
             {
-                TRACE( "found valid %p dce [%p], flags %08x\n", dce, hwnd, dce->flags );
+                TRACE( "found valid %p hwnd %p, flags %08x\n", dce->hdc, hwnd, dce->flags );
                 found = dce;
                 bUpdateVisRgn = FALSE;
                 break;
@@ -1031,17 +1085,13 @@ HDC WINAPI GetDCEx( HWND hwnd, HRGN hrgnClip, DWORD flags )
     else
     {
         flags |= DCX_NORESETATTRS;
-        if (dce->hwnd == hwnd)
-        {
-            TRACE("\tskipping hVisRgn update\n");
-            bUpdateVisRgn = FALSE; /* updated automatically, via DCHook() */
-        }
-        else
+        if (dce->hwnd != hwnd)
         {
             /* we should free dce->clip_rgn here, but Windows apparently doesn't */
             dce->flags &= ~(DCX_EXCLUDERGN | DCX_INTERSECTRGN);
             dce->clip_rgn = 0;
         }
+        else bUpdateVisRgn = FALSE; /* updated automatically, via DCHook() */
     }
 
     if (flags & (DCX_INTERSECTRGN | DCX_EXCLUDERGN))
@@ -1060,11 +1110,15 @@ HDC WINAPI GetDCEx( HWND hwnd, HRGN hrgnClip, DWORD flags )
     dce->hwnd = hwnd;
     dce->flags = (dce->flags & ~user_flags) | (flags & user_flags);
 
+    /* cross-process invalidation is not supported yet, so always update the vis rgn */
+    if (!WIN_IsCurrentProcess( hwnd )) bUpdateVisRgn = TRUE;
+
     if (SetHookFlags( dce->hdc, DCHF_VALIDATEVISRGN )) bUpdateVisRgn = TRUE;  /* DC was dirty */
 
     if (bUpdateVisRgn) update_visible_region( dce );
 
-    TRACE("(%p,%p,0x%x): returning %p\n", hwnd, hrgnClip, flags, dce->hdc);
+    TRACE("(%p,%p,0x%x): returning %p%s\n", hwnd, hrgnClip, flags, dce->hdc,
+          bUpdateVisRgn ? " (updated)" : "");
     return dce->hdc;
 }
 
@@ -1176,8 +1230,6 @@ BOOL WINAPI RedrawWindow( HWND hwnd, const RECT *rect, HRGN hrgn, UINT flags )
     static const RECT empty;
     BOOL ret;
 
-    if (!hwnd) hwnd = GetDesktopWindow();
-
     if (TRACE_ON(win))
     {
         if (hrgn)
@@ -1220,6 +1272,8 @@ BOOL WINAPI RedrawWindow( HWND hwnd, const RECT *rect, HRGN hrgn, UINT flags )
             ret = redraw_window_rects( hwnd, flags, (const RECT *)data->Buffer, data->rdh.nCount );
         HeapFree( GetProcessHeap(), 0, data );
     }
+
+    if (!hwnd) hwnd = GetDesktopWindow();
 
     if (flags & RDW_UPDATENOW) update_now( hwnd, flags );
     else if (flags & RDW_ERASENOW) erase_now( hwnd, flags );
@@ -1318,9 +1372,12 @@ BOOL WINAPI ValidateRect( HWND hwnd, const RECT *rect )
  */
 INT WINAPI GetUpdateRgn( HWND hwnd, HRGN hrgn, BOOL erase )
 {
+    DPI_AWARENESS_CONTEXT context;
     INT retval = ERROR;
     UINT flags = UPDATE_NOCHILDREN;
     HRGN update_rgn;
+
+    context = SetThreadDpiAwarenessContext( GetWindowDpiAwarenessContext( hwnd ));
 
     if (erase) flags |= UPDATE_NONCLIENT | UPDATE_ERASE;
 
@@ -1335,6 +1392,7 @@ INT WINAPI GetUpdateRgn( HWND hwnd, HRGN hrgn, BOOL erase )
         /* map region to client coordinates */
         map_window_region( 0, hwnd, hrgn );
     }
+    SetThreadDpiAwarenessContext( context );
     return retval;
 }
 
@@ -1344,6 +1402,7 @@ INT WINAPI GetUpdateRgn( HWND hwnd, HRGN hrgn, BOOL erase )
  */
 BOOL WINAPI GetUpdateRect( HWND hwnd, LPRECT rect, BOOL erase )
 {
+    DPI_AWARENESS_CONTEXT context;
     UINT flags = UPDATE_NOCHILDREN;
     HRGN update_rgn;
     BOOL need_erase;
@@ -1358,7 +1417,10 @@ BOOL WINAPI GetUpdateRect( HWND hwnd, LPRECT rect, BOOL erase )
         {
             HDC hdc = GetDCEx( hwnd, 0, DCX_USESTYLE );
             DWORD layout = SetLayout( hdc, 0 );  /* MapWindowPoints mirrors already */
+            context = SetThreadDpiAwarenessContext( GetWindowDpiAwarenessContext( hwnd ));
             MapWindowPoints( 0, hwnd, (LPPOINT)rect, 2 );
+            SetThreadDpiAwarenessContext( context );
+            *rect = rect_win_to_thread_dpi( hwnd, *rect );
             DPtoLP( hdc, (LPPOINT)rect, 2 );
             SetLayout( hdc, layout );
             ReleaseDC( hwnd, hdc );
@@ -1383,12 +1445,15 @@ INT WINAPI ExcludeUpdateRgn( HDC hdc, HWND hwnd )
 
     if (ret != ERROR)
     {
+        DPI_AWARENESS_CONTEXT context;
         POINT pt;
 
+        context = SetThreadDpiAwarenessContext( GetWindowDpiAwarenessContext( hwnd ));
         GetDCOrgEx( hdc, &pt );
         MapWindowPoints( 0, hwnd, &pt, 1 );
         OffsetRgn( update_rgn, -pt.x, -pt.y );
         ret = ExtSelectClipRgn( hdc, update_rgn, RGN_DIFF );
+        SetThreadDpiAwarenessContext( context );
     }
     DeleteObject( update_rgn );
     return ret;

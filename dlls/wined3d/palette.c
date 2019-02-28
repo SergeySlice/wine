@@ -35,7 +35,7 @@ ULONG CDECL wined3d_palette_incref(struct wined3d_palette *palette)
 
 static void wined3d_palette_destroy_object(void *object)
 {
-    HeapFree(GetProcessHeap(), 0, object);
+    heap_free(object);
 }
 
 ULONG CDECL wined3d_palette_decref(struct wined3d_palette *palette)
@@ -45,7 +45,7 @@ ULONG CDECL wined3d_palette_decref(struct wined3d_palette *palette)
     TRACE("%p decreasing refcount to %u.\n", palette, refcount);
 
     if (!refcount)
-        wined3d_cs_emit_destroy_object(palette->device->cs, wined3d_palette_destroy_object, palette);
+        wined3d_cs_destroy_object(palette->device->cs, wined3d_palette_destroy_object, palette);
 
     return refcount;
 }
@@ -97,6 +97,8 @@ HRESULT CDECL wined3d_palette_set_entries(struct wined3d_palette *palette,
     TRACE("palette %p, flags %#x, start %u, count %u, entries %p.\n",
             palette, flags, start, count, entries);
     TRACE("Palette flags: %#x.\n", palette->flags);
+
+    wined3d_cs_finish(palette->device->cs, WINED3D_CS_QUEUE_DEFAULT);
 
     if (palette->flags & WINED3D_PALETTE_8BIT_ENTRIES)
     {
@@ -160,14 +162,13 @@ HRESULT CDECL wined3d_palette_create(struct wined3d_device *device, DWORD flags,
     TRACE("device %p, flags %#x, entry_count %u, entries %p, palette %p.\n",
             device, flags, entry_count, entries, palette);
 
-    object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*object));
-    if (!object)
+    if (!(object = heap_alloc_zero(sizeof(*object))))
         return E_OUTOFMEMORY;
 
     if (FAILED(hr = wined3d_palette_init(object, device, flags, entry_count, entries)))
     {
         WARN("Failed to initialize palette, hr %#x.\n", hr);
-        HeapFree(GetProcessHeap(), 0, object);
+        heap_free(object);
         return hr;
     }
 

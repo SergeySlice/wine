@@ -185,7 +185,7 @@ static const RTL_OSVERSIONINFOEXW VersionData[NB_WINDOWS_VERSIONS] =
     },
     /* WIN10 */
     {
-        sizeof(RTL_OSVERSIONINFOEXW), 10, 0, 0x3839, VER_PLATFORM_WIN32_NT,
+        sizeof(RTL_OSVERSIONINFOEXW), 10, 0, 0x42EE, VER_PLATFORM_WIN32_NT,
         {0}, 0, 0, VER_SUITE_SINGLEUSERTS, VER_NT_WORKSTATION, 0
     },
 
@@ -489,16 +489,12 @@ void version_init( const WCHAR *appname )
 {
     static const WCHAR configW[] = {'S','o','f','t','w','a','r','e','\\','W','i','n','e',0};
     static const WCHAR appdefaultsW[] = {'A','p','p','D','e','f','a','u','l','t','s','\\',0};
-    static const BOOL is_win64 = (sizeof(void *) > sizeof(int));
     OBJECT_ATTRIBUTES attr;
     UNICODE_STRING nameW;
     HANDLE root, hkey, config_key;
     BOOL got_win_ver = FALSE;
 
-    if (is_win64 || is_wow64)
-        current_version = &VersionData[WINXP64];  /* default if nothing else is specified */
-    else
-        current_version = &VersionData[WINXP];
+    current_version = &VersionData[WIN7];
 
     RtlOpenCurrentUser( KEY_ALL_ACCESS, &root );
     attr.Length = sizeof(attr);
@@ -661,6 +657,34 @@ BOOLEAN WINAPI RtlGetNtProductType( LPDWORD type )
     return TRUE;
 }
 
+static inline UCHAR version_update_condition(UCHAR *last_condition, UCHAR condition)
+{
+    switch (*last_condition)
+    {
+        case 0:
+            *last_condition = condition;
+            break;
+        case VER_EQUAL:
+            if (condition >= VER_EQUAL && condition <= VER_LESS_EQUAL)
+            {
+                *last_condition = condition;
+                return condition;
+            }
+            break;
+        case VER_GREATER:
+        case VER_GREATER_EQUAL:
+            if (condition >= VER_EQUAL && condition <= VER_GREATER_EQUAL)
+                return condition;
+            break;
+        case VER_LESS:
+        case VER_LESS_EQUAL:
+            if (condition == VER_EQUAL || (condition >= VER_LESS && condition <= VER_LESS_EQUAL))
+                return condition;
+            break;
+    }
+    if (!condition) *last_condition |= 0x10;
+    return *last_condition & 0xf;
+}
 
 static inline NTSTATUS version_compare_values(ULONG left, ULONG right, UCHAR condition)
 {
@@ -737,38 +761,33 @@ NTSTATUS WINAPI RtlVerifyVersionInfo( const RTL_OSVERSIONINFOEXW *info,
 
     if(dwTypeMask & (VER_MAJORVERSION|VER_MINORVERSION|VER_SERVICEPACKMAJOR|VER_SERVICEPACKMINOR))
     {
-        unsigned char condition = 0;
+        unsigned char condition, last_condition = 0;
         BOOLEAN do_next_check = TRUE;
 
         if(dwTypeMask & VER_MAJORVERSION)
-            condition = dwlConditionMask >> 1*3 & 0x07;
-        else if(dwTypeMask & VER_MINORVERSION)
-            condition = dwlConditionMask >> 0*3 & 0x07;
-        else if(dwTypeMask & VER_SERVICEPACKMAJOR)
-            condition = dwlConditionMask >> 5*3 & 0x07;
-        else if(dwTypeMask & VER_SERVICEPACKMINOR)
-            condition = dwlConditionMask >> 4*3 & 0x07;
-
-        if(dwTypeMask & VER_MAJORVERSION)
         {
+            condition = version_update_condition(&last_condition, dwlConditionMask >> 1*3 & 0x07);
             status = version_compare_values(ver.dwMajorVersion, info->dwMajorVersion, condition);
             do_next_check = (ver.dwMajorVersion == info->dwMajorVersion) &&
-                ((condition != VER_EQUAL) || (status == STATUS_SUCCESS));
+                ((condition >= VER_EQUAL) && (condition <= VER_LESS_EQUAL));
         }
         if((dwTypeMask & VER_MINORVERSION) && do_next_check)
         {
+            condition = version_update_condition(&last_condition, dwlConditionMask >> 0*3 & 0x07);
             status = version_compare_values(ver.dwMinorVersion, info->dwMinorVersion, condition);
             do_next_check = (ver.dwMinorVersion == info->dwMinorVersion) &&
-                ((condition != VER_EQUAL) || (status == STATUS_SUCCESS));
+                ((condition >= VER_EQUAL) && (condition <= VER_LESS_EQUAL));
         }
         if((dwTypeMask & VER_SERVICEPACKMAJOR) && do_next_check)
         {
+            condition = version_update_condition(&last_condition, dwlConditionMask >> 5*3 & 0x07);
             status = version_compare_values(ver.wServicePackMajor, info->wServicePackMajor, condition);
             do_next_check = (ver.wServicePackMajor == info->wServicePackMajor) &&
-                ((condition != VER_EQUAL) || (status == STATUS_SUCCESS));
+                ((condition >= VER_EQUAL) && (condition <= VER_LESS_EQUAL));
         }
         if((dwTypeMask & VER_SERVICEPACKMINOR) && do_next_check)
         {
+            condition = version_update_condition(&last_condition, dwlConditionMask >> 4*3 & 0x07);
             status = version_compare_values(ver.wServicePackMinor, info->wServicePackMinor, condition);
         }
 

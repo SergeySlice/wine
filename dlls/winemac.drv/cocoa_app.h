@@ -50,6 +50,8 @@ enum {
     NSMutableSet* triedWindows;
     unsigned long windowFocusSerial;
 
+    TISInputSourceRef lastKeyboardInputSource;
+    TISInputSourceRef lastKeyboardLayoutInputSource;
     CGEventSourceKeyboardType keyboardType;
     NSEvent* lastFlagsChanged;
     BOOL inputSourceIsInputMethod;
@@ -116,10 +118,10 @@ enum {
 
     - (BOOL) waitUntilQueryDone:(int*)done timeout:(NSDate*)timeout processEvents:(BOOL)processEvents;
 
-    - (void) keyboardSelectionDidChange;
     - (void) noteKey:(uint16_t)keyCode pressed:(BOOL)pressed;
 
     - (void) window:(WineWindow*)window isBeingDragged:(BOOL)dragged;
+    - (void) windowWillOrderOut:(WineWindow*)window;
 
     - (void) flipRect:(NSRect*)rect;
 

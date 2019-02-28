@@ -34,96 +34,31 @@
 #include "wingdi.h"
 #include "winuser.h"
 #include "wine/debug.h"
+#include "wine/heap.h"
 #include "wine/unicode.h"
 
 #include "d3d9.h"
 #include "wine/wined3d.h"
 
+#define D3D9_MAX_VERTEX_SHADER_CONSTANTF 256
+#define D3D9_MAX_VERTEX_SHADER_CONSTANTF_SWVP 8192
+#define D3D9_MAX_TEXTURE_UNITS 20
+#define D3D9_MAX_STREAMS 16
+
 #define D3DPRESENTFLAGS_MASK 0x00000fffu
 
-extern HRESULT vdecl_convert_fvf(DWORD FVF, D3DVERTEXELEMENT9 **ppVertexElements) DECLSPEC_HIDDEN;
-D3DFORMAT d3dformat_from_wined3dformat(enum wined3d_format_id format) DECLSPEC_HIDDEN;
-BOOL is_gdi_compat_format(D3DFORMAT format) DECLSPEC_HIDDEN;
-enum wined3d_format_id wined3dformat_from_d3dformat(D3DFORMAT format) DECLSPEC_HIDDEN;
-void present_parameters_from_wined3d_swapchain_desc(D3DPRESENT_PARAMETERS *present_parameters,
-        const struct wined3d_swapchain_desc *swapchain_desc) DECLSPEC_HIDDEN;
+#define D3D9_TEXTURE_MIPMAP_DIRTY 0x1
 
-#define WINECAPSTOD3D9CAPS(_pD3D9Caps, _pWineCaps) \
-    _pD3D9Caps->DeviceType                        = (D3DDEVTYPE) _pWineCaps->DeviceType; \
-    _pD3D9Caps->AdapterOrdinal                    = _pWineCaps->AdapterOrdinal; \
-    _pD3D9Caps->Caps                              = _pWineCaps->Caps; \
-    _pD3D9Caps->Caps2                             = _pWineCaps->Caps2; \
-    _pD3D9Caps->Caps3                             = _pWineCaps->Caps3; \
-    _pD3D9Caps->PresentationIntervals             = _pWineCaps->PresentationIntervals; \
-    _pD3D9Caps->CursorCaps                        = _pWineCaps->CursorCaps; \
-    _pD3D9Caps->DevCaps                           = _pWineCaps->DevCaps; \
-    _pD3D9Caps->PrimitiveMiscCaps                 = _pWineCaps->PrimitiveMiscCaps; \
-    _pD3D9Caps->RasterCaps                        = _pWineCaps->RasterCaps; \
-    _pD3D9Caps->ZCmpCaps                          = _pWineCaps->ZCmpCaps; \
-    _pD3D9Caps->SrcBlendCaps                      = _pWineCaps->SrcBlendCaps; \
-    _pD3D9Caps->DestBlendCaps                     = _pWineCaps->DestBlendCaps; \
-    _pD3D9Caps->AlphaCmpCaps                      = _pWineCaps->AlphaCmpCaps; \
-    _pD3D9Caps->ShadeCaps                         = _pWineCaps->ShadeCaps; \
-    _pD3D9Caps->TextureCaps                       = _pWineCaps->TextureCaps; \
-    _pD3D9Caps->TextureFilterCaps                 = _pWineCaps->TextureFilterCaps; \
-    _pD3D9Caps->CubeTextureFilterCaps             = _pWineCaps->CubeTextureFilterCaps; \
-    _pD3D9Caps->VolumeTextureFilterCaps           = _pWineCaps->VolumeTextureFilterCaps; \
-    _pD3D9Caps->TextureAddressCaps                = _pWineCaps->TextureAddressCaps; \
-    _pD3D9Caps->VolumeTextureAddressCaps          = _pWineCaps->VolumeTextureAddressCaps; \
-    _pD3D9Caps->LineCaps                          = _pWineCaps->LineCaps; \
-    _pD3D9Caps->MaxTextureWidth                   = _pWineCaps->MaxTextureWidth; \
-    _pD3D9Caps->MaxTextureHeight                  = _pWineCaps->MaxTextureHeight; \
-    _pD3D9Caps->MaxVolumeExtent                   = _pWineCaps->MaxVolumeExtent; \
-    _pD3D9Caps->MaxTextureRepeat                  = _pWineCaps->MaxTextureRepeat; \
-    _pD3D9Caps->MaxTextureAspectRatio             = _pWineCaps->MaxTextureAspectRatio; \
-    _pD3D9Caps->MaxAnisotropy                     = _pWineCaps->MaxAnisotropy; \
-    _pD3D9Caps->MaxVertexW                        = _pWineCaps->MaxVertexW; \
-    _pD3D9Caps->GuardBandLeft                     = _pWineCaps->GuardBandLeft; \
-    _pD3D9Caps->GuardBandTop                      = _pWineCaps->GuardBandTop; \
-    _pD3D9Caps->GuardBandRight                    = _pWineCaps->GuardBandRight; \
-    _pD3D9Caps->GuardBandBottom                   = _pWineCaps->GuardBandBottom; \
-    _pD3D9Caps->ExtentsAdjust                     = _pWineCaps->ExtentsAdjust; \
-    _pD3D9Caps->StencilCaps                       = _pWineCaps->StencilCaps; \
-    _pD3D9Caps->FVFCaps                           = _pWineCaps->FVFCaps; \
-    _pD3D9Caps->TextureOpCaps                     = _pWineCaps->TextureOpCaps; \
-    _pD3D9Caps->MaxTextureBlendStages             = _pWineCaps->MaxTextureBlendStages; \
-    _pD3D9Caps->MaxSimultaneousTextures           = _pWineCaps->MaxSimultaneousTextures; \
-    _pD3D9Caps->VertexProcessingCaps              = _pWineCaps->VertexProcessingCaps; \
-    _pD3D9Caps->MaxActiveLights                   = _pWineCaps->MaxActiveLights; \
-    _pD3D9Caps->MaxUserClipPlanes                 = _pWineCaps->MaxUserClipPlanes; \
-    _pD3D9Caps->MaxVertexBlendMatrices            = _pWineCaps->MaxVertexBlendMatrices; \
-    _pD3D9Caps->MaxVertexBlendMatrixIndex         = _pWineCaps->MaxVertexBlendMatrixIndex; \
-    _pD3D9Caps->MaxPointSize                      = _pWineCaps->MaxPointSize; \
-    _pD3D9Caps->MaxPrimitiveCount                 = _pWineCaps->MaxPrimitiveCount; \
-    _pD3D9Caps->MaxVertexIndex                    = _pWineCaps->MaxVertexIndex; \
-    _pD3D9Caps->MaxStreams                        = _pWineCaps->MaxStreams; \
-    _pD3D9Caps->MaxStreamStride                   = _pWineCaps->MaxStreamStride; \
-    _pD3D9Caps->VertexShaderVersion               = _pWineCaps->VertexShaderVersion; \
-    _pD3D9Caps->MaxVertexShaderConst              = _pWineCaps->MaxVertexShaderConst; \
-    _pD3D9Caps->PixelShaderVersion                = _pWineCaps->PixelShaderVersion; \
-    _pD3D9Caps->PixelShader1xMaxValue             = _pWineCaps->PixelShader1xMaxValue; \
-    _pD3D9Caps->DevCaps2                          = _pWineCaps->DevCaps2; \
-    _pD3D9Caps->MaxNpatchTessellationLevel        = _pWineCaps->MaxNpatchTessellationLevel; \
-    _pD3D9Caps->MasterAdapterOrdinal              = _pWineCaps->MasterAdapterOrdinal; \
-    _pD3D9Caps->AdapterOrdinalInGroup             = _pWineCaps->AdapterOrdinalInGroup; \
-    _pD3D9Caps->NumberOfAdaptersInGroup           = _pWineCaps->NumberOfAdaptersInGroup; \
-    _pD3D9Caps->DeclTypes                         = _pWineCaps->DeclTypes; \
-    _pD3D9Caps->NumSimultaneousRTs                = _pWineCaps->NumSimultaneousRTs; \
-    _pD3D9Caps->StretchRectFilterCaps             = _pWineCaps->StretchRectFilterCaps; \
-    _pD3D9Caps->VS20Caps.Caps                     = _pWineCaps->VS20Caps.caps; \
-    _pD3D9Caps->VS20Caps.DynamicFlowControlDepth  = _pWineCaps->VS20Caps.dynamic_flow_control_depth; \
-    _pD3D9Caps->VS20Caps.NumTemps                 = _pWineCaps->VS20Caps.temp_count; \
-    _pD3D9Caps->VS20Caps.StaticFlowControlDepth   = _pWineCaps->VS20Caps.static_flow_control_depth; \
-    _pD3D9Caps->PS20Caps.Caps                     = _pWineCaps->PS20Caps.caps; \
-    _pD3D9Caps->PS20Caps.DynamicFlowControlDepth  = _pWineCaps->PS20Caps.dynamic_flow_control_depth; \
-    _pD3D9Caps->PS20Caps.NumTemps                 = _pWineCaps->PS20Caps.temp_count; \
-    _pD3D9Caps->PS20Caps.StaticFlowControlDepth   = _pWineCaps->PS20Caps.static_flow_control_depth; \
-    _pD3D9Caps->PS20Caps.NumInstructionSlots      = _pWineCaps->PS20Caps.instruction_slot_count; \
-    _pD3D9Caps->VertexTextureFilterCaps           = _pWineCaps->VertexTextureFilterCaps; \
-    _pD3D9Caps->MaxVShaderInstructionsExecuted    = _pWineCaps->MaxVShaderInstructionsExecuted; \
-    _pD3D9Caps->MaxPShaderInstructionsExecuted    = _pWineCaps->MaxPShaderInstructionsExecuted; \
-    _pD3D9Caps->MaxVertexShader30InstructionSlots = _pWineCaps->MaxVertexShader30InstructionSlots; \
-    _pD3D9Caps->MaxPixelShader30InstructionSlots  = _pWineCaps->MaxPixelShader30InstructionSlots;
+extern const struct wined3d_parent_ops d3d9_null_wined3d_parent_ops DECLSPEC_HIDDEN;
+
+HRESULT vdecl_convert_fvf(DWORD FVF, D3DVERTEXELEMENT9 **ppVertexElements) DECLSPEC_HIDDEN;
+D3DFORMAT d3dformat_from_wined3dformat(enum wined3d_format_id format) DECLSPEC_HIDDEN;
+BOOL is_gdi_compat_wined3dformat(enum wined3d_format_id format) DECLSPEC_HIDDEN;
+enum wined3d_format_id wined3dformat_from_d3dformat(D3DFORMAT format) DECLSPEC_HIDDEN;
+unsigned int wined3dmapflags_from_d3dmapflags(unsigned int flags, unsigned int usage) DECLSPEC_HIDDEN;
+void present_parameters_from_wined3d_swapchain_desc(D3DPRESENT_PARAMETERS *present_parameters,
+        const struct wined3d_swapchain_desc *swapchain_desc, DWORD presentation_interval) DECLSPEC_HIDDEN;
+void d3dcaps_from_wined3dcaps(D3DCAPS9 *caps, const struct wined3d_caps *wined3d_caps, DWORD flags) DECLSPEC_HIDDEN;
 
 struct d3d9
 {
@@ -134,7 +69,6 @@ struct d3d9
 };
 
 BOOL d3d9_init(struct d3d9 *d3d9, BOOL extended) DECLSPEC_HIDDEN;
-void filter_caps(D3DCAPS9* pCaps) DECLSPEC_HIDDEN;
 
 struct fvf_declaration
 {
@@ -167,10 +101,20 @@ struct d3d9_device
     UINT index_buffer_size;
     UINT index_buffer_pos;
 
+    struct d3d9_surface *render_targets[D3D_MAX_SIMULTANEOUS_RENDERTARGETS];
+
     LONG device_state;
-    BOOL in_destruction;
-    BOOL in_scene;
-    BOOL has_vertex_declaration;
+    DWORD sysmem_vb : 16; /* D3D9_MAX_STREAMS */
+    DWORD sysmem_ib : 1;
+    DWORD in_destruction : 1;
+    DWORD in_scene : 1;
+    DWORD has_vertex_declaration : 1;
+    DWORD recording : 1;
+    DWORD padding : 11;
+
+    DWORD auto_mipmaps; /* D3D9_MAX_TEXTURE_UNITS */
+
+    unsigned int max_user_clip_planes;
 
     UINT implicit_swapchain_count;
     struct d3d9_swapchain **implicit_swapchains;
@@ -212,10 +156,11 @@ struct d3d9_swapchain
     LONG refcount;
     struct wined3d_swapchain *wined3d_swapchain;
     IDirect3DDevice9Ex *parent_device;
+    unsigned int swap_interval;
 };
 
 HRESULT d3d9_swapchain_create(struct d3d9_device *device, struct wined3d_swapchain_desc *desc,
-        struct d3d9_swapchain **swapchain) DECLSPEC_HIDDEN;
+        unsigned int swap_interval, struct d3d9_swapchain **swapchain) DECLSPEC_HIDDEN;
 
 struct d3d9_surface
 {
@@ -244,7 +189,8 @@ struct d3d9_vertexbuffer
     struct d3d9_resource resource;
     struct wined3d_buffer *wined3d_buffer;
     IDirect3DDevice9Ex *parent_device;
-    DWORD fvf;
+    struct wined3d_buffer *draw_buffer;
+    DWORD fvf, usage;
 };
 
 HRESULT vertexbuffer_init(struct d3d9_vertexbuffer *buffer, struct d3d9_device *device,
@@ -257,7 +203,9 @@ struct d3d9_indexbuffer
     struct d3d9_resource resource;
     struct wined3d_buffer *wined3d_buffer;
     IDirect3DDevice9Ex *parent_device;
+    struct wined3d_buffer *draw_buffer;
     enum wined3d_format_id format;
+    DWORD usage;
 };
 
 HRESULT indexbuffer_init(struct d3d9_indexbuffer *buffer, struct d3d9_device *device,
@@ -271,6 +219,10 @@ struct d3d9_texture
     struct wined3d_texture *wined3d_texture;
     IDirect3DDevice9Ex *parent_device;
     struct list rtv_list;
+    DWORD usage;
+    BOOL flags;
+    struct wined3d_shader_resource_view *wined3d_srv;
+    D3DTEXTUREFILTERTYPE autogen_filter_type;
 };
 
 HRESULT cubetexture_init(struct d3d9_texture *texture, struct d3d9_device *device,
@@ -280,6 +232,8 @@ HRESULT texture_init(struct d3d9_texture *texture, struct d3d9_device *device,
 HRESULT volumetexture_init(struct d3d9_texture *texture, struct d3d9_device *device,
         UINT width, UINT height, UINT depth, UINT levels, DWORD usage, D3DFORMAT format, D3DPOOL pool) DECLSPEC_HIDDEN;
 struct d3d9_texture *unsafe_impl_from_IDirect3DBaseTexture9(IDirect3DBaseTexture9 *iface) DECLSPEC_HIDDEN;
+void d3d9_texture_flag_auto_gen_mipmap(struct d3d9_texture *texture) DECLSPEC_HIDDEN;
+void d3d9_texture_gen_auto_mipmap(struct d3d9_texture *texture) DECLSPEC_HIDDEN;
 
 struct d3d9_stateblock
 {
@@ -320,9 +274,6 @@ HRESULT vertexshader_init(struct d3d9_vertexshader *shader,
         struct d3d9_device *device, const DWORD *byte_code) DECLSPEC_HIDDEN;
 struct d3d9_vertexshader *unsafe_impl_from_IDirect3DVertexShader9(IDirect3DVertexShader9 *iface) DECLSPEC_HIDDEN;
 
-#define D3D9_MAX_VERTEX_SHADER_CONSTANTF 256
-#define D3D9_MAX_SIMULTANEOUS_RENDERTARGETS 4
-
 struct d3d9_pixelshader
 {
     IDirect3DPixelShader9 IDirect3DPixelShader9_iface;
@@ -349,6 +300,80 @@ HRESULT query_init(struct d3d9_query *query, struct d3d9_device *device, D3DQUER
 static inline struct d3d9_device *impl_from_IDirect3DDevice9Ex(IDirect3DDevice9Ex *iface)
 {
     return CONTAINING_RECORD(iface, struct d3d9_device, IDirect3DDevice9Ex_iface);
+}
+
+static inline DWORD d3dusage_from_wined3dusage(unsigned int wined3d_usage, unsigned int bind_flags)
+{
+    DWORD usage = wined3d_usage & WINED3DUSAGE_MASK;
+    if (bind_flags & WINED3D_BIND_RENDER_TARGET)
+        usage |= D3DUSAGE_RENDERTARGET;
+    if (bind_flags & WINED3D_BIND_DEPTH_STENCIL)
+        usage |= D3DUSAGE_DEPTHSTENCIL;
+    return usage;
+}
+
+static inline D3DPOOL d3dpool_from_wined3daccess(unsigned int access, unsigned int usage)
+{
+    switch (access & (WINED3D_RESOURCE_ACCESS_GPU | WINED3D_RESOURCE_ACCESS_CPU))
+    {
+        default:
+        case WINED3D_RESOURCE_ACCESS_GPU:
+            return D3DPOOL_DEFAULT;
+        case WINED3D_RESOURCE_ACCESS_CPU:
+            if (usage & WINED3DUSAGE_SCRATCH)
+                return D3DPOOL_SCRATCH;
+            return D3DPOOL_SYSTEMMEM;
+        case WINED3D_RESOURCE_ACCESS_GPU | WINED3D_RESOURCE_ACCESS_CPU:
+            return D3DPOOL_MANAGED;
+    }
+}
+
+static inline unsigned int map_access_from_usage(unsigned int usage)
+{
+    if (usage & D3DUSAGE_WRITEONLY)
+        return WINED3D_RESOURCE_ACCESS_MAP_W;
+    return WINED3D_RESOURCE_ACCESS_MAP_R | WINED3D_RESOURCE_ACCESS_MAP_W;
+}
+
+static inline unsigned int wined3daccess_from_d3dpool(D3DPOOL pool, unsigned int usage)
+{
+    unsigned int access;
+
+    switch (pool)
+    {
+        case D3DPOOL_DEFAULT:
+            access = WINED3D_RESOURCE_ACCESS_GPU;
+            break;
+        case D3DPOOL_MANAGED:
+            access = WINED3D_RESOURCE_ACCESS_GPU | WINED3D_RESOURCE_ACCESS_CPU;
+            break;
+        case D3DPOOL_SYSTEMMEM:
+        case D3DPOOL_SCRATCH:
+            access = WINED3D_RESOURCE_ACCESS_CPU;
+            break;
+        default:
+            access = 0;
+    }
+    if (pool != D3DPOOL_DEFAULT || usage & D3DUSAGE_DYNAMIC)
+        access |= map_access_from_usage(usage);
+    return access;
+}
+
+static inline unsigned int wined3d_bind_flags_from_d3d9_usage(DWORD usage)
+{
+    unsigned int bind_flags = 0;
+
+    if (usage & D3DUSAGE_RENDERTARGET)
+        bind_flags |= WINED3D_BIND_RENDER_TARGET;
+    if (usage & D3DUSAGE_DEPTHSTENCIL)
+        bind_flags |= WINED3D_BIND_DEPTH_STENCIL;
+
+    return bind_flags;
+}
+
+static inline DWORD wined3dusage_from_d3dusage(unsigned int usage)
+{
+    return usage & WINED3DUSAGE_MASK;
 }
 
 #endif /* __WINE_D3D9_PRIVATE_H */

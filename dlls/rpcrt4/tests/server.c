@@ -27,6 +27,8 @@
 #include <netfw.h>
 #include "wine/test.h"
 #include "server.h"
+#define SKIP_STRUCT_DECLS
+#include "server_interp.h"
 #include "server_defines.h"
 
 #include <stddef.h>
@@ -41,7 +43,7 @@
 static const char *progname;
 static BOOL old_windows_version;
 
-static HANDLE stop_event;
+static HANDLE stop_event, stop_wait_event;
 
 static void (WINAPI *pNDRSContextMarshall2)(RPC_BINDING_HANDLE, NDR_SCONTEXT, void*, NDR_RUNDOWN, void*, ULONG);
 static NDR_SCONTEXT (WINAPI *pNDRSContextUnmarshall2)(RPC_BINDING_HANDLE, void*, ULONG, void*, ULONG);
@@ -53,11 +55,212 @@ static RPC_STATUS (WINAPI *pRpcServerRegisterAuthInfoA)(RPC_CSTR, ULONG, RPC_AUT
 
 static char *domain_and_user;
 
+static int (__cdecl *int_return)(void);
+static int (__cdecl *square)(int x);
+static int (__cdecl *sum)(int x, int y);
+static signed char (__cdecl *sum_char)(signed char x, signed char y);
+static short (__cdecl *sum_short)(short x, short y);
+static int (__cdecl *sum_float)(float x, float y);
+static int (__cdecl *sum_double_int)(int x, double y);
+static hyper (__cdecl *sum_hyper)(hyper x, hyper y);
+static int (__cdecl *sum_hyper_int)(hyper x, hyper y);
+static int (__cdecl *sum_char_hyper)(signed char x, hyper y);
+static void (__cdecl *square_out)(int x, int *y);
+static void (__cdecl *square_ref)(int *x);
+static int (__cdecl *str_length)(const char *s);
+static int (__cdecl *str_t_length)(str_t s);
+static int (__cdecl *cstr_length)(const char *s, int n);
+static int (__cdecl *dot_self)(vector_t *v);
+static double (__cdecl *square_half)(double x, double *y);
+static float (__cdecl *square_half_float)(float x, float *y);
+static LONG (__cdecl *square_half_long)(LONG x, LONG *y);
+static int (__cdecl *sum_fixed_array)(int a[5]);
+static int (__cdecl *pints_sum)(pints_t *pints);
+static double (__cdecl *ptypes_sum)(ptypes_t *ptypes);
+static int (__cdecl *dot_pvectors)(pvectors_t *pvectors);
+static int (__cdecl *sum_sp)(sp_t *sp);
+static double (__cdecl *square_sun)(sun_t *su);
+static int (__cdecl *test_list_length)(test_list_t *ls);
+static int (__cdecl *sum_fixed_int_3d)(int m[2][3][4]);
+static int (__cdecl *sum_conf_array)(int x[], int n);
+static int (__cdecl *sum_conf_ptr_by_conf_ptr)(int n1, int *n2_then_x1, int *x2);
+static int (__cdecl *sum_unique_conf_array)(int x[], int n);
+static int (__cdecl *sum_unique_conf_ptr)(int *x, int n);
+static int (__cdecl *sum_var_array)(int x[20], int n);
+static int (__cdecl *dot_two_vectors)(vector_t vs[2]);
+static void (__cdecl *get_number_array)(int x[20], int *n);
+static int (__cdecl *sum_cs)(cs_t *cs);
+static int (__cdecl *sum_cps)(cps_t *cps);
+static int (__cdecl *sum_cpsc)(cpsc_t *cpsc);
+static int (__cdecl *get_cpsc)(int n, cpsc_t *cpsc);
+static int (__cdecl *sum_complex_array)(int n, refpint_t pi[]);
+static int (__cdecl *square_puint)(puint_t p);
+static int (__cdecl *sum_puints)(puints_t *p);
+static int (__cdecl *sum_cpuints)(cpuints_t *p);
+static int (__cdecl *dot_copy_vectors)(vector_t u, vector_t v);
+static double (__cdecl *square_encu)(encu_t *eu);
+static double (__cdecl *square_unencu)(int t, unencu_t *eu);
+static int (__cdecl *sum_parr)(int *a[3]);
+static int (__cdecl *sum_pcarr)(int *a[], int n);
+static int (__cdecl *enum_ord)(e_t e);
+static double (__cdecl *square_encue)(encue_t *eue);
+static void (__cdecl *check_se2)(se_t *s);
+static int (__cdecl *sum_toplev_conf_2n)(int *x, int n);
+static int (__cdecl *sum_toplev_conf_cond)(int *x, int a, int b, int c);
+static int (__cdecl *square_test_us)(test_us_t *tus);
+static double (__cdecl *sum_aligns)(aligns_t *a);
+static int (__cdecl *sum_padded)(padded_t *p);
+static int (__cdecl *sum_padded2)(padded_t ps[2]);
+static int (__cdecl *sum_padded_conf)(padded_t *ps, int n);
+static int (__cdecl *sum_bogus)(bogus_t *b);
+static void (__cdecl *check_null)(int *null);
+static int (__cdecl *str_struct_len)(str_struct_t *s);
+static int (__cdecl *wstr_struct_len)(wstr_struct_t *s);
+static int (__cdecl *sum_doub_carr)(doub_carr_t *dc);
+static void (__cdecl *make_pyramid_doub_carr)(unsigned char n, doub_carr_t **dc);
+static unsigned (__cdecl *hash_bstr)(bstr_t s);
+static void (__cdecl *get_a_bstr)(bstr_t *s);
+static void (__cdecl *get_name)(name_t *name);
+static void (__cdecl *get_names)(int *n, str_array_t *names);
+static void (__cdecl *get_namesw)(int *n, wstr_array_t *names);
+static int (__cdecl *sum_pcarr2)(int n, int **pa);
+static int (__cdecl *sum_L1_norms)(int n, vector_t *vs);
+static s123_t* (__cdecl *get_s123)(void);
+static void (__cdecl *get_numbers)(int length, int size, pints_t pn[]);
+static void (__cdecl *get_numbers_struct)(numbers_struct_t **ns);
+static str_t (__cdecl *get_filename)(void);
+static rint_t (__cdecl *echo_ranged_int)(int i, int j, int k);
+static rint_t (__cdecl *echo_ranged_int2)(int i);
+static void (__cdecl *get_ranged_enum)(renum_t *re);
+static void (__cdecl *context_handle_test)(void);
+static void (__cdecl *full_pointer_test)(int *a, int *b);
+static void (__cdecl *full_pointer_null_test)(int *a, int *b);
+static void (__cdecl *authinfo_test)(unsigned int protseq, int secure);
+static void (__cdecl *stop)(void);
+static void (__cdecl *stop_autolisten)(void);
+static void (__cdecl *ip_test)(ipu_t *a);
+static int (__cdecl *sum_ptr_array)(int *a[2]);
+static int (__cdecl *sum_array_ptr)(int (*a)[2]);
+static ctx_handle_t __cdecl (*get_handle)(void);
+static void (__cdecl *get_handle_by_ptr)(ctx_handle_t *r);
+static void (__cdecl *test_handle)(ctx_handle_t ctx_handle);
+
+#define SERVER_FUNCTIONS \
+    X(int_return) \
+    X(square) \
+    X(sum) \
+    X(sum_char) \
+    X(sum_short) \
+    X(sum_float) \
+    X(sum_double_int) \
+    X(sum_hyper) \
+    X(sum_hyper_int) \
+    X(sum_char_hyper) \
+    X(square_out) \
+    X(square_ref) \
+    X(str_length) \
+    X(str_t_length) \
+    X(cstr_length) \
+    X(dot_self) \
+    X(square_half) \
+    X(square_half_float) \
+    X(square_half_long) \
+    X(sum_fixed_array) \
+    X(pints_sum) \
+    X(ptypes_sum) \
+    X(dot_pvectors) \
+    X(sum_sp) \
+    X(square_sun) \
+    X(test_list_length) \
+    X(sum_fixed_int_3d) \
+    X(sum_conf_array) \
+    X(sum_conf_ptr_by_conf_ptr) \
+    X(sum_unique_conf_array) \
+    X(sum_unique_conf_ptr) \
+    X(sum_var_array) \
+    X(dot_two_vectors) \
+    X(get_number_array) \
+    X(sum_cs) \
+    X(sum_cps) \
+    X(sum_cpsc) \
+    X(get_cpsc) \
+    X(sum_complex_array) \
+    X(square_puint) \
+    X(sum_puints) \
+    X(sum_cpuints) \
+    X(dot_copy_vectors) \
+    X(square_encu) \
+    X(square_unencu) \
+    X(sum_parr) \
+    X(sum_pcarr) \
+    X(enum_ord) \
+    X(square_encue) \
+    X(check_se2) \
+    X(sum_toplev_conf_2n) \
+    X(sum_toplev_conf_cond) \
+    X(square_test_us) \
+    X(sum_aligns) \
+    X(sum_padded) \
+    X(sum_padded2) \
+    X(sum_padded_conf) \
+    X(sum_bogus) \
+    X(check_null) \
+    X(str_struct_len) \
+    X(wstr_struct_len) \
+    X(sum_doub_carr) \
+    X(make_pyramid_doub_carr) \
+    X(hash_bstr) \
+    X(get_a_bstr) \
+    X(get_name) \
+    X(get_names) \
+    X(get_namesw) \
+    X(sum_pcarr2) \
+    X(sum_L1_norms) \
+    X(get_s123) \
+    X(get_numbers) \
+    X(get_numbers_struct) \
+    X(get_filename) \
+    X(echo_ranged_int) \
+    X(echo_ranged_int2) \
+    X(get_ranged_enum) \
+    X(context_handle_test) \
+    X(full_pointer_test) \
+    X(full_pointer_null_test) \
+    X(authinfo_test) \
+    X(stop) \
+    X(stop_autolisten) \
+    X(ip_test) \
+    X(sum_ptr_array) \
+    X(sum_array_ptr) \
+    X(get_handle) \
+    X(get_handle_by_ptr) \
+    X(test_handle)
+
 /* type check statements generated in header file */
 fnprintf *p_printf = printf;
 
 static const WCHAR helloW[] = { 'H','e','l','l','o',0 };
 static const WCHAR worldW[] = { 'W','o','r','l','d','!',0 };
+
+static BOOL is_interp;
+
+static void set_interp_interface(void)
+{
+    is_interp = TRUE;
+
+#define X(name) name = interp_##name;
+    SERVER_FUNCTIONS
+#undef X
+}
+
+static void set_mixed_interface(void)
+{
+    is_interp = FALSE;
+
+#define X(name) name = mixed_##name;
+    SERVER_FUNCTIONS
+#undef X
+}
 
 static void InitFunctionPointers(void)
 {
@@ -313,7 +516,7 @@ void __cdecl s_get_number_array(int x[20], int *n)
 {
   int c[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
   memcpy(x, c, sizeof(c));
-  *n = sizeof(c)/sizeof(c[0]);
+  *n = ARRAY_SIZE(c);
 }
 
 int __cdecl s_sum_cs(cs_t *cs)
@@ -830,9 +1033,65 @@ void __cdecl s_full_pointer_null_test(int *a, int *b)
 
 void __cdecl s_stop(void)
 {
-  ok(RPC_S_OK == RpcMgmtStopServerListening(NULL), "RpcMgmtStopServerListening\n");
-  ok(RPC_S_OK == RpcServerUnregisterIf(NULL, NULL, FALSE), "RpcServerUnregisterIf\n");
+  if (!stop_wait_event)
+  {
+    ok(RPC_S_OK == RpcMgmtStopServerListening(NULL), "RpcMgmtStopServerListening\n");
+    ok(RPC_S_OK == RpcServerUnregisterIf(NULL, NULL, FALSE), "RpcServerUnregisterIf\n");
+  }
   ok(SetEvent(stop_event), "SetEvent\n");
+  if (stop_wait_event)
+  {
+    DWORD ret;
+    ret = WaitForSingleObject(stop_wait_event, 10000);
+    ok(WAIT_OBJECT_0 == ret, "WaitForSingleObject\n");
+  }
+}
+
+void __cdecl s_stop_autolisten(void)
+{
+    RPC_STATUS status;
+    status = RpcServerUnregisterIf(NULL, NULL, FALSE);
+todo_wine
+    ok(status == RPC_S_UNKNOWN_MGR_TYPE, "got %u\n", status);
+}
+
+void __cdecl s_ip_test(ipu_t *a)
+{
+    STATSTG st;
+    HRESULT hr;
+
+    hr = IStream_Stat(a->tagged_union.stream, &st, STATFLAG_NONAME);
+    ok(hr == S_OK, "got %#x\n", hr);
+}
+
+int __cdecl s_sum_ptr_array(int *a[2])
+{
+    return *a[0] + *a[1];
+}
+
+int __cdecl s_sum_array_ptr(int (*a)[2])
+{
+    return (*a)[0] + (*a)[1];
+}
+
+ctx_handle_t __cdecl s_get_handle(void)
+{
+    return (ctx_handle_t)0xdeadbeef;
+}
+
+void __cdecl s_get_handle_by_ptr(ctx_handle_t *r)
+{
+    *r = (ctx_handle_t)0xdeadbeef;
+}
+
+void __cdecl s_test_handle(ctx_handle_t ctx_handle)
+{
+    ok(ctx_handle == (ctx_handle_t)0xdeadbeef, "Unexpected ctx_handle %p\n", ctx_handle);
+}
+
+void __RPC_USER ctx_handle_t_rundown(ctx_handle_t ctx_handle)
+{
+    ok(ctx_handle == (ctx_handle_t)0xdeadbeef, "Unexpected ctx_handle %p\n", ctx_handle);
 }
 
 static void
@@ -903,7 +1162,7 @@ basic_tests(void)
   x = sum_double_int(-78, 148.46);
   ok(x == 70, "RPC sum_double_int got %d\n", x);
   y = sum_hyper((hyper)0x12345678 << 16, (hyper)0x33557799 << 16);
-  ok(y == (hyper)0x4589ce11 << 16, "RPC hyper got %x%08x\n", (DWORD)(y >> 32), (DWORD)y);
+  ok(y == (hyper)0x4589ce11 << 16, "RPC hyper got %s\n", wine_dbgstr_longlong(y));
   x = sum_hyper_int((hyper)0x24242424 << 16, -((hyper)0x24241212 << 16));
   ok(x == 0x12120000, "RPC hyper_int got 0x%x\n", x);
   x = sum_char_hyper( 12, ((hyper)0x42424242 << 32) | 0x33334444 );
@@ -1007,9 +1266,11 @@ basic_tests(void)
 
   check_null(NULL);
 
+  if (!is_interp || sizeof(void*) != 8) { /* broken in widl for win64 */
   str = get_filename();
   ok(!strcmp(str, __FILE__), "get_filename() returned %s instead of %s\n", str, __FILE__);
   midl_user_free(str);
+  }
 
   x = echo_ranged_int(0,0,0);
   ok(x == 0, "echo_ranged_int() returned %d instead of 0\n", x);
@@ -1035,6 +1296,8 @@ union_tests(void)
   encu_t eu;
   unencu_t uneu;
   sun_t su;
+  ipu_t ipu;
+  LONG ref;
   int i;
 
   su.s = SUN_I;
@@ -1075,6 +1338,15 @@ union_tests(void)
   eue.t = E2;
   eue.tagged_union.f2 = 10.0;
   ok(square_encue(&eue) == 100.0, "RPC square_encue\n");
+
+  CoInitializeEx(NULL, COINIT_MULTITHREADED);
+
+  CreateStreamOnHGlobal(NULL, TRUE, &ipu.tagged_union.stream);
+  ip_test(&ipu);
+  ref = IStream_Release(ipu.tagged_union.stream);
+  ok(!ref, "got %u refs\n", ref);
+
+  CoUninitialize();
 }
 
 static test_list_t *
@@ -1276,6 +1548,7 @@ pointer_tests(void)
       ok(!strcmp(name.name, "Jeremy Wh"), "name didn't unmarshall properly, expected \"Jeremy Wh\", but got \"%s\"\n", name.name);
       HeapFree(GetProcessHeap(), 0, name.name);
 
+      if (!is_interp) { /* broken in widl */
       n = -1;
       names = NULL;
       get_names(&n, &names);
@@ -1295,10 +1568,13 @@ pointer_tests(void)
       MIDL_user_free(namesw[0]);
       MIDL_user_free(namesw[1]);
       MIDL_user_free(namesw);
+      }
   }
 
+  if (!is_interp) { /* broken in widl */
   pa2 = a;
   ok(sum_pcarr2(4, &pa2) == 10, "RPC sum_pcarr2\n");
+  }
 
   s123 = get_s123();
   ok(s123->f1 == 1 && s123->f2 == 2 && s123->f3 == 3, "RPC get_s123\n");
@@ -1351,6 +1627,7 @@ array_tests(void)
   pints_t api[5];
   numbers_struct_t *ns;
   refpint_t rpi[5];
+  int i0 = 1, i1 = 2, *ptr_array[2] = {&i0, &i1}, array[2] = {3, 4};
 
   if (!old_windows_version)
   {
@@ -1481,6 +1758,9 @@ array_tests(void)
   pi[4] = -4; rpi[4] = &pi[4];
   ok(sum_complex_array(5, rpi) == 1, "RPC sum_complex_array\n");
   HeapFree(GetProcessHeap(), 0, pi);
+
+  ok(sum_ptr_array(ptr_array) == 3, "RPC sum_ptr_array\n");
+  ok(sum_array_ptr(&array) == 7, "RPC sum_array_ptr\n");
 }
 
 void __cdecl s_authinfo_test(unsigned int protseq, int secure)
@@ -1555,6 +1835,16 @@ void __cdecl s_authinfo_test(unsigned int protseq, int secure)
     }
 }
 
+static void test_handle_return(void)
+{
+    ctx_handle_t handle, handle2;
+
+    handle = get_handle();
+    test_handle(handle);
+    get_handle_by_ptr(&handle2);
+    test_handle(handle2);
+}
+
 static void
 run_tests(void)
 {
@@ -1563,6 +1853,7 @@ run_tests(void)
   pointer_tests();
   array_tests();
   context_handle_test();
+  test_handle_return();
 }
 
 static void
@@ -1618,65 +1909,96 @@ client(const char *test)
   if (strcmp(test, "tcp_basic") == 0)
   {
     ok(RPC_S_OK == RpcStringBindingComposeA(NULL, iptcp, address, port, NULL, &binding), "RpcStringBindingCompose\n");
-    ok(RPC_S_OK == RpcBindingFromStringBindingA(binding, &IServer_IfHandle), "RpcBindingFromStringBinding\n");
+    ok(RPC_S_OK == RpcBindingFromStringBindingA(binding, &IMixedServer_IfHandle), "RpcBindingFromStringBinding\n");
 
     run_tests();
     authinfo_test(RPC_PROTSEQ_TCP, 0);
-    test_is_server_listening2(IServer_IfHandle, RPC_S_OK, RPC_S_ACCESS_DENIED);
+    test_is_server_listening2(IMixedServer_IfHandle, RPC_S_OK, RPC_S_ACCESS_DENIED);
 
     ok(RPC_S_OK == RpcStringFreeA(&binding), "RpcStringFree\n");
-    ok(RPC_S_OK == RpcBindingFree(&IServer_IfHandle), "RpcBindingFree\n");
+    ok(RPC_S_OK == RpcBindingFree(&IMixedServer_IfHandle), "RpcBindingFree\n");
   }
   else if (strcmp(test, "tcp_secure") == 0)
   {
     ok(RPC_S_OK == RpcStringBindingComposeA(NULL, iptcp, address, port, NULL, &binding), "RpcStringBindingCompose\n");
-    ok(RPC_S_OK == RpcBindingFromStringBindingA(binding, &IServer_IfHandle), "RpcBindingFromStringBinding\n");
+    ok(RPC_S_OK == RpcBindingFromStringBindingA(binding, &IMixedServer_IfHandle), "RpcBindingFromStringBinding\n");
 
-    set_auth_info(IServer_IfHandle);
+    set_auth_info(IMixedServer_IfHandle);
     authinfo_test(RPC_PROTSEQ_TCP, 1);
-    test_is_server_listening(IServer_IfHandle, RPC_S_ACCESS_DENIED);
+    test_is_server_listening(IMixedServer_IfHandle, RPC_S_ACCESS_DENIED);
 
     ok(RPC_S_OK == RpcStringFreeA(&binding), "RpcStringFree\n");
-    ok(RPC_S_OK == RpcBindingFree(&IServer_IfHandle), "RpcBindingFree\n");
+    ok(RPC_S_OK == RpcBindingFree(&IMixedServer_IfHandle), "RpcBindingFree\n");
   }
   else if (strcmp(test, "ncalrpc_basic") == 0)
   {
     ok(RPC_S_OK == RpcStringBindingComposeA(NULL, ncalrpc, NULL, guid, NULL, &binding), "RpcStringBindingCompose\n");
-    ok(RPC_S_OK == RpcBindingFromStringBindingA(binding, &IServer_IfHandle), "RpcBindingFromStringBinding\n");
+    ok(RPC_S_OK == RpcBindingFromStringBindingA(binding, &IMixedServer_IfHandle), "RpcBindingFromStringBinding\n");
 
     run_tests(); /* can cause RPC_X_BAD_STUB_DATA exception */
     authinfo_test(RPC_PROTSEQ_LRPC, 0);
-    test_is_server_listening(IServer_IfHandle, RPC_S_OK);
+    test_is_server_listening(IMixedServer_IfHandle, RPC_S_OK);
 
     ok(RPC_S_OK == RpcStringFreeA(&binding), "RpcStringFree\n");
-    ok(RPC_S_OK == RpcBindingFree(&IServer_IfHandle), "RpcBindingFree\n");
+    ok(RPC_S_OK == RpcBindingFree(&IMixedServer_IfHandle), "RpcBindingFree\n");
+  }
+  else if (strcmp(test, "ncalrpc_autolisten") == 0)
+  {
+    ok(RPC_S_OK == RpcStringBindingComposeA(NULL, ncalrpc, NULL, guid, NULL, &binding), "RpcStringBindingCompose\n");
+    ok(RPC_S_OK == RpcBindingFromStringBindingA(binding, &IMixedServer_IfHandle), "RpcBindingFromStringBinding\n");
+
+    run_tests();
+    authinfo_test(RPC_PROTSEQ_LRPC, 0);
+todo_wine
+    test_is_server_listening(IMixedServer_IfHandle, RPC_S_NOT_LISTENING);
+
+    stop_autolisten();
+    ok(int_return() == INT_CODE, "RPC int_return\n");
+
+    ok(RPC_S_OK == RpcStringFreeA(&binding), "RpcStringFree\n");
+    ok(RPC_S_OK == RpcBindingFree(&IMixedServer_IfHandle), "RpcBindingFree\n");
   }
   else if (strcmp(test, "ncalrpc_secure") == 0)
   {
     ok(RPC_S_OK == RpcStringBindingComposeA(NULL, ncalrpc, NULL, guid, NULL, &binding), "RpcStringBindingCompose\n");
-    ok(RPC_S_OK == RpcBindingFromStringBindingA(binding, &IServer_IfHandle), "RpcBindingFromStringBinding\n");
+    ok(RPC_S_OK == RpcBindingFromStringBindingA(binding, &IMixedServer_IfHandle), "RpcBindingFromStringBinding\n");
 
-    set_auth_info(IServer_IfHandle);
+    set_auth_info(IMixedServer_IfHandle);
     authinfo_test(RPC_PROTSEQ_LRPC, 1);
-    test_is_server_listening(IServer_IfHandle, RPC_S_OK);
+    test_is_server_listening(IMixedServer_IfHandle, RPC_S_OK);
 
     ok(RPC_S_OK == RpcStringFreeA(&binding), "RpcStringFree\n");
-    ok(RPC_S_OK == RpcBindingFree(&IServer_IfHandle), "RpcBindingFree\n");
+    ok(RPC_S_OK == RpcBindingFree(&IMixedServer_IfHandle), "RpcBindingFree\n");
   }
   else if (strcmp(test, "np_basic") == 0)
   {
     ok(RPC_S_OK == RpcStringBindingComposeA(NULL, np, address_np, pipe, NULL, &binding), "RpcStringBindingCompose\n");
-    ok(RPC_S_OK == RpcBindingFromStringBindingA(binding, &IServer_IfHandle), "RpcBindingFromStringBinding\n");
+    ok(RPC_S_OK == RpcBindingFromStringBindingA(binding, &IMixedServer_IfHandle), "RpcBindingFromStringBinding\n");
 
-    test_is_server_listening(IServer_IfHandle, RPC_S_OK);
+    test_is_server_listening(IMixedServer_IfHandle, RPC_S_OK);
     run_tests();
     authinfo_test(RPC_PROTSEQ_NMP, 0);
-    test_is_server_listening(IServer_IfHandle, RPC_S_OK);
+    test_is_server_listening(IMixedServer_IfHandle, RPC_S_OK);
     stop();
-    test_is_server_listening(IServer_IfHandle, RPC_S_NOT_LISTENING);
+    test_is_server_listening(IMixedServer_IfHandle, RPC_S_NOT_LISTENING);
 
     ok(RPC_S_OK == RpcStringFreeA(&binding), "RpcStringFree\n");
-    ok(RPC_S_OK == RpcBindingFree(&IServer_IfHandle), "RpcBindingFree\n");
+    ok(RPC_S_OK == RpcBindingFree(&IMixedServer_IfHandle), "RpcBindingFree\n");
+  }
+  else if (strcmp(test, "np_basic_interp") == 0)
+  {
+    set_interp_interface();
+
+    ok(RPC_S_OK == RpcStringBindingComposeA(NULL, np, address_np, pipe, NULL, &binding), "RpcStringBindingCompose\n");
+    ok(RPC_S_OK == RpcBindingFromStringBindingA(binding, &IInterpServer_IfHandle), "RpcBindingFromStringBinding\n");
+
+    test_is_server_listening(IInterpServer_IfHandle, RPC_S_OK);
+    run_tests();
+    authinfo_test(RPC_PROTSEQ_NMP, 0);
+    test_is_server_listening(IInterpServer_IfHandle, RPC_S_OK);
+
+    ok(RPC_S_OK == RpcStringFreeA(&binding), "RpcStringFree\n");
+    ok(RPC_S_OK == RpcBindingFree(&IInterpServer_IfHandle), "RpcBindingFree\n");
   }
 }
 
@@ -1691,6 +2013,9 @@ server(void)
   static unsigned char guid[] = "00000000-4114-0704-2301-000000000000";
   RPC_STATUS status, iptcp_status, np_status, ncalrpc_status;
   DWORD ret;
+
+  /* needed for tests involving interface pointers */
+  CoInitializeEx(NULL, COINIT_MULTITHREADED);
 
   iptcp_status = RpcServerUseProtseqEpA(iptcp, 20, port, NULL);
   ok(iptcp_status == RPC_S_OK, "RpcServerUseProtseqEp(ncacn_ip_tcp) failed with status %d\n", iptcp_status);
@@ -1707,13 +2032,22 @@ server(void)
   if (pRpcServerRegisterIfEx)
   {
     trace("Using RpcServerRegisterIfEx\n");
-    status = pRpcServerRegisterIfEx(s_IServer_v0_0_s_ifspec, NULL, NULL,
+    status = pRpcServerRegisterIfEx(s_IMixedServer_v0_0_s_ifspec, NULL, NULL,
                                     RPC_IF_ALLOW_CALLBACKS_WITH_NO_AUTH,
                                     RPC_C_LISTEN_MAX_CALLS_DEFAULT, NULL);
+    ok(status == RPC_S_OK, "RpcServerRegisterIfEx failed with status %d\n", status);
+    status = pRpcServerRegisterIfEx(s_IInterpServer_v0_0_s_ifspec, NULL, NULL,
+                                    RPC_IF_ALLOW_CALLBACKS_WITH_NO_AUTH,
+                                    RPC_C_LISTEN_MAX_CALLS_DEFAULT, NULL);
+    ok(status == RPC_S_OK, "RpcServerRegisterIfEx failed with status %d\n", status);
   }
   else
-    status = RpcServerRegisterIf(s_IServer_v0_0_s_ifspec, NULL, NULL);
-  ok(status == RPC_S_OK, "RpcServerRegisterIf failed with status %d\n", status);
+  {
+    status = RpcServerRegisterIf(s_IMixedServer_v0_0_s_ifspec, NULL, NULL);
+    ok(status == RPC_S_OK, "RpcServerRegisterIf failed with status %d\n", status);
+    status = RpcServerRegisterIf(s_IInterpServer_v0_0_s_ifspec, NULL, NULL);
+    ok(status == RPC_S_OK, "RpcServerRegisterIf failed with status %d\n", status);
+  }
   test_is_server_listening(NULL, RPC_S_NOT_LISTENING);
   status = RpcServerListen(1, 20, TRUE);
   ok(status == RPC_S_OK, "RpcServerListen failed with status %d\n", status);
@@ -1737,7 +2071,10 @@ server(void)
     skip("lrpc tests skipped due to earlier failure\n");
 
   if (np_status == RPC_S_OK)
+  {
+    run_client("np_basic_interp");
     run_client("np_basic");
+  }
   else
   {
     skip("np_basic tests skipped due to earlier failure\n");
@@ -1747,15 +2084,273 @@ server(void)
 
   ret = WaitForSingleObject(stop_event, 1000);
   ok(WAIT_OBJECT_0 == ret, "WaitForSingleObject\n");
+
   /* if the stop event didn't fire then RpcMgmtWaitServerListen will wait
    * forever, so don't bother calling it in this case */
   if (ret == WAIT_OBJECT_0)
   {
     status = RpcMgmtWaitServerListen();
-    todo_wine {
-      ok(status == RPC_S_OK, "RpcMgmtWaitServerListening failed with status %d\n", status);
-    }
+    ok(status == RPC_S_OK, "RpcMgmtWaitServerListening failed with status %d\n", status);
   }
+
+  CloseHandle(stop_event);
+  stop_event = NULL;
+
+  if (pRpcServerRegisterIfEx)
+  {
+    status = pRpcServerRegisterIfEx(s_IMixedServer_v0_0_s_ifspec, NULL, NULL,
+        RPC_IF_ALLOW_CALLBACKS_WITH_NO_AUTH | RPC_IF_AUTOLISTEN,
+        RPC_C_LISTEN_MAX_CALLS_DEFAULT, NULL);
+    ok(status == RPC_S_OK, "RpcServerRegisterIf() failed: %u\n", status);
+
+    run_client("ncalrpc_autolisten");
+
+    status = RpcServerUnregisterIf(s_IMixedServer_v0_0_s_ifspec, NULL, TRUE);
+    ok(status == RPC_S_OK, "RpcServerUnregisterIf() failed: %u\n", status);
+  }
+
+  CoUninitialize();
+}
+
+static DWORD WINAPI listen_test_client_thread(void *binding)
+{
+    RPC_STATUS status;
+
+    status = RpcBindingFromStringBindingA(binding, &IMixedServer_IfHandle);
+    ok(status == RPC_S_OK, "RpcBindingFromStringBinding\n");
+
+    test_is_server_listening(IMixedServer_IfHandle, RPC_S_OK);
+    stop();
+    trace("stopped\n");
+
+    status = RpcBindingFree(&IMixedServer_IfHandle);
+    ok(status == RPC_S_OK, "RpcBindingFree\n");
+    return 0;
+}
+
+static DWORD WINAPI wait_listen_proc(void *arg)
+{
+    RPC_STATUS status;
+
+    trace("waiting\n");
+    status = RpcMgmtWaitServerListen();
+    ok(status == RPC_S_OK, "RpcMgmtWaitServerListening failed with status %d\n", status);
+    trace("done\n");
+
+    return 0;
+}
+
+static void test_stop_wait_for_call(unsigned char *binding)
+{
+    HANDLE client_thread, wait_listen_thread;
+    RPC_STATUS status;
+    DWORD ret;
+
+    status = RpcServerListen(1, 20, TRUE);
+    ok(status == RPC_S_OK, "RpcServerListen failed with status %d\n", status);
+    test_is_server_listening(NULL, RPC_S_OK);
+
+    stop_wait_event = CreateEventW(NULL, FALSE, FALSE, NULL);
+    ok(stop_wait_event != NULL, "CreateEvent failed with error %d\n", GetLastError());
+    stop_event = CreateEventW(NULL, FALSE, FALSE, NULL);
+    ok(stop_event != NULL, "CreateEvent failed with error %d\n", GetLastError());
+
+    wait_listen_thread = CreateThread(NULL, 0, wait_listen_proc, 0, 0, NULL);
+    ok(wait_listen_thread != NULL, "CreateThread failed\n");
+
+    client_thread = CreateThread(NULL, 0, listen_test_client_thread, binding, 0, NULL);
+    ok(client_thread != NULL, "CreateThread failed\n");
+    CloseHandle(client_thread);
+
+    ret = WaitForSingleObject(stop_event, 10000);
+    ok(WAIT_OBJECT_0 == ret, "WaitForSingleObject\n");
+
+    status = RpcMgmtStopServerListening(NULL);
+    ok(status == RPC_S_OK, "RpcMgmtStopServerListening\n");
+    test_is_server_listening(NULL, RPC_S_NOT_LISTENING);
+
+    ret = WaitForSingleObject(wait_listen_thread, 500);
+    ok(WAIT_TIMEOUT == ret, "WaitForSingleObject\n");
+
+    SetEvent(stop_wait_event);
+
+    ret = WaitForSingleObject(wait_listen_thread, 10000);
+    ok(WAIT_OBJECT_0 == ret, "WaitForSingleObject returned %u\n", ret);
+
+    CloseHandle(wait_listen_thread);
+
+    CloseHandle(stop_wait_event);
+    stop_wait_event = NULL;
+    CloseHandle(stop_event);
+    stop_event = NULL;
+}
+
+static void test_server_listening(void)
+{
+    static unsigned char np[] = "ncacn_np";
+    static unsigned char address_np[] = "\\\\.";
+    static unsigned char pipe[] = PIPE "listen_test";
+    static unsigned char ncalrpc[] = "ncalrpc";
+    static unsigned char guid[] = "00000000-4114-0704-2302-000000000000";
+    unsigned char *binding;
+    RPC_STATUS status;
+
+    status = RpcServerUseProtseqEpA(np, 0, pipe, NULL);
+    ok(status == RPC_S_OK, "RpcServerUseProtseqEp(ncacn_np) failed with status %d\n", status);
+
+    status = RpcServerRegisterIf(s_IMixedServer_v0_0_s_ifspec, NULL, NULL);
+    ok(status == RPC_S_OK, "RpcServerRegisterIf failed with status %d\n", status);
+
+    test_is_server_listening(NULL, RPC_S_NOT_LISTENING);
+    status = RpcServerListen(1, 20, TRUE);
+    ok(status == RPC_S_OK, "RpcServerListen failed with status %d\n", status);
+    test_is_server_listening(NULL, RPC_S_OK);
+
+    status = RpcServerListen(1, 20, TRUE);
+    ok(status == RPC_S_ALREADY_LISTENING, "RpcServerListen failed with status %d\n", status);
+
+    status = RpcMgmtStopServerListening(NULL);
+    ok(status == RPC_S_OK, "RpcMgmtStopServerListening\n");
+    test_is_server_listening(NULL, RPC_S_NOT_LISTENING);
+
+    status = RpcMgmtWaitServerListen();
+    ok(status == RPC_S_OK, "RpcMgmtWaitServerListening failed with status %d\n", status);
+
+    status = RpcMgmtWaitServerListen();
+    ok(status == RPC_S_NOT_LISTENING, "RpcMgmtWaitServerListening failed with status %d\n", status);
+
+    /* test that server stop waits for a call in progress */
+    status = RpcStringBindingComposeA(NULL, np, address_np, pipe, NULL, &binding);
+    ok(status == RPC_S_OK, "RpcStringBindingCompose\n");
+
+    test_stop_wait_for_call(binding);
+
+    status = RpcStringFreeA(&binding);
+    ok(status == RPC_S_OK, "RpcStringFree\n");
+
+    /* repeat the test using ncalrpc */
+    status = RpcServerUseProtseqEpA(ncalrpc, 0, guid, NULL);
+    ok(status == RPC_S_OK, "RpcServerUseProtseqEp(ncalrpc) failed with status %d\n", status);
+
+    status = RpcStringBindingComposeA(NULL, ncalrpc, NULL, guid, NULL, &binding);
+    ok(status == RPC_S_OK, "RpcStringBindingCompose\n");
+
+    test_stop_wait_for_call(binding);
+
+    status = RpcStringFreeA(&binding);
+    ok(status == RPC_S_OK, "RpcStringFree\n");
+}
+
+static HANDLE create_server_process(void)
+{
+    SECURITY_ATTRIBUTES sec_attr = { sizeof(sec_attr), NULL, TRUE };
+    HANDLE ready_event;
+    char cmdline[MAX_PATH];
+    PROCESS_INFORMATION info;
+    STARTUPINFOA startup;
+    DWORD ret;
+
+    memset(&startup, 0, sizeof startup);
+    startup.cb = sizeof startup;
+
+    ready_event = CreateEventW(&sec_attr, TRUE, FALSE, NULL);
+    ok(ready_event != NULL, "CreateEvent failed: %u\n", GetLastError());
+
+    sprintf(cmdline, "%s server run %lx", progname, (UINT_PTR)ready_event);
+    trace("running server process...\n");
+    ok(CreateProcessA(NULL, cmdline, NULL, NULL, TRUE, 0L, NULL, NULL, &startup, &info), "CreateProcess\n");
+    ret = WaitForSingleObject(ready_event, 10000);
+    ok(WAIT_OBJECT_0 == ret, "WaitForSingleObject\n");
+
+    ok(CloseHandle(info.hThread), "CloseHandle\n");
+    ok(CloseHandle(ready_event), "CloseHandle\n");
+    return info.hProcess;
+}
+
+static void run_server(HANDLE ready_event)
+{
+    static unsigned char np[] = "ncacn_np";
+    static unsigned char pipe[] = PIPE "term_test";
+    RPC_STATUS status;
+    BOOL ret;
+
+    status = RpcServerUseProtseqEpA(np, 0, pipe, NULL);
+    ok(status == RPC_S_OK, "RpcServerUseProtseqEp(ncacn_np) failed with status %d\n", status);
+
+    status = RpcServerRegisterIf(s_IMixedServer_v0_0_s_ifspec, NULL, NULL);
+    ok(status == RPC_S_OK, "RpcServerRegisterIf failed with status %d\n", status);
+
+    test_is_server_listening(NULL, RPC_S_NOT_LISTENING);
+    status = RpcServerListen(1, 20, TRUE);
+    ok(status == RPC_S_OK, "RpcServerListen failed with status %d\n", status);
+
+    stop_event = CreateEventW(NULL, FALSE, FALSE, NULL);
+    ok(stop_event != NULL, "CreateEvent failed with error %d\n", GetLastError());
+
+    ret = SetEvent(ready_event);
+    ok(ret, "SetEvent failed: %u\n", GetLastError());
+
+    ret = WaitForSingleObject(stop_event, 1000);
+    ok(WAIT_OBJECT_0 == ret, "WaitForSingleObject\n");
+
+    status = RpcMgmtWaitServerListen();
+    ok(status == RPC_S_OK, "RpcMgmtWaitServerListening failed with status %d\n", status);
+
+    CloseHandle(stop_event);
+    stop_event = NULL;
+}
+
+static DWORD WINAPI basic_tests_thread(void *arg)
+{
+    basic_tests();
+    return 0;
+}
+
+static void test_reconnect(void)
+{
+    static unsigned char np[] = "ncacn_np";
+    static unsigned char address_np[] = "\\\\.";
+    static unsigned char pipe[] = PIPE "term_test";
+    unsigned char *binding;
+    HANDLE threads[32];
+    HANDLE server_process;
+    unsigned i;
+    DWORD ret;
+
+    server_process = create_server_process();
+
+    ok(RPC_S_OK == RpcStringBindingComposeA(NULL, np, address_np, pipe, NULL, &binding), "RpcStringBindingCompose\n");
+    ok(RPC_S_OK == RpcBindingFromStringBindingA(binding, &IMixedServer_IfHandle), "RpcBindingFromStringBinding\n");
+
+    for (i = 0; i < ARRAY_SIZE(threads); i++)
+    {
+        threads[i] = CreateThread(NULL, 0, basic_tests_thread, 0, 0, NULL);
+        ok(threads[i] != NULL, "CreateThread failed: %u\n", GetLastError());
+    }
+
+    for (i = 0; i < ARRAY_SIZE(threads); i++)
+    {
+        ret = WaitForSingleObject(threads[i], 10000);
+        ok(WAIT_OBJECT_0 == ret, "WaitForSingleObject\n");
+        CloseHandle(threads[i]);
+    }
+
+    stop();
+
+    winetest_wait_child_process(server_process);
+    ok(CloseHandle(server_process), "CloseHandle\n");
+
+    /* create new server, rpcrt4 will connect to it once sending to existing connection fails
+     * that current connection is broken. */
+    server_process = create_server_process();
+    basic_tests();
+    stop();
+
+    winetest_wait_child_process(server_process);
+    ok(CloseHandle(server_process), "CloseHandle\n");
+
+    ok(RPC_S_OK == RpcStringFreeA(&binding), "RpcStringFree\n");
+    ok(RPC_S_OK == RpcBindingFree(&IMixedServer_IfHandle), "RpcBindingFree\n");
 }
 
 static BOOL is_process_elevated(void)
@@ -1843,7 +2438,7 @@ static HRESULT set_firewall( enum firewall_op op )
     hr = INetFwPolicy_get_CurrentProfile( policy, &profile );
     if (hr != S_OK) goto done;
 
-    INetFwProfile_get_AuthorizedApplications( profile, &apps );
+    hr = INetFwProfile_get_AuthorizedApplications( profile, &apps );
     ok( hr == S_OK, "got %08x\n", hr );
     if (hr != S_OK) goto done;
 
@@ -1884,15 +2479,10 @@ START_TEST(server)
   ULONG size = 0;
   int argc;
   char **argv;
-  BOOL firewall_enabled = is_firewall_enabled();
+  BOOL firewall_enabled = is_firewall_enabled(), firewall_disabled = FALSE;
 
   InitFunctionPointers();
-
-  if (firewall_enabled && !is_process_elevated())
-  {
-    trace("no privileges, skipping tests to avoid firewall dialog\n");
-    return;
-  }
+  set_mixed_interface();
 
   ok(!GetUserNameExA(NameSamCompatible, NULL, &size), "GetUserNameExA\n");
   domain_and_user = HeapAlloc(GetProcessHeap(), 0, size);
@@ -1913,20 +2503,52 @@ START_TEST(server)
     }
     RpcEndExcept
   }
+  else if (argc == 4)
+  {
+    if (!strcmp(argv[3], "listen"))
+    {
+      test_server_listening();
+    }
+    else if(!strcmp(argv[2], "run"))
+    {
+      UINT_PTR event;
+      sscanf(argv[3], "%lx", &event);
+      run_server((HANDLE)event);
+    }
+  }
   else
   {
     if (firewall_enabled)
     {
-      HRESULT hr = set_firewall(APP_ADD);
-      if (hr != S_OK)
+      if (is_process_elevated())
       {
-        skip("can't authorize app in firewall %08x\n", hr);
-        HeapFree(GetProcessHeap(), 0, domain_and_user);
-        return;
+        HRESULT hr = set_firewall(APP_ADD);
+        if (hr == S_OK)
+        {
+          firewall_enabled = FALSE;
+          firewall_disabled = TRUE;
+        }
+        else
+        {
+          skip("can't authorize app in firewall %08x\n", hr);
+        }
+      }
+      else
+      {
+          trace("no privileges, skipping tests to avoid firewall dialog\n");
       }
     }
-    server();
-    if (firewall_enabled) set_firewall(APP_REMOVE);
+
+    if (!firewall_enabled) server();
+
+    /* Those tests cause occasional crashes on winxp and win2k3 */
+    if (GetProcAddress(GetModuleHandleA("rpcrt4.dll"), "RpcExceptionFilter"))
+        test_reconnect();
+    else
+        win_skip("Skipping reconnect tests on too old Windows version\n");
+
+    run_client("test listen");
+    if (firewall_disabled) set_firewall(APP_REMOVE);
   }
 
   HeapFree(GetProcessHeap(), 0, domain_and_user);

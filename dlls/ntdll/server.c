@@ -278,6 +278,19 @@ static inline unsigned int wait_reply( struct __server_request_info *req )
 
 
 /***********************************************************************
+ *           server_call_unlocked
+ */
+unsigned int server_call_unlocked( void *req_ptr )
+{
+    struct __server_request_info * const req = req_ptr;
+    unsigned int ret;
+
+    if ((ret = send_request( req ))) return ret;
+    return wait_reply( req );
+}
+
+
+/***********************************************************************
  *           wine_server_call (NTDLL.@)
  *
  * Perform a server call.
@@ -301,13 +314,11 @@ static inline unsigned int wait_reply( struct __server_request_info *req )
  */
 unsigned int wine_server_call( void *req_ptr )
 {
-    struct __server_request_info * const req = req_ptr;
     sigset_t old_set;
     unsigned int ret;
 
     pthread_sigmask( SIG_BLOCK, &server_block_set, &old_set );
-    ret = send_request( req );
-    if (!ret) ret = wait_reply( req );
+    ret = server_call_unlocked( req_ptr );
     pthread_sigmask( SIG_SETMASK, &old_set, NULL );
     return ret;
 }
@@ -338,7 +349,7 @@ void server_leave_uninterrupted_section( RTL_CRITICAL_SECTION *cs, sigset_t *sig
  *
  * Wait for a reply on the waiting pipe of the current thread.
  */
-static int wait_select_reply( void *cookie )
+int wait_select_reply( void *cookie )
 {
     int signaled;
     struct wake_up_reply reply;
@@ -375,7 +386,7 @@ static int wait_select_reply( void *cookie )
  *
  * Invoke a single APC. Return TRUE if a user APC has been run.
  */
-static BOOL invoke_apc( const apc_call_t *call, apc_result_t *result )
+BOOL invoke_apc( const apc_call_t *call, apc_result_t *result )
 {
     BOOL user_apc = FALSE;
     SIZE_T size;
@@ -404,18 +415,12 @@ static BOOL invoke_apc( const apc_call_t *call, apc_result_t *result )
     }
     case APC_ASYNC_IO:
     {
-        void *apc = NULL, *arg = NULL;
         IO_STATUS_BLOCK *iosb = wine_server_get_ptr( call->async_io.sb );
-        NTSTATUS (*func)(void *, IO_STATUS_BLOCK *, NTSTATUS, void **, void **) = wine_server_get_ptr( call->async_io.func );
+        NTSTATUS (**user)(void *, IO_STATUS_BLOCK *, NTSTATUS) = wine_server_get_ptr( call->async_io.user );
         result->type = call->type;
-        result->async_io.status = func( wine_server_get_ptr( call->async_io.user ),
-                                        iosb, call->async_io.status, &apc, &arg );
+        result->async_io.status = (*user)( user, iosb, call->async_io.status );
         if (result->async_io.status != STATUS_PENDING)
-        {
             result->async_io.total = iosb->Information;
-            result->async_io.apc   = wine_server_client_ptr( apc );
-            result->async_io.arg   = wine_server_client_ptr( arg );
-        }
         break;
     }
     case APC_VIRTUAL_ALLOC:
@@ -803,7 +808,6 @@ static int receive_fd( obj_handle_t *handle )
 /***********************************************************************/
 /* fd cache support */
 
-#include "pshpack1.h"
 union fd_cache_entry
 {
     LONG64 data;
@@ -815,7 +819,6 @@ union fd_cache_entry
         unsigned int        options : 24;
     } s;
 };
-#include "poppack.h"
 
 C_ASSERT( sizeof(union fd_cache_entry) == sizeof(LONG64) );
 
@@ -1121,9 +1124,10 @@ static void start_server(void)
  *
  * Setup the wine configuration dir.
  */
-static void setup_config_dir(void)
+static int setup_config_dir(void)
 {
     const char *p, *config_dir = wine_get_config_dir();
+    int fd_cwd = open( ".", O_RDONLY );
 
     if (chdir( config_dir ) == -1)
     {
@@ -1151,7 +1155,7 @@ static void setup_config_dir(void)
 
     if (mkdir( "dosdevices", 0777 ) == -1)
     {
-        if (errno == EEXIST) return;
+        if (errno == EEXIST) goto done;
         fatal_perror( "cannot create %s/dosdevices\n", config_dir );
     }
 
@@ -1160,6 +1164,11 @@ static void setup_config_dir(void)
     mkdir( "drive_c", 0777 );
     symlink( "../drive_c", "dosdevices/c:" );
     symlink( "/", "dosdevices/z:" );
+
+done:
+    if (fd_cwd == -1) fd_cwd = open( "dosdevices/c:", O_RDONLY );
+    fcntl( fd_cwd, F_SETFD, FD_CLOEXEC );
+    return fd_cwd;
 }
 
 
@@ -1209,11 +1218,7 @@ static int server_connect(void)
     struct stat st;
     int s, slen, retry, fd_cwd;
 
-    /* retrieve the current directory */
-    fd_cwd = open( ".", O_RDONLY );
-    if (fd_cwd != -1) fcntl( fd_cwd, F_SETFD, 1 ); /* set close on exec flag */
-
-    setup_config_dir();
+    fd_cwd = setup_config_dir();
     serverdir = wine_get_server_dir();
 
     /* chdir to the server directory */
@@ -1274,7 +1279,7 @@ static int server_connect(void)
                 fchdir( fd_cwd );
                 close( fd_cwd );
             }
-            fcntl( s, F_SETFD, 1 ); /* set close on exec flag */
+            fcntl( s, F_SETFD, FD_CLOEXEC );
             return s;
         }
         close( s );
@@ -1371,7 +1376,7 @@ void server_init_process(void)
     if (env_socket)
     {
         fd_socket = atoi( env_socket );
-        if (fcntl( fd_socket, F_SETFD, 1 ) == -1)
+        if (fcntl( fd_socket, F_SETFD, FD_CLOEXEC ) == -1)
             fatal_perror( "Bad server socket %d", fd_socket );
         unsetenv( "WINESERVERSOCKET" );
     }
@@ -1414,9 +1419,6 @@ void server_init_process(void)
                                "Or maybe the wrong wineserver is still running?\n",
                                version, SERVER_PROTOCOL_VERSION,
                                (version > SERVER_PROTOCOL_VERSION) ? "wine" : "wineserver" );
-#ifdef __APPLE__
-    send_server_task_port();
-#endif
 #if defined(__linux__) && defined(HAVE_PRCTL)
     /* work around Ubuntu's ptrace breakage */
     if (server_pid != -1) prctl( 0x59616d61 /* PR_SET_PTRACER */, server_pid );
@@ -1427,11 +1429,17 @@ void server_init_process(void)
 /***********************************************************************
  *           server_init_process_done
  */
-NTSTATUS server_init_process_done(void)
+void server_init_process_done(void)
 {
     PEB *peb = NtCurrentTeb()->Peb;
     IMAGE_NT_HEADERS *nt = RtlImageNtHeader( peb->ImageBaseAddress );
+    void *entry = (char *)peb->ImageBaseAddress + nt->OptionalHeader.AddressOfEntryPoint;
     NTSTATUS status;
+    int suspend;
+
+#ifdef __APPLE__
+    send_server_task_port();
+#endif
 
     /* Install signal handlers; this cannot be done earlier, since we cannot
      * send exceptions to the debugger before the create process event that
@@ -1448,13 +1456,15 @@ NTSTATUS server_init_process_done(void)
 #ifdef __i386__
         req->ldt_copy = wine_server_client_ptr( &wine_ldt_copy );
 #endif
-        req->entry    = wine_server_client_ptr( (char *)peb->ImageBaseAddress + nt->OptionalHeader.AddressOfEntryPoint );
+        req->entry    = wine_server_client_ptr( entry );
         req->gui      = (nt->OptionalHeader.Subsystem != IMAGE_SUBSYSTEM_WINDOWS_CUI);
         status = wine_server_call( req );
+        suspend = reply->suspend;
     }
     SERVER_END_REQ;
 
-    return status;
+    assert( !status );
+    signal_start_process( entry, suspend );
 }
 
 
@@ -1463,7 +1473,7 @@ NTSTATUS server_init_process_done(void)
  *
  * Send an init thread request. Return 0 if OK.
  */
-size_t server_init_thread( void *entry_point )
+size_t server_init_thread( void *entry_point, BOOL *suspend )
 {
     static const char *cpu_names[] = { "x86", "x86_64", "PowerPC", "ARM", "ARM64" };
     static const BOOL is_win64 = (sizeof(void *) > sizeof(int));
@@ -1504,6 +1514,7 @@ size_t server_init_thread( void *entry_point )
         info_size         = reply->info_size;
         server_start_time = reply->server_start;
         server_cpus       = reply->all_cpus;
+        *suspend          = reply->suspend;
     }
     SERVER_END_REQ;
 

@@ -4,14 +4,14 @@
 4 pascal CoGetMalloc(long ptr) CoGetMalloc16
 5 pascal CoRegisterClassObject(ptr ptr long long ptr) CoRegisterClassObject16
 6 pascal CoRevokeClassObject(long) CoRevokeClassObject16
-7 pascal CoGetClassObject(ptr long ptr ptr ptr) CoGetClassObject16
+7 pascal CoGetClassObject(segptr long ptr segptr segptr) CoGetClassObject16
 8 stub COMARSHALINTERFACE
 9 stub COUNMARSHALINTERFACE
 10 stub COLOADLIBRARY
 11 stub COFREELIBRARY
 12 stub COFREEALLLIBRARIES
 13 pascal CoCreateInstance(ptr ptr long ptr ptr) CoCreateInstance16
-14 stub STRINGFROMIID
+14 pascal StringFromIID(ptr ptr) StringFromCLSID16
 15 pascal CoDisconnectObject(ptr long) CoDisconnectObject16
 16 stub CORELEASEMARSHALDATA
 17 pascal -ret16 CoFreeUnusedLibraries() CoFreeUnusedLibraries16

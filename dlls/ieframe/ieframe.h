@@ -38,6 +38,7 @@
 #include "docobjectservice.h"
 
 #include "wine/unicode.h"
+#include "wine/heap.h"
 #include "wine/list.h"
 
 typedef struct ConnectionPoint ConnectionPoint;
@@ -312,13 +313,16 @@ TID_LIST
 } tid_t;
 
 HRESULT get_typeinfo(tid_t,ITypeInfo**) DECLSPEC_HIDDEN;
-HRESULT register_class_object(BOOL) DECLSPEC_HIDDEN;
 
 HRESULT WINAPI CUrlHistory_Create(IClassFactory*,IUnknown*,REFIID,void**) DECLSPEC_HIDDEN;
 HRESULT WINAPI InternetExplorer_Create(IClassFactory*,IUnknown*,REFIID,void**) DECLSPEC_HIDDEN;
 HRESULT WINAPI InternetShortcut_Create(IClassFactory*,IUnknown*,REFIID,void**) DECLSPEC_HIDDEN;
 HRESULT WINAPI WebBrowser_Create(IClassFactory*,IUnknown*,REFIID,void**) DECLSPEC_HIDDEN;
 HRESULT WINAPI WebBrowserV1_Create(IClassFactory*,IUnknown*,REFIID,void**) DECLSPEC_HIDDEN;
+HRESULT WINAPI InternetExplorerManager_Create(IClassFactory*,IUnknown*,REFIID,void**) DECLSPEC_HIDDEN;
+
+extern IClassFactory InternetExplorerFactory DECLSPEC_HIDDEN;
+extern IClassFactory InternetExplorerManagerFactory DECLSPEC_HIDDEN;
 
 extern LONG module_ref DECLSPEC_HIDDEN;
 extern HINSTANCE ieframe_instance DECLSPEC_HIDDEN;
@@ -329,26 +333,6 @@ static inline void lock_module(void) {
 
 static inline void unlock_module(void) {
     InterlockedDecrement(&module_ref);
-}
-
-static inline void *heap_alloc(size_t len)
-{
-    return HeapAlloc(GetProcessHeap(), 0, len);
-}
-
-static inline void *heap_alloc_zero(size_t len)
-{
-    return HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, len);
-}
-
-static inline void *heap_realloc(void *mem, size_t len)
-{
-    return HeapReAlloc(GetProcessHeap(), 0, mem, len);
-}
-
-static inline BOOL heap_free(void *mem)
-{
-    return HeapFree(GetProcessHeap(), 0, mem);
 }
 
 static inline LPWSTR heap_strdupW(LPCWSTR str)

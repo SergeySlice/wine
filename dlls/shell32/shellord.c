@@ -433,12 +433,12 @@ int WINAPIV ShellMessageBoxW(
 	    hInstance,hWnd,lpText,lpCaption,uType);
 
 	if (IS_INTRESOURCE(lpCaption))
-	  LoadStringW(hInstance, LOWORD(lpCaption), szTitle, sizeof(szTitle)/sizeof(szTitle[0]));
+	  LoadStringW(hInstance, LOWORD(lpCaption), szTitle, ARRAY_SIZE(szTitle));
 	else
 	  pszTitle = lpCaption;
 
 	if (IS_INTRESOURCE(lpText))
-	  LoadStringW(hInstance, LOWORD(lpText), szText, sizeof(szText)/sizeof(szText[0]));
+	  LoadStringW(hInstance, LOWORD(lpText), szText, ARRAY_SIZE(szText));
 	else
 	  pszText = lpText;
 
@@ -1086,40 +1086,6 @@ void WINAPI SHAddToRecentDocs (UINT uFlags,LPCVOID pv)
 }
 
 /*************************************************************************
- * SHCreateShellFolderViewEx			[SHELL32.174]
- *
- * Create a new instance of the default Shell folder view object.
- *
- * RETURNS
- *  Success: S_OK
- *  Failure: error value
- *
- * NOTES
- *  see IShellFolder::CreateViewObject
- */
-HRESULT WINAPI SHCreateShellFolderViewEx(
-	LPCSFV psvcbi,    /* [in] shelltemplate struct */
-	IShellView **ppv) /* [out] IShellView pointer */
-{
-	IShellView * psf;
-	HRESULT hRes;
-
-	TRACE("sf=%p pidl=%p cb=%p mode=0x%08x parm=%p\n",
-	  psvcbi->pshf, psvcbi->pidl, psvcbi->pfnCallback,
-	  psvcbi->fvm, psvcbi->psvOuter);
-
-	*ppv = NULL;
-	psf = IShellView_Constructor(psvcbi->pshf);
-
-	if (!psf)
-	  return E_OUTOFMEMORY;
-
-	hRes = IShellView_QueryInterface(psf, &IID_IShellView, (LPVOID *)ppv);
-	IShellView_Release(psf);
-
-	return hRes;
-}
-/*************************************************************************
  *  SHWinHelp					[SHELL32.127]
  *
  */
@@ -1137,34 +1103,6 @@ BOOL WINAPI SHRunControlPanel (LPCWSTR commandLine, HWND parent)
 	return FALSE;
 }
 
-static LPUNKNOWN SHELL32_IExplorerInterface=0;
-/*************************************************************************
- * SHSetInstanceExplorer			[SHELL32.176]
- *
- * NOTES
- *  Sets the interface
- */
-VOID WINAPI SHSetInstanceExplorer (LPUNKNOWN lpUnknown)
-{	TRACE("%p\n", lpUnknown);
-	SHELL32_IExplorerInterface = lpUnknown;
-}
-/*************************************************************************
- * SHGetInstanceExplorer			[SHELL32.@]
- *
- * NOTES
- *  gets the interface pointer of the explorer and a reference
- */
-HRESULT WINAPI SHGetInstanceExplorer (IUnknown **lpUnknown)
-{	TRACE("%p\n", lpUnknown);
-
-	*lpUnknown = SHELL32_IExplorerInterface;
-
-	if (!SHELL32_IExplorerInterface)
-	  return E_FAIL;
-
-	IUnknown_AddRef(SHELL32_IExplorerInterface);
-	return S_OK;
-}
 /*************************************************************************
  * SHFreeUnusedLibraries			[SHELL32.123]
  *
@@ -1384,7 +1322,7 @@ BOOL WINAPI IsUserAnAdmin(VOID)
         }
     }
 
-    lpGroups = HeapAlloc(GetProcessHeap(), 0, dwSize);
+    lpGroups = heap_alloc(dwSize);
     if (lpGroups == NULL)
     {
         CloseHandle(hToken);
@@ -1393,7 +1331,7 @@ BOOL WINAPI IsUserAnAdmin(VOID)
 
     if (!GetTokenInformation(hToken, TokenGroups, lpGroups, dwSize, &dwSize))
     {
-        HeapFree(GetProcessHeap(), 0, lpGroups);
+        heap_free(lpGroups);
         CloseHandle(hToken);
         return FALSE;
     }
@@ -1403,7 +1341,7 @@ BOOL WINAPI IsUserAnAdmin(VOID)
                                   DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0,
                                   &lpSid))
     {
-        HeapFree(GetProcessHeap(), 0, lpGroups);
+        heap_free(lpGroups);
         return FALSE;
     }
 
@@ -1417,7 +1355,7 @@ BOOL WINAPI IsUserAnAdmin(VOID)
     }
 
     FreeSid(lpSid);
-    HeapFree(GetProcessHeap(), 0, lpGroups);
+    heap_free(lpGroups);
     return bResult;
 }
 
@@ -1587,7 +1525,7 @@ DWORD WINAPI DoEnvironmentSubstA(LPSTR pszString, UINT cchString)
 
     TRACE("(%s, %d)\n", debugstr_a(pszString), cchString);
 
-    if ((dst = HeapAlloc(GetProcessHeap(), 0, cchString * sizeof(CHAR))))
+    if ((dst = heap_alloc(cchString * sizeof(CHAR))))
     {
         len = ExpandEnvironmentStringsA(pszString, dst, cchString);
         /* len includes the terminating 0 */
@@ -1599,7 +1537,7 @@ DWORD WINAPI DoEnvironmentSubstA(LPSTR pszString, UINT cchString)
         else
             len = cchString;
 
-        HeapFree(GetProcessHeap(), 0, dst);
+        heap_free(dst);
     }
     return MAKELONG(len, res);
 }
@@ -1631,7 +1569,7 @@ DWORD WINAPI DoEnvironmentSubstW(LPWSTR pszString, UINT cchString)
 
     TRACE("(%s, %d)\n", debugstr_w(pszString), cchString);
 
-    if ((cchString < MAXLONG) && (dst = HeapAlloc(GetProcessHeap(), 0, cchString * sizeof(WCHAR))))
+    if ((cchString < MAXLONG) && (dst = heap_alloc(cchString * sizeof(WCHAR))))
     {
         len = ExpandEnvironmentStringsW(pszString, dst, cchString);
         /* len includes the terminating 0 */
@@ -1643,7 +1581,7 @@ DWORD WINAPI DoEnvironmentSubstW(LPWSTR pszString, UINT cchString)
         else
             len = cchString;
 
-        HeapFree(GetProcessHeap(), 0, dst);
+        heap_free(dst);
     }
     return MAKELONG(len, res);
 }
@@ -1685,12 +1623,12 @@ BOOL WINAPI GUIDFromStringW(LPCWSTR str, LPGUID guid)
 }
 
 /*************************************************************************
- *      @	[SHELL32.714]
+ *      PathIsTemporaryW	[SHELL32.714]
  */
-DWORD WINAPI SHELL32_714(LPVOID x)
+BOOL WINAPI PathIsTemporaryW(const WCHAR *path)
 {
- 	FIXME("(%s)stub\n", debugstr_w(x));
-	return 0;
+    FIXME("(%s) stub\n", debugstr_w(path));
+    return FALSE;
 }
 
 typedef struct _PSXA
@@ -1808,7 +1746,7 @@ HPSXA WINAPI SHCreatePropSheetExtArrayEx(HKEY hKey, LPCWSTR pszSubKey, UINT max_
             dwIndex = 0;
             do
             {
-                dwHandlerLen = sizeof(szHandler) / sizeof(szHandler[0]);
+                dwHandlerLen = ARRAY_SIZE(szHandler);
                 lRet = RegEnumKeyExW(hkPropSheetHandlers, dwIndex++, szHandler, &dwHandlerLen, NULL, NULL, NULL, NULL);
                 if (lRet != ERROR_SUCCESS)
                 {
@@ -1827,7 +1765,7 @@ HPSXA WINAPI SHCreatePropSheetExtArrayEx(HKEY hKey, LPCWSTR pszSubKey, UINT max_
                     if (SHGetValueW(hkPropSheetHandlers, szHandler, NULL, NULL, szClsidHandler, &dwClsidSize) == ERROR_SUCCESS)
                     {
                         /* Force a NULL-termination and convert the string */
-                        szClsidHandler[(sizeof(szClsidHandler) / sizeof(szClsidHandler[0])) - 1] = 0;
+                        szClsidHandler[ARRAY_SIZE(szClsidHandler) - 1] = 0;
                         lRet = SHCLSIDFromStringW(szClsidHandler, &clsid);
                     }
                 }
@@ -2166,76 +2104,4 @@ BOOL WINAPI LinkWindow_UnregisterClass(void)
  */
 void WINAPI SHFlushSFCache(void)
 {
-}
-
-/*************************************************************************
- *              SHGetImageList (SHELL32.727)
- *
- * Returns a copy of a shell image list.
- *
- * NOTES
- *   Windows XP features 4 sizes of image list, and Vista 5. Wine currently
- *   only supports the traditional small and large image lists, so requests
- *   for the others will currently fail.
- */
-HRESULT WINAPI SHGetImageList(int iImageList, REFIID riid, void **ppv)
-{
-    HIMAGELIST hLarge, hSmall;
-    HIMAGELIST hNew;
-    HRESULT ret = E_FAIL;
-
-    /* Wine currently only maintains large and small image lists */
-    if ((iImageList != SHIL_LARGE) && (iImageList != SHIL_SMALL) && (iImageList != SHIL_SYSSMALL))
-    {
-        FIXME("Unsupported image list %i requested\n", iImageList);
-        return E_FAIL;
-    }
-
-    Shell_GetImageLists(&hLarge, &hSmall);
-    hNew = ImageList_Duplicate(iImageList == SHIL_LARGE ? hLarge : hSmall);
-
-    /* Get the interface for the new image list */
-    if (hNew)
-    {
-        ret = HIMAGELIST_QueryInterface(hNew, riid, ppv);
-        ImageList_Destroy(hNew);
-    }
-
-    return ret;
-}
-
-/*************************************************************************
- * SHCreateShellFolderView			[SHELL32.256]
- *
- * Create a new instance of the default Shell folder view object.
- *
- * RETURNS
- *  Success: S_OK
- *  Failure: error value
- *
- * NOTES
- *  see IShellFolder::CreateViewObject
- */
-HRESULT WINAPI SHCreateShellFolderView(const SFV_CREATE *pcsfv,
-                        IShellView **ppsv)
-{
-	IShellView * psf;
-	HRESULT hRes;
-
-	*ppsv = NULL;
-	if (!pcsfv || pcsfv->cbSize != sizeof(*pcsfv))
-	  return E_INVALIDARG;
-
-	TRACE("sf=%p outer=%p callback=%p\n",
-	  pcsfv->pshf, pcsfv->psvOuter, pcsfv->psfvcb);
-
-	psf = IShellView_Constructor(pcsfv->pshf);
-
-	if (!psf)
-	  return E_OUTOFMEMORY;
-
-	hRes = IShellView_QueryInterface(psf, &IID_IShellView, (LPVOID *)ppsv);
-	IShellView_Release(psf);
-
-	return hRes;
 }

@@ -86,6 +86,7 @@ typedef struct
 typedef struct
 {
     int           nb_args;
+    int           args_str_offset;
     enum arg_type args[MAX_ARGUMENTS];
 } ORD_FUNCTION;
 
@@ -304,7 +305,6 @@ extern void output_bin_res16_directory( DLLSPEC *spec, unsigned int data_offset 
 extern void output_spec16_file( DLLSPEC *spec );
 extern void output_fake_module16( DLLSPEC *spec16 );
 extern void output_res_o_file( DLLSPEC *spec );
-extern void output_asm_relays(void);
 extern void output_asm_relays16(void);
 
 extern void BuildSpec32File( DLLSPEC *spec );
@@ -361,7 +361,9 @@ extern struct strarray cc_command;
 extern struct strarray ld_command;
 extern struct strarray nm_command;
 extern char *cpu_option;
+extern char *fpu_option;
 extern char *arch_option;
+extern const char *float_abi_option;
 extern int thumb_mode;
 extern int needs_get_pc_thunk;
 

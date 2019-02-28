@@ -288,6 +288,11 @@ typedef struct _CERT_KEY_ATTRIBUTES_INFO {
     PCERT_PRIVATE_KEY_VALIDITY pPrivateKeyUsagePeriod;
 } CERT_KEY_ATTRIBUTES_INFO, *PCERT_KEY_ATTRIBUTES_INFO;
 
+typedef struct _CERT_ECC_SIGNATURE {
+    CRYPT_UINT_BLOB r;
+    CRYPT_UINT_BLOB s;
+} CERT_ECC_SIGNATURE, *PCERT_ECC_SIGNATURE;
+
 /* byte 0 */
 #define CERT_DIGITAL_SIGNATURE_KEY_USAGE 0x80
 #define CERT_NON_REPUDIATION_KEY_USAGE   0x40
@@ -1239,6 +1244,17 @@ typedef BOOL (WINAPI *PFN_CRYPT_ENUM_OID_FUNC)(DWORD dwEncodingType,
 
 #define CRYPT_MATCH_ANY_ENCODING_TYPE 0xffffffff
 
+#define CALG_OID_INFO_CNG_ONLY   0xffffffff
+#define CALG_OID_INFO_PARAMETERS 0xfffffffe
+
+#define CRYPT_OID_INFO_HASH_PARAMETERS_ALGORITHM     (const WCHAR []){'C','r','y','p','t','O','I','D','I','n','f','o','H','a','s','h','P','a','r','a','m','e','t','e','r','s',0}
+#define CRYPT_OID_INFO_ECC_PARAMETERS_ALGORITHM      (const WCHAR []){'C','r','y','p','t','O','I','D','I','n','f','o','E','C','C','P','a','r','a','m','e','t','e','r','s',0}
+#define CRYPT_OID_INFO_MGF1_PARAMETERS_ALGORITHM     (const WCHAR []){'C','r','y','p','t','O','I','D','I','n','f','o','M','g','f','1','P','a','r','a','m','e','t','e','r','s',0}
+#define CRYPT_OID_INFO_NO_SIGN_ALGORITHM             (const WCHAR []){'C','r','y','p','t','O','I','D','I','n','f','o','N','o','S','i','g','n',0}
+#define CRYPT_OID_INFO_OAEP_PARAMETERS_ALGORITHM     (const WCHAR []){'C','r','y','p','t','O','I','D','I','n','f','o','O','A','E','P','P','a','r','a','m','e','t','e','r','s',0}
+#define CRYPT_OID_INFO_ECC_WRAP_PARAMETERS_ALGORITHM (const WCHAR []){'C','r','y','p','t','O','I','D','I','n','f','o','E','C','C','W','r','a','p','P','a','r','a','m','e','t','e','r','s',0}
+#define CRYPT_OID_INFO_NO_PARAMETERS_ALGORITHM       (const WCHAR []){'C','r','y','p','t','O','I','D','I','n','f','o','N','o','P','a','r','a','m','e','t','e','r','s',0}
+
 typedef struct _CRYPT_OID_INFO {
     DWORD   cbSize;
     LPCSTR  pszOID;
@@ -1250,6 +1266,10 @@ typedef struct _CRYPT_OID_INFO {
         DWORD  dwLength;
     } DUMMYUNIONNAME;
     CRYPT_DATA_BLOB ExtraInfo;
+#ifdef CRYPT_OID_INFO_HAS_EXTRA_FIELDS
+    LPCWSTR         pwszCNGAlgid;
+    LPCWSTR         pwszCNGExtraAlgid;
+#endif
 } CRYPT_OID_INFO, *PCRYPT_OID_INFO;
 typedef const CRYPT_OID_INFO CCRYPT_OID_INFO, *PCCRYPT_OID_INFO;
 
@@ -1544,6 +1564,7 @@ typedef const CERT_CRL_CONTEXT_PAIR *PCCERT_CRL_CONTEXT_PAIR;
 #define ALG_TYPE_STREAM                 (4 << 9)
 #define ALG_TYPE_DH                     (5 << 9)
 #define ALG_TYPE_SECURECHANNEL          (6 << 9)
+#define ALG_TYPE_ECDH                   (7 << 9)
 
 /* SIDs */
 #define ALG_SID_ANY                     (0)
@@ -1583,6 +1604,7 @@ typedef const CERT_CRL_CONTEXT_PAIR *PCCERT_CRL_CONTEXT_PAIR;
 #define ALG_SID_AGREED_KEY_ANY          3
 #define ALG_SID_KEA                     4
 #define ALG_SID_ECDH                    5
+#define ALG_SID_ECDH_EPHEM              6
 /* RC2 SIDs */
 #define ALG_SID_RC4                     1
 #define ALG_SID_RC2                     2
@@ -1639,6 +1661,7 @@ typedef const CERT_CRL_CONTEXT_PAIR *PCCERT_CRL_CONTEXT_PAIR;
 #define CALG_KEA_KEYX             (ALG_CLASS_KEY_EXCHANGE | ALG_TYPE_DH            | ALG_SID_KEA)
 #define CALG_HUGHES_MD5           (ALG_CLASS_KEY_EXCHANGE | ALG_TYPE_ANY           | ALG_SID_MD5)
 #define CALG_ECDH                 (ALG_CLASS_KEY_EXCHANGE | ALG_TYPE_DH            | ALG_SID_ECDH)
+#define CALG_ECDH_EPHEM           (ALG_CLASS_KEY_EXCHANGE | ALG_TYPE_ECDH          | ALG_SID_ECDH_EPHEM)
 #define CALG_RSA_KEYX             (ALG_CLASS_KEY_EXCHANGE | ALG_TYPE_RSA           | ALG_SID_RSA_ANY)
 #define CALG_ECMQV                (ALG_CLASS_KEY_EXCHANGE | ALG_TYPE_ANY           | ALG_SID_ECMQV)
 #define CALG_DES                  (ALG_CLASS_DATA_ENCRYPT | ALG_TYPE_BLOCK         | ALG_SID_DES)
@@ -2193,7 +2216,7 @@ static const WCHAR CERT_EFSBLOB_REGPATH[] =
  {'S','o','f','t','w','a','r','e','\\','P','o','l','i','c','i','e','s','\\',
   'M','i','c','r','o','s','o','f','t','\\','S','y','s','t','e','m','C','e','r',
   't','i','f','i','c','a','t','e','s','\\','E','F','S',0 };
-static const CERT_EFSBLOB_VALUE_NAME[] = { 'E','F','S','B','l','o','b',0 };
+static const WCHAR CERT_EFSBLOB_VALUE_NAME[] = { 'E','F','S','B','l','o','b',0 };
 #endif
 
 #if defined(__GNUC__)
@@ -2322,6 +2345,7 @@ static const WCHAR CERT_TRUST_PUB_AUTHENTICODE_FLAGS_VALUE_NAME[] =
 #define CRYPT_OID_IMPORT_PRIVATE_KEY_INFO_FUNC "CryptDllImportPrivateKeyInfoEx"
 #define CRYPT_OID_VERIFY_CERTIFICATE_CHAIN_POLICY_FUNC \
  "CertDllVerifyCertificateChainPolicy"
+#define CRYPT_OID_CONVERT_PUBLIC_KEY_INFO_FUNC "CryptDllConvertPublicKeyInfo"
 #define URL_OID_GET_OBJECT_URL_FUNC    "UrlDllGetObjectUrl"
 #define TIME_VALID_OID_GET_OBJECT_FUNC "TimeValidDllGetObject"
 #define CMSG_OID_GEN_CONTENT_ENCRYPT_KEY_FUNC "CryptMsgDllGenContentEncryptKey"
@@ -2351,6 +2375,7 @@ static const WCHAR CRYPT_OID_REG_FLAGS_VALUE_NAME[] =
 #define CRYPT_DEFAULT_OID                    "DEFAULT"
 
 #define CRYPT_INSTALL_OID_FUNC_BEFORE_FLAG 1
+#define CRYPT_INSTALL_OID_INFO_BEFORE_FLAG 1
 
 #define CRYPT_GET_INSTALLED_OID_FUNC_FLAG  0x1
 
@@ -2516,7 +2541,7 @@ static const WCHAR CERT_PHYSICAL_STORE_AUTH_ROOT_NAME[] =
 #define CERT_SIGNATURE_HASH_PROP_ID                15
 #define CERT_SMART_CARD_DATA_PROP_ID               16
 #define CERT_EFS_PROP_ID                           17
-#define CERT_FORTEZZA_DATA_PROP                    18
+#define CERT_FORTEZZA_DATA_PROP_ID                 18
 #define CERT_ARCHIVED_PROP_ID                      19
 #define CERT_KEY_IDENTIFIER_PROP_ID                20
 #define CERT_AUTO_ENROLL_PROP_ID                   21
@@ -2808,6 +2833,12 @@ typedef struct _CTL_FIND_SUBJECT_PARA
 #define CRYPT_STRING_BASE64X509CRLHEADER 0x00000009
 #define CRYPT_STRING_HEXADDR             0x0000000a
 #define CRYPT_STRING_HEXASCIIADDR        0x0000000b
+#define CRYPT_STRING_HEXRAW              0x0000000c
+#define CRYPT_STRING_BASE64URI           0x0000000d
+
+#define CRYPT_STRING_PERCENTESCAPE       0x08000000
+#define CRYPT_STRING_HASHDATA            0x10000000
+#define CRYPT_STRING_STRICT              0x20000000
 #define CRYPT_STRING_NOCRLF              0x40000000
 #define CRYPT_STRING_NOCR                0x80000000
 
@@ -2875,6 +2906,12 @@ typedef struct _CTL_FIND_SUBJECT_PARA
 #define szOID_X957                          "1.2.840.10040"
 #define szOID_X957_DSA                      "1.2.840.10040.4.1"
 #define szOID_X957_SHA1DSA                  "1.2.840.10040.4.3"
+#define szOID_ECC_PUBLIC_KEY                "1.2.840.10045.2.1"
+#define szOID_ECC_CURVE_P256                "1.2.840.10045.3.1.7"
+#define szOID_ECDSA_SPECIFIED               "1.2.840.10045.4.3"
+#define szOID_ECDSA_SHA256                  "1.2.840.10045.4.3.2"
+#define szOID_ECDSA_SHA384                  "1.2.840.10045.4.3.3"
+#define szOID_ECDSA_SHA512                  "1.2.840.10045.4.3.4"
 #define szOID_DS                            "2.5"
 #define szOID_DSALG                         "2.5.8"
 #define szOID_DSALG_CRPT                    "2.5.8.1"
@@ -2916,6 +2953,8 @@ typedef struct _CTL_FIND_SUBJECT_PARA
 #define szOID_OIWDIR_SIGN                   "1.3.14.7.2.3"
 #define szOID_OIWDIR_md2                    "1.3.14.7.2.2.1"
 #define szOID_OIWDIR_md2RSA                 "1.3.14.7.2.3.1"
+#define szOID_ECC_CURVE_P384                "1.3.132.0.34"
+#define szOID_ECC_CURVE_P521                "1.3.132.0.35"
 #define szOID_INFOSEC                       "2.16.840.1.101.2.1"
 #define szOID_INFOSEC_sdnsSignature         "2.16.840.1.101.2.1.1.1"
 #define szOID_INFOSEC_mosaicSignature       "2.16.840.1.101.2.1.1.2"
@@ -2938,6 +2977,9 @@ typedef struct _CTL_FIND_SUBJECT_PARA
 #define szOID_INFOSEC_mosaicUpdatedSig      "2.16.840.1.101.2.1.1.19"
 #define szOID_INFOSEC_mosaicKMandUpdSig     "2.16.840.1.101.2.1.1.20"
 #define szOID_INFOSEC_mosaicUpdateInteg     "2.16.840.1.101.2.1.1.21"
+#define szOID_NIST_sha256                   "2.16.840.1.101.3.4.2.1"
+#define szOID_NIST_sha384                   "2.16.840.1.101.3.4.2.2"
+#define szOID_NIST_sha512                   "2.16.840.1.101.3.4.2.3"
 #define szOID_COMMON_NAME                   "2.5.4.3"
 #define szOID_SUR_NAME                      "2.5.4.4"
 #define szOID_DEVICE_SERIAL_NUMBER          "2.5.4.5"
@@ -3217,6 +3259,7 @@ typedef struct _CTL_FIND_SUBJECT_PARA
 #define X509_PKIX_POLICY_QUALIFIER_USERNOTICE ((LPCSTR)46)
 #define X509_DH_PUBLICKEY                    X509_MULTI_BYTE_UINT
 #define X509_DH_PARAMETERS                   ((LPCSTR)47)
+#define X509_ECC_SIGNATURE                   ((LPCSTR)47)
 #define PKCS_ATTRIBUTES                      ((LPCSTR)48)
 #define PKCS_SORTED_CTL                      ((LPCSTR)49)
 #define X942_DH_PARAMETERS                   ((LPCSTR)50)
@@ -3234,6 +3277,7 @@ typedef struct _CTL_FIND_SUBJECT_PARA
 #define CMC_ADD_EXTENSIONS                   ((LPCSTR)62)
 #define CMC_ADD_ATTRIBUTES                   ((LPCSTR)63)
 #define X509_CERTIFICATE_TEMPLATE            ((LPCSTR)64)
+#define X509_OBJECT_IDENTIFIER               ((LPCSTR)73)
 #define PKCS7_SIGNER_INFO                    ((LPCSTR)500)
 #define CMS_SIGNER_INFO                      ((LPCSTR)501)
 
@@ -3925,8 +3969,16 @@ typedef BOOL (WINAPI *PFN_CMSG_IMPORT_KEY_TRANS)(
 #define CMSG_ENCODE_HASHED_SUBJECT_IDENTIFIER_FLAG 0x2
 
 /* PFXImportCertStore flags */
-#define CRYPT_USER_KEYSET           0x00001000
-#define PKCS12_IMPORT_RESERVED_MASK 0xffff0000
+#define CRYPT_USER_KEYSET                       0x00001000
+#define PKCS12_IMPORT_SILENT                    0x00000040
+#define PKCS12_PREFER_CNG_KSP                   0x00000100
+#define PKCS12_ALWAYS_CNG_KSP                   0x00000200
+#define PKCS12_ONLY_CERTIFICATES                0x00000400
+#define PKCS12_ONLY_NOT_ENCRYPTED_CERTIFICATES  0x00000800
+#define PKCS12_ALLOW_OVERWRITE_KEY              0x00004000
+#define PKCS12_NO_PERSIST_KEY                   0x00008000
+#define PKCS12_VIRTUAL_ISOLATION_KEY            0x00010000
+#define PKCS12_IMPORT_RESERVED_MASK             0xffff0000
 /* PFXExportCertStore flags */
 #define REPORT_NO_PRIVATE_KEY                 0x00000001
 #define REPORT_NOT_ABLE_TO_EXPORT_PRIVATE_KEY 0x00000002
@@ -4081,11 +4133,19 @@ BOOL WINAPI CertEnumSystemStoreLocation(DWORD dwFlags, void *pvArg,
 BOOL WINAPI CertEnumSystemStore(DWORD dwFlags, void *pvSystemStoreLocationPara,
  void *pvArg, PFN_CERT_ENUM_SYSTEM_STORE pfnEnum);
 
+BOOL WINAPI CertRegisterSystemStore(const void *store, DWORD flags,
+ CERT_SYSTEM_STORE_INFO *info, void *reserved);
+
+BOOL WINAPI CertUnregisterSystemStore(const void *store, DWORD flags);
+
 BOOL WINAPI CertEnumPhysicalStore(const void *pvSystemStore, DWORD dwFlags,
  void *pvArg, PFN_CERT_ENUM_PHYSICAL_STORE pfnEnum);
 
 BOOL WINAPI CertRegisterPhysicalStore(const void *pvSystemStore, DWORD dwFlags,
  LPCWSTR pwszStoreName, PCERT_PHYSICAL_STORE_INFO pStoreInfo, void *pvReserved);
+
+BOOL WINAPI CertUnregisterPhysicalStore(const void *pvSystemStore, DWORD dwFlags,
+ LPCWSTR pwszStoreName);
 
 BOOL WINAPI CertSaveStore(HCERTSTORE hCertStore, DWORD dwMsgAndCertEncodingType,
              DWORD dwSaveAs, DWORD dwSaveTo, void* pvSaveToPara, DWORD dwFlags);
@@ -4327,6 +4387,10 @@ BOOL WINAPI CryptHashCertificate(HCRYPTPROV_LEGACY hCryptProv, ALG_ID Algid,
  DWORD dwFlags, const BYTE *pbEncoded, DWORD cbEncoded, BYTE *pbComputedHash,
  DWORD *pcbComputedHash);
 
+BOOL WINAPI CryptHashCertificate2(LPCWSTR pwszCNGHashAlgid, DWORD dwFlags,
+ void *pvReserved, const BYTE *pbEncoded, DWORD cbEncoded, BYTE *pbComputedHash,
+ DWORD *pcbComputedHash);
+
 BOOL WINAPI CryptHashPublicKeyInfo(HCRYPTPROV_LEGACY hCryptProv, ALG_ID Algid,
  DWORD dwFlags, DWORD dwCertEncodingType, PCERT_PUBLIC_KEY_INFO pInfo,
  BYTE *pbComputedHash, DWORD *pcbComputedHash);
@@ -4409,6 +4473,9 @@ BOOL WINAPI CryptImportPublicKeyInfo(HCRYPTPROV hCryptProv,
 BOOL WINAPI CryptImportPublicKeyInfoEx(HCRYPTPROV hCryptProv,
  DWORD dwCertEncodingType, PCERT_PUBLIC_KEY_INFO pInfo, ALG_ID aiKeyAlg,
  DWORD dwFlags, void *pvAuxInfo, HCRYPTKEY *phKey);
+BOOL WINAPI CryptImportPublicKeyInfoEx2(DWORD dwCertEncodingType,
+ PCERT_PUBLIC_KEY_INFO pInfo, DWORD dwFlags, void *pvAuxInfo,
+ BCRYPT_KEY_HANDLE *phKey);
 
 BOOL WINAPI CryptAcquireCertificatePrivateKey(PCCERT_CONTEXT pCert,
  DWORD dwFlags, void *pvReserved, HCRYPTPROV_OR_NCRYPT_KEY_HANDLE *phCryptProv, DWORD *pdwKeySpec,
@@ -4424,6 +4491,9 @@ BOOL WINAPI CryptProtectData( DATA_BLOB* pDataIn, LPCWSTR szDataDescr,
 BOOL WINAPI CryptUnprotectData( DATA_BLOB* pDataIn, LPWSTR* ppszDataDescr,
  DATA_BLOB* pOptionalEntropy, PVOID pvReserved,
  CRYPTPROTECT_PROMPTSTRUCT* pPromptStruct, DWORD dwFlags, DATA_BLOB* pDataOut );
+
+BOOL WINAPI CryptProtectMemory(void *pData, DWORD cbData, DWORD dwFlags);
+BOOL WINAPI CryptUnprotectMemory(void *pData, DWORD cbData, DWORD dwFlags);
 
 DWORD WINAPI CertGetNameStringA(PCCERT_CONTEXT pCertContext, DWORD dwType,
  DWORD dwFlags, void *pvTypePara, LPSTR pszNameString, DWORD cchNameString);
@@ -4581,8 +4651,6 @@ BOOL WINAPI PFXExportCertStoreEx(HCERTSTORE hStore, CRYPT_DATA_BLOB *pPFX,
  LPCWSTR szPassword, void *pvReserved, DWORD dwFlags);
 BOOL WINAPI PFXExportCertStore(HCERTSTORE hStore, CRYPT_DATA_BLOB *pPFX,
  LPCWSTR szPassword, DWORD dwFlags);
-BOOL WINAPI PFXVerifyPassword(CRYPT_DATA_BLOB *pPFX, LPCWSTR szPassword,
- DWORD dwFlags);
 
 /* cryptnet.dll functions */
 BOOL WINAPI CryptCancelAsyncRetrieval(HCRYPTASYNC hAsyncRetrieval);

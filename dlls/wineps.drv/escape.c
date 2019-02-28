@@ -36,16 +36,13 @@
 #include "winbase.h"
 #include "wingdi.h"
 #include "wine/wingdi16.h"
+#include "winuser.h"
 #include "winreg.h"
 #include "psdrv.h"
 #include "wine/debug.h"
 #include "winspool.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(psdrv);
-
-static const char psbegindocument[] =
-"%%BeginDocument: Wine passthrough\n";
-
 
 DWORD write_spool( PHYSDEV dev, const void *data, DWORD num )
 {
@@ -100,13 +97,54 @@ INT PSDRV_ExtEscape( PHYSDEV dev, INT nEscape, INT cbInput, LPCVOID in_data,
 	    case CLIP_TO_PATH:
 	    case END_PATH:
 	    /*case DRAWPATTERNRECT:*/
+
+            /* PageMaker checks for it */
+            case DOWNLOADHEADER:
+
+            /* PageMaker doesn't check for DOWNLOADFACE and GETFACENAME but
+             * uses them, they are supposed to be supported by any PS printer.
+             */
+            case DOWNLOADFACE:
+
+            /* PageMaker checks for these as a part of process of detecting
+             * a "fully compatible" PS printer, but doesn't actually use them.
+             */
+            case OPENCHANNEL:
+            case CLOSECHANNEL:
 	        return TRUE;
+
+            /* Windows PS driver reports 0, but still supports this escape */
+            case GETFACENAME:
+                return FALSE; /* suppress the FIXME below */
 
 	    default:
 		FIXME("QUERYESCSUPPORT(%d) - not supported.\n", num);
 	        return FALSE;
 	    }
 	}
+
+    case OPENCHANNEL:
+        FIXME("OPENCHANNEL: stub\n");
+        return 1;
+
+    case CLOSECHANNEL:
+        FIXME("CLOSECHANNEL: stub\n");
+        return 1;
+
+    case DOWNLOADHEADER:
+        FIXME("DOWNLOADHEADER: stub\n");
+        /* should return name of the downloaded procset */
+        *(char *)out_data = 0;
+        return 1;
+
+    case GETFACENAME:
+        FIXME("GETFACENAME: stub\n");
+        lstrcpynA(out_data, "Courier", cbOutput);
+        return 1;
+
+    case DOWNLOADFACE:
+        FIXME("DOWNLOADFACE: stub\n");
+        return 1;
 
     case MFCOMMENT:
     {
@@ -139,17 +177,11 @@ INT PSDRV_ExtEscape( PHYSDEV dev, INT nEscape, INT cbInput, LPCVOID in_data,
         RECT *r = out_data;
 	if(!physDev->job.banding) {
 	    physDev->job.banding = TRUE;
-            r->left   = 0;
-            r->top    = 0;
-            r->right  = physDev->horzRes;
-            r->bottom = physDev->vertRes;
+            SetRect(r, 0, 0, physDev->horzRes, physDev->vertRes);
             TRACE("NEXTBAND returning %s\n", wine_dbgstr_rect(r));
 	    return 1;
 	}
-        r->left   = 0;
-        r->top    = 0;
-        r->right  = 0;
-        r->bottom = 0;
+        SetRectEmpty(r);
 	TRACE("NEXTBAND rect to 0,0 - 0,0\n" );
 	physDev->job.banding = FALSE;
         return EndPage( dev->hdc );
@@ -274,11 +306,8 @@ INT PSDRV_ExtEscape( PHYSDEV dev, INT nEscape, INT cbInput, LPCVOID in_data,
              * length of the string, rather than 2 more.  So we'll use the WORD at
              * in_data[0] instead.
              */
-            if(!physDev->job.in_passthrough) {
-                write_spool(dev, psbegindocument, sizeof(psbegindocument)-1);
-                physDev->job.in_passthrough = TRUE;
-            }
-            return write_spool(dev,((char*)in_data)+2,*(const WORD*)in_data);
+            passthrough_enter(dev);
+            return write_spool(dev, ((char*)in_data) + 2, *(const WORD*)in_data);
         }
 
     case POSTSCRIPT_IGNORE:
@@ -368,15 +397,14 @@ INT PSDRV_StartPage( PHYSDEV dev )
 {
     PSDRV_PDEVICE *physDev = get_psdrv_dev( dev );
 
+    TRACE("%p\n", dev->hdc);
+
     if(!physDev->job.OutOfPage) {
         FIXME("Already started a page?\n");
 	return 1;
     }
 
-    if(physDev->job.PageNo++ == 0) {
-        if(!PSDRV_WriteHeader( dev, physDev->job.doc_name ))
-            return 0;
-    }
+    physDev->job.PageNo++;
 
     if(!PSDRV_WriteNewPage( dev ))
         return 0;
@@ -392,10 +420,14 @@ INT PSDRV_EndPage( PHYSDEV dev )
 {
     PSDRV_PDEVICE *physDev = get_psdrv_dev( dev );
 
+    TRACE("%p\n", dev->hdc);
+
     if(physDev->job.OutOfPage) {
         FIXME("Already ended a page?\n");
 	return 1;
     }
+
+    passthrough_leave(dev);
     if(!PSDRV_WriteEndPage( dev ))
         return 0;
     PSDRV_EmptyDownloadList(dev, FALSE);
@@ -452,12 +484,18 @@ INT PSDRV_StartDoc( PHYSDEV dev, const DOCINFOW *doc )
         ClosePrinter(physDev->job.hprinter);
 	return 0;
     }
+
+    if (!PSDRV_WriteHeader( dev, doc->lpszDocName )) {
+        WARN("Failed to write header\n");
+        ClosePrinter(physDev->job.hprinter);
+        return 0;
+    }
+
     physDev->job.banding = FALSE;
     physDev->job.OutOfPage = TRUE;
     physDev->job.PageNo = 0;
     physDev->job.quiet = FALSE;
-    physDev->job.in_passthrough = FALSE;
-    physDev->job.had_passthrough_rect = FALSE;
+    physDev->job.passthrough_state = passthrough_none;
     physDev->job.doc_name = strdupW( doc->lpszDocName );
 
     return physDev->job.id;
@@ -470,6 +508,8 @@ INT PSDRV_EndDoc( PHYSDEV dev )
 {
     PSDRV_PDEVICE *physDev = get_psdrv_dev( dev );
     INT ret = 1;
+
+    TRACE("%p\n", dev->hdc);
 
     if(!physDev->job.id) {
         FIXME("hJob == 0. Now what?\n");

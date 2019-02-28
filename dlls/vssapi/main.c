@@ -22,6 +22,7 @@
 #include "winbase.h"
 #include "vss.h"
 #include "vswriter.h"
+#include "vsbackup.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL( vssapi );
@@ -106,4 +107,20 @@ HRESULT __thiscall VSSAPI_CVssWriter_Unsubscribe( struct CVssWriter *writer )
 {
     FIXME( "%p\n", writer );
     return S_OK;
+}
+
+HRESULT WINAPI CreateVssBackupComponentsInternal(IVssBackupComponents **backup)
+{
+    FIXME("%p\n", backup);
+    return E_NOTIMPL;
+}
+
+/******************************************************************
+ *  ?CreateVssBackupComponents@@YGJPAPAVIVssBackupComponents@@@Z
+ */
+HRESULT WINAPI VSSAPI_CreateVssBackupComponents( IVssBackupComponents **backup )
+{
+    FIXME( "%p\n", backup );
+
+    return CreateVssBackupComponentsInternal(backup);
 }

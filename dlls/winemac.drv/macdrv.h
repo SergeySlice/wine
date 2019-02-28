@@ -136,13 +136,13 @@ struct macdrv_win_data
     RECT                client_rect;            /* client area relative to parent */
     int                 pixel_format;           /* pixel format for GL */
     COLORREF            color_key;              /* color key for layered window; CLR_INVALID is not color keyed */
+    HANDLE              drag_event;             /* event to signal that Cocoa-driven window dragging has ended */
     unsigned int        on_screen : 1;          /* is window ordered in? (minimized or not) */
     unsigned int        shaped : 1;             /* is window using a custom region shape? */
     unsigned int        layered : 1;            /* is window layered and with valid attributes? */
     unsigned int        ulw_layered : 1;        /* has UpdateLayeredWindow() been called for window? */
     unsigned int        per_pixel_alpha : 1;    /* is window using per-pixel alpha? */
     unsigned int        minimized : 1;          /* is window minimized? */
-    unsigned int        being_dragged : 1;      /* is window being dragged under Cocoa's control? */
     unsigned int        swap_interval : 1;      /* GL swap interval for window */
     struct window_surface *surface;
     struct window_surface *unminimized_surface;
@@ -174,7 +174,7 @@ extern void macdrv_window_did_unminimize(HWND hwnd) DECLSPEC_HIDDEN;
 extern void macdrv_window_brought_forward(HWND hwnd) DECLSPEC_HIDDEN;
 extern void macdrv_window_resize_ended(HWND hwnd) DECLSPEC_HIDDEN;
 extern void macdrv_window_restore_requested(HWND hwnd, const macdrv_event *event) DECLSPEC_HIDDEN;
-extern void macdrv_window_drag_begin(HWND hwnd) DECLSPEC_HIDDEN;
+extern void macdrv_window_drag_begin(HWND hwnd, const macdrv_event *event) DECLSPEC_HIDDEN;
 extern void macdrv_window_drag_end(HWND hwnd) DECLSPEC_HIDDEN;
 extern void macdrv_reassert_window_position(HWND hwnd) DECLSPEC_HIDDEN;
 extern BOOL query_resize_size(HWND hwnd, macdrv_query *query) DECLSPEC_HIDDEN;
@@ -209,6 +209,7 @@ extern BOOL query_drag_exited(macdrv_query* query) DECLSPEC_HIDDEN;
 extern BOOL query_drag_drop(macdrv_query* query) DECLSPEC_HIDDEN;
 
 extern struct opengl_funcs *macdrv_wine_get_wgl_driver(PHYSDEV dev, UINT version) DECLSPEC_HIDDEN;
+extern const struct vulkan_funcs *macdrv_wine_get_vulkan_driver(PHYSDEV dev, UINT version) DECLSPEC_HIDDEN;
 extern void sync_gl_view(struct macdrv_win_data* data, const RECT* old_whole_rect, const RECT* old_client_rect) DECLSPEC_HIDDEN;
 
 extern CGImageRef create_cgimage_from_icon_bitmaps(HDC hdc, HANDLE icon, HBITMAP hbmColor,

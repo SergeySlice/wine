@@ -81,7 +81,6 @@ struct IDirectInputDeviceImpl
     /* Action mapping */
     int                         num_actions; /* number of actions mapped */
     ActionMap                  *action_map;  /* array of mappings */
-    WCHAR                       username[MAX_PATH];
 };
 
 extern BOOL get_app_key(HKEY*, HKEY*) DECLSPEC_HIDDEN;
@@ -114,9 +113,6 @@ typedef struct
     struct list entry;
     LPDIRECTINPUTEFFECT ref;
 } effect_list_item;
-
-extern const GUID DInput_Wine_Keyboard_GUID DECLSPEC_HIDDEN;
-extern const GUID DInput_Wine_Mouse_GUID DECLSPEC_HIDDEN;
 
 /* Various debug tools */
 extern void _dump_DIPROPHEADER(LPCDIPROPHEADER diph)  DECLSPEC_HIDDEN;

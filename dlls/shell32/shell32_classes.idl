@@ -69,6 +69,12 @@ coclass KnownFolderManager { interface IKnownFolderManager; }
 ] coclass ApplicationAssociationRegistration { interface IApplicationAssociationRegistration; }
 
 [
+    helpstring("Application Destination List"),
+    threading(apartment),
+    uuid(86c14003-4d6b-4ef3-a7b4-0506663b2e68)
+] coclass ApplicationDestinations { interface IApplicationDestinations; }
+
+[
     helpstring("Shell Drag and Drop Helper"),
     threading(apartment),
     uuid(4657278a-411b-11d2-839a-00c04fd918d0)
@@ -154,3 +160,9 @@ coclass KnownFolderManager { interface IKnownFolderManager; }
     threading(apartment),
     uuid(77f10cf0-3db5-4966-b520-b7c54fd35ed6)
 ] coclass DestinationList { interface ICustomDestinationList; }
+
+[
+    helpstring("Shell Image Data Factory"),
+    threading(apartment),
+    uuid(66e4e4fb-f385-4dd0-8d74-a2efd1bc6178)
+] coclass ShellImageDataFactory { interface IShellImageDataFactory; }

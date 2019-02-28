@@ -178,7 +178,7 @@ static const struct object_ops key_ops =
 static inline int is_wow6432node( const WCHAR *name, unsigned int len )
 {
     return (len == sizeof(wow6432node) &&
-            !memicmpW( name, wow6432node, sizeof(wow6432node)/sizeof(WCHAR) ));
+            !memicmpW( name, wow6432node, ARRAY_SIZE( wow6432node )));
 }
 
 /*
@@ -439,9 +439,9 @@ static inline void get_req_path( struct unicode_str *str, int skip_root )
     str->len = (get_req_data_size() / sizeof(WCHAR)) * sizeof(WCHAR);
 
     if (skip_root && str->len >= sizeof(root_name) &&
-        !memicmpW( str->str, root_name, sizeof(root_name)/sizeof(WCHAR) ))
+        !memicmpW( str->str, root_name, ARRAY_SIZE( root_name )))
     {
-        str->str += sizeof(root_name)/sizeof(WCHAR);
+        str->str += ARRAY_SIZE( root_name );
         str->len -= sizeof(root_name);
     }
 }
@@ -548,7 +548,7 @@ static void touch_key( struct key *key, unsigned int change )
     /* do notifications */
     check_notify( key, change, 1 );
     for ( k = key->parent; k; k = k->parent )
-        check_notify( k, change & ~REG_NOTIFY_CHANGE_LAST_SET, 0 );
+        check_notify( k, change, 0 );
 }
 
 /* try to grow the array of subkeys; return 1 if OK, 0 on error */
@@ -568,7 +568,7 @@ static int grow_subkeys( struct key *key )
     }
     else
     {
-        nb_subkeys = MIN_VALUES;
+        nb_subkeys = MIN_SUBKEYS;
         if (!(new_subkeys = mem_alloc( nb_subkeys * sizeof(*new_subkeys) ))) return 0;
     }
     key->subkeys    = new_subkeys;
@@ -691,8 +691,8 @@ static struct key *follow_symlink( struct key *key, int iteration )
     path.str = value->data;
     path.len = (value->len / sizeof(WCHAR)) * sizeof(WCHAR);
     if (path.len <= sizeof(root_name)) return NULL;
-    if (memicmpW( path.str, root_name, sizeof(root_name)/sizeof(WCHAR) )) return NULL;
-    path.str += sizeof(root_name) / sizeof(WCHAR);
+    if (memicmpW( path.str, root_name, ARRAY_SIZE( root_name ))) return NULL;
+    path.str += ARRAY_SIZE( root_name );
     path.len -= sizeof(root_name);
 
     key = root_key;
@@ -1866,6 +1866,14 @@ void init_registry(void)
     /* start the periodic save timer */
     set_periodic_save_timer();
 
+    /* create windows directories */
+
+    if (!mkdir( "drive_c/windows", 0777 ))
+    {
+        mkdir( "drive_c/windows/system32", 0777 );
+        if (prefix_type == PREFIX_64BIT) mkdir( "drive_c/windows/syswow64", 0777 );
+    }
+
     /* go back to the server dir */
     if (fchdir( server_dir_fd ) == -1) fatal_error( "chdir to server dir: %s\n", strerror( errno ));
 }
@@ -2052,9 +2060,9 @@ DECL_HANDLER(create_key)
     class.len = (class.len / sizeof(WCHAR)) * sizeof(WCHAR);
 
     if (!objattr->rootdir && name.len >= sizeof(root_name) &&
-        !memicmpW( name.str, root_name, sizeof(root_name)/sizeof(WCHAR) ))
+        !memicmpW( name.str, root_name, ARRAY_SIZE( root_name )))
     {
-        name.str += sizeof(root_name)/sizeof(WCHAR);
+        name.str += ARRAY_SIZE( root_name );
         name.len -= sizeof(root_name);
     }
 
@@ -2210,9 +2218,9 @@ DECL_HANDLER(load_registry)
     }
 
     if (!objattr->rootdir && name.len >= sizeof(root_name) &&
-        !memicmpW( name.str, root_name, sizeof(root_name)/sizeof(WCHAR) ))
+        !memicmpW( name.str, root_name, ARRAY_SIZE( root_name )))
     {
-        name.str += sizeof(root_name)/sizeof(WCHAR);
+        name.str += ARRAY_SIZE( root_name );
         name.len -= sizeof(root_name);
     }
 

@@ -25,12 +25,10 @@ WINE_DEFAULT_DEBUG_CHANNEL(dmime);
 typedef struct IDirectMusicPerformance8Impl {
     IDirectMusicPerformance8 IDirectMusicPerformance8_iface;
     LONG ref;
-    /* IDirectMusicPerformanceImpl fields */
-    IDirectMusic8 *pDirectMusic;
-    IDirectSound *pDirectSound;
+    IDirectMusic8 *dmusic;
+    IDirectSound *dsound;
     IDirectMusicGraph *pToolGraph;
-    DMUS_AUDIOPARAMS pParams;
-    /* global parameters */
+    DMUS_AUDIOPARAMS params;
     BOOL fAutoDownload;
     char cMasterGrooveLevel;
     float fMasterTempo;
@@ -249,50 +247,12 @@ static ULONG WINAPI IDirectMusicPerformance8Impl_Release(IDirectMusicPerformance
 
 /* IDirectMusicPerformanceImpl IDirectMusicPerformance Interface part: */
 static HRESULT WINAPI IDirectMusicPerformance8Impl_Init(IDirectMusicPerformance8 *iface,
-        IDirectMusic **ppDirectMusic, IDirectSound *pDirectSound, HWND hWnd)
+        IDirectMusic **dmusic, IDirectSound *dsound, HWND hwnd)
 {
-        IDirectMusicPerformance8Impl *This = impl_from_IDirectMusicPerformance8(iface);
+    TRACE("(%p, %p, %p, %p)\n", iface, dmusic, dsound, hwnd);
 
-	FIXME("(iface = %p, dmusic = %p, dsound = %p, hwnd = %p)\n", This, ppDirectMusic, pDirectSound, hWnd);
- 	if (This->pDirectMusic || This->pDirectSound)
-	  return DMUS_E_ALREADY_INITED;
-	
-	if (NULL == hWnd) {
-	  hWnd = GetForegroundWindow();
-	}
-
-	if (NULL != pDirectSound) {
-	  This->pDirectSound = pDirectSound;
-	  IDirectSound_AddRef(This->pDirectSound);
-	} else {
-	  DirectSoundCreate8(NULL, (LPDIRECTSOUND8*) &This->pDirectSound, NULL);
-	  if (!This->pDirectSound) return DSERR_NODRIVER;
-
-	  if (NULL != hWnd) {
-	    IDirectSound8_SetCooperativeLevel(This->pDirectSound, hWnd, DSSCL_PRIORITY);
-	  } else {
-	    /* how to get the ForeGround window handle ? */
-            /*IDirectSound8_SetCooperativeLevel(This->pDirectSound, hWnd, DSSCL_PRIORITY);*/
-	  }
-	}
-
-	if (NULL != ppDirectMusic && NULL != *ppDirectMusic) {
-          /* app creates its own dmusic object and gives it to performance */
-	  This->pDirectMusic = (IDirectMusic8*) *ppDirectMusic;
-	  IDirectMusic8_AddRef(This->pDirectMusic);
-	} else {
-        HRESULT hr;
-        /* App enables the performance to initialize itself and needs a pointer to object */
-        hr = CoCreateInstance(&CLSID_DirectMusic, NULL, CLSCTX_INPROC_SERVER, &IID_IDirectMusic8, (void**)&This->pDirectMusic);
-        if (FAILED(hr))
-            return hr;
-        if (ppDirectMusic) {
-            *ppDirectMusic = (LPDIRECTMUSIC)This->pDirectMusic;
-            IDirectMusic8_AddRef((LPDIRECTMUSIC8)*ppDirectMusic);
-        }
-    }
-
-    return S_OK;
+    return IDirectMusicPerformance8_InitAudio(iface, dmusic, dsound ? &dsound : NULL, hwnd, 0, 0,
+            0, NULL);
 }
 
 static HRESULT WINAPI IDirectMusicPerformance8Impl_PlaySegment(IDirectMusicPerformance8 *iface,
@@ -608,20 +568,21 @@ static HRESULT WINAPI IDirectMusicPerformance8Impl_AddPort(IDirectMusicPerforman
 	HRESULT hr = E_FAIL;
 
 	FIXME("(%p, %p): stub\n", This, pPort);
-	if (!This->pDirectMusic || !This->pDirectSound) return DMUS_E_NOT_INIT;
+        if (!This->dmusic)
+          return DMUS_E_NOT_INIT;
 	if (NULL == pPort) {
 	  GUID port_guid;
 	  IDirectMusicPort* pDefaultPort = NULL;
 	  DMUS_PORTPARAMS params;
 	  int i, j;
-	  hr = IDirectMusic8_GetDefaultPort(This->pDirectMusic, &port_guid);
+          hr = IDirectMusic8_GetDefaultPort(This->dmusic, &port_guid);
 	  if (FAILED(hr)) return hr;
 	  ZeroMemory(&params, sizeof(params)); 
 	  params.dwSize = sizeof(params);
 	  params.dwValidParams = DMUS_PORTPARAMS_CHANNELGROUPS | DMUS_PORTPARAMS_SHARE;
 	  params.dwChannelGroups = 1;
 	  params.fShare = TRUE;
-	  hr = IDirectMusic8_CreatePort(This->pDirectMusic, &port_guid, &params, &pDefaultPort, NULL);
+          hr = IDirectMusic8_CreatePort(This->dmusic, &port_guid, &params, &pDefaultPort, NULL);
 	  if (FAILED(hr)) return hr;
 	  hr = IDirectMusicPort_Activate(pDefaultPort, TRUE);
 	  if (FAILED(hr)) { IDirectMusicPort_Release(pDefaultPort); return hr; }
@@ -705,8 +666,8 @@ static HRESULT WINAPI IDirectMusicPerformance8Impl_PChannelInfo(IDirectMusicPerf
 
     port_params.dwSize = sizeof(DMUS_PORTPARAMS8);
     port_params.dwValidParams = 0;
-    IDirectMusic8_GetDefaultPort(This->pDirectMusic, &default_port);
-    IDirectMusic8_CreatePort(This->pDirectMusic, &default_port, &port_params, port, NULL);
+    IDirectMusic8_GetDefaultPort(This->dmusic, &default_port);
+    IDirectMusic8_CreatePort(This->dmusic, &default_port, &port_params, port, NULL);
 
     return S_OK;
 }
@@ -827,23 +788,25 @@ static HRESULT WINAPI IDirectMusicPerformance8Impl_AdjustTime(IDirectMusicPerfor
 
 static HRESULT WINAPI IDirectMusicPerformance8Impl_CloseDown(IDirectMusicPerformance8 *iface)
 {
-  IDirectMusicPerformance8Impl *This = impl_from_IDirectMusicPerformance8(iface);
+    IDirectMusicPerformance8Impl *This = impl_from_IDirectMusicPerformance8(iface);
 
-  FIXME("(%p): stub\n", This);
-  if (PostMessageToProcessMsgThread(This, PROCESSMSG_EXIT)) {
-    WaitForSingleObject(This->procThread, INFINITE);
-    This->procThreadTicStarted = FALSE;
-    CloseHandle(This->procThread);
-  }
-  if (NULL != This->pDirectSound) {
-    IDirectSound_Release(This->pDirectSound);
-    This->pDirectSound = NULL;
-  }
-  if (NULL != This->pDirectMusic) {
-    IDirectMusic8_Release(This->pDirectMusic);
-    This->pDirectMusic = NULL;
-  }
-  return S_OK;
+    FIXME("(%p): semi-stub\n", This);
+
+    if (PostMessageToProcessMsgThread(This, PROCESSMSG_EXIT)) {
+        WaitForSingleObject(This->procThread, INFINITE);
+        This->procThreadTicStarted = FALSE;
+        CloseHandle(This->procThread);
+    }
+    if (This->dsound) {
+        IDirectSound_Release(This->dsound);
+        This->dsound = NULL;
+    }
+    if (This->dmusic) {
+        IDirectMusic_SetDirectSound(This->dmusic, NULL, NULL);
+        IDirectMusic8_Release(This->dmusic);
+        This->dmusic = NULL;
+    }
+    return S_OK;
 }
 
 static HRESULT WINAPI IDirectMusicPerformance8Impl_GetResolvedTime(IDirectMusicPerformance8 *iface,
@@ -898,56 +861,88 @@ static HRESULT WINAPI IDirectMusicPerformance8Impl_RhythmToTime(IDirectMusicPerf
 
 /* IDirectMusicPerformance8 Interface part follow: */
 static HRESULT WINAPI IDirectMusicPerformance8Impl_InitAudio(IDirectMusicPerformance8 *iface,
-        IDirectMusic **ppDirectMusic, IDirectSound **ppDirectSound, HWND hWnd,
-        DWORD dwDefaultPathType, DWORD dwPChannelCount, DWORD dwFlags, DMUS_AUDIOPARAMS* pParams)
+        IDirectMusic **dmusic, IDirectSound **dsound, HWND hwnd, DWORD default_path_type,
+        DWORD num_channels, DWORD flags, DMUS_AUDIOPARAMS *params)
 {
-        IDirectMusicPerformance8Impl *This = impl_from_IDirectMusicPerformance8(iface);
-	IDirectSound* dsound = NULL;
-	HRESULT hr = S_OK;
+    IDirectMusicPerformance8Impl *This = impl_from_IDirectMusicPerformance8(iface);
+    HRESULT hr = S_OK;
 
-	FIXME("(%p, %p, %p, %p, %x, %u, %x, %p): to check\n", This, ppDirectMusic, ppDirectSound, hWnd, dwDefaultPathType, dwPChannelCount, dwFlags, pParams);
+    TRACE("(%p, %p, %p, %p, %x, %u, %x, %p)\n", This, dmusic, dsound, hwnd, default_path_type,
+            num_channels, flags, params);
 
-	if (This->pDirectMusic || This->pDirectSound)
-	  return DMUS_E_ALREADY_INITED;
+    if (This->dmusic)
+        return DMUS_E_ALREADY_INITED;
 
-	if (NULL != ppDirectSound && NULL != *ppDirectSound) {
-	  dsound = *ppDirectSound;
-	} else {
-	  hr = DirectSoundCreate8 (NULL, (LPDIRECTSOUND8*) &dsound, NULL);
-          FIXME("return dsound(%p,%d)\n", dsound, hr);
-	  if (FAILED(hr) || !dsound)
-	    return DSERR_NODRIVER;
-	  if (ppDirectSound)
-	    *ppDirectSound = dsound;  
-	}
+    if (!dmusic || !*dmusic) {
+        hr = CoCreateInstance(&CLSID_DirectMusic, NULL, CLSCTX_INPROC_SERVER, &IID_IDirectMusic8,
+                (void **)&This->dmusic);
+        if (FAILED(hr))
+            return hr;
+    } else {
+        This->dmusic = (IDirectMusic8 *)*dmusic;
+        IDirectMusic8_AddRef(This->dmusic);
+    }
 
-        IDirectMusicPerformance8_Init(iface, ppDirectMusic, dsound, hWnd);
+    if (!dsound || !*dsound) {
+        hr = DirectSoundCreate8(NULL, (IDirectSound8 **)&This->dsound, NULL);
+        if (FAILED(hr))
+            goto error;
+        hr = IDirectSound_SetCooperativeLevel(This->dsound, hwnd ? hwnd : GetForegroundWindow(),
+                DSSCL_PRIORITY);
+        if (FAILED(hr))
+            goto error;
+    } else {
+        This->dsound = *dsound;
+        IDirectSound_AddRef(This->dsound);
+    }
 
-	/* Init increases the ref count of the dsound object. Decrement it if the app doesn't want a pointer to the object. */
-	if (NULL == ppDirectSound) {
-	  IDirectSound_Release(This->pDirectSound);
-	}
+    hr = IDirectMusic8_SetDirectSound(This->dmusic, This->dsound, NULL);
+    if (FAILED(hr))
+        goto error;
 
-	/* as seen in msdn we need params init before audio path creation */
-	if (NULL != pParams) {
-	  This->pParams = *pParams;
-	} else {
-	  /* TODO, how can i fill the struct as seen on msdn */
-	  memset(&This->pParams, 0, sizeof(DMUS_AUDIOPARAMS));
-	  This->pParams.dwSize = sizeof(DMUS_AUDIOPARAMS);
-	  This->pParams.fInitNow = FALSE;
-	  This->pParams.dwValidData = DMUS_AUDIOPARAMS_FEATURES | DMUS_AUDIOPARAMS_VOICES | DMUS_AUDIOPARAMS_SAMPLERATE | DMUS_AUDIOPARAMS_DEFAULTSYNTH;
-	  This->pParams.dwVoices = 64;
-	  This->pParams.dwSampleRate = (DWORD) 22.050; 
-	  This->pParams.dwFeatures = dwFlags;
-	  This->pParams.clsidDefaultSynth = CLSID_DirectMusicSynthSink;
-	}
-	if(dwDefaultPathType != 0)
-		hr = IDirectMusicPerformance8_CreateStandardAudioPath(iface, dwDefaultPathType, dwPChannelCount, FALSE, &This->pDefaultPath);
+    if (!params) {
+        This->params.dwSize = sizeof(DMUS_AUDIOPARAMS);
+        This->params.fInitNow = FALSE;
+        This->params.dwValidData = DMUS_AUDIOPARAMS_FEATURES | DMUS_AUDIOPARAMS_VOICES |
+                DMUS_AUDIOPARAMS_SAMPLERATE | DMUS_AUDIOPARAMS_DEFAULTSYNTH;
+        This->params.dwVoices = 64;
+        This->params.dwSampleRate = 22050;
+        This->params.dwFeatures = flags;
+        This->params.clsidDefaultSynth = CLSID_DirectMusicSynthSink;
+    } else
+        This->params = *params;
 
-	PostMessageToProcessMsgThread(This, PROCESSMSG_START);
+    if (default_path_type) {
+        hr = IDirectMusicPerformance8_CreateStandardAudioPath(iface, default_path_type,
+                num_channels, FALSE, &This->pDefaultPath);
+        if (FAILED(hr)) {
+            IDirectMusic8_SetDirectSound(This->dmusic, NULL, NULL);
+            goto error;
+        }
+    }
 
-	return hr;
+    if (dsound && !*dsound) {
+        *dsound = This->dsound;
+        IDirectSound_AddRef(*dsound);
+    }
+    if (dmusic && !*dmusic) {
+        *dmusic = (IDirectMusic *)This->dmusic;
+        IDirectMusic_AddRef(*dmusic);
+    }
+    PostMessageToProcessMsgThread(This, PROCESSMSG_START);
+
+    return S_OK;
+
+error:
+    if (This->dsound) {
+        IDirectSound_Release(This->dsound);
+        This->dsound = NULL;
+    }
+    if (This->dmusic) {
+        IDirectMusic8_Release(This->dmusic);
+        This->dmusic = NULL;
+    }
+    return hr;
 }
 
 static HRESULT WINAPI IDirectMusicPerformance8Impl_PlaySegmentEx(IDirectMusicPerformance8 *iface,
@@ -1063,7 +1058,7 @@ static HRESULT WINAPI IDirectMusicPerformance8Impl_CreateStandardAudioPath(IDire
 	}
 
 	/* FIXME: Should we create one secondary buffer for each PChannel? */
-	hr = IDirectSound8_CreateSoundBuffer ((LPDIRECTSOUND8) This->pDirectSound, &desc, &buffer, NULL);
+        hr = IDirectSound_CreateSoundBuffer(This->dsound, &desc, &buffer, NULL);
 	if (FAILED(hr))
 	        return DSERR_BUFFERLOST;
 
@@ -1072,7 +1067,7 @@ static HRESULT WINAPI IDirectMusicPerformance8Impl_CreateStandardAudioPath(IDire
 	desc.dwBufferBytes = 0;
 	desc.lpwfxFormat = NULL;
 
-	hr = IDirectSound8_CreateSoundBuffer ((LPDIRECTSOUND8) This->pDirectSound, &desc, &primary_buffer, NULL);
+        hr = IDirectSound_CreateSoundBuffer(This->dsound, &desc, &primary_buffer, NULL);
 	if (FAILED(hr)) {
                 IDirectSoundBuffer_Release(buffer);
 	        return DSERR_BUFFERLOST;
@@ -1207,8 +1202,6 @@ HRESULT WINAPI create_dmperformance(REFIID lpcGUID, void **ppobj)
 	}
         obj->IDirectMusicPerformance8_iface.lpVtbl = &DirectMusicPerformance8_Vtbl;
 	obj->ref = 0;  /* will be inited by QueryInterface */
-	obj->pDirectMusic = NULL;
-	obj->pDirectSound = NULL;
 	obj->pDefaultPath = NULL;
 	InitializeCriticalSection(&obj->safe);
 	obj->safe.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": IDirectMusicPerformance8Impl*->safe");

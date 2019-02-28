@@ -73,6 +73,7 @@ C_SRCS = \
 	c_936.c \
 	c_949.c \
 	c_950.c \
+	combclass.c \
 	compose.c \
 	cpsymbol.c \
 	cptable.c \
@@ -92,15 +93,18 @@ C_SRCS = \
 	memcpy_unaligned.c \
 	memmove.c \
 	mkstemps.c \
+	normalize.c \
 	poll.c \
 	pread.c \
 	pwrite.c \
 	readlink.c \
+	rint.c \
 	spawn.c \
 	statvfs.c \
 	strcasecmp.c \
 	strerror.c \
 	strncasecmp.c \
+	strnlen.c \
 	symlink.c \
 	usleep.c \
 	utf8.c \

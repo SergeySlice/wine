@@ -747,6 +747,19 @@ typedef struct _MINIDUMP_MEMORY_LIST
     MINIDUMP_MEMORY_DESCRIPTOR  MemoryRanges[1]; /* FIXME: 0-sized array not supported */
 } MINIDUMP_MEMORY_LIST, *PMINIDUMP_MEMORY_LIST;
 
+typedef struct _MINIDUMP_MEMORY_DESCRIPTOR64
+{
+    ULONG64                     StartOfMemoryRange;
+    ULONG64                     DataSize;
+} MINIDUMP_MEMORY_DESCRIPTOR64, *PMINIDUMP_MEMORY_DESCRIPTOR64;
+
+typedef struct _MINIDUMP_MEMORY64_LIST
+{
+    ULONG64                     NumberOfMemoryRanges;
+    RVA64                       BaseRva;
+    MINIDUMP_MEMORY_DESCRIPTOR64 MemoryRanges[1]; /* FIXME: 0-sized array not supported */
+} MINIDUMP_MEMORY64_LIST, *PMINIDUMP_MEMORY64_LIST;
+
 #define MINIDUMP_MISC1_PROCESS_ID       0x00000001
 #define MINIDUMP_MISC1_PROCESS_TIMES    0x00000002
 
@@ -951,6 +964,13 @@ BOOL    WINAPI SymUnloadModule64(HANDLE, DWORD64);
 #define SYMFLAG_THUNK            0x00002000
 #define SYMFLAG_TLSREL           0x00004000
 #define SYMFLAG_SLOT             0x00008000
+#define SYMFLAG_ILREL            0x00010000
+#define SYMFLAG_METADATA         0x00020000
+#define SYMFLAG_CLR_TOKEN        0x00040000
+#define SYMFLAG_NULL             0x00080000
+#define SYMFLAG_FUNC_NO_RETURN   0x00100000
+#define SYMFLAG_SYNTHETIC_ZEROBASE 0x00200000
+#define SYMFLAG_PUBLIC_CODE      0x00400000
 
 #define MAX_SYM_NAME    2000
 

@@ -72,7 +72,7 @@ PWINE_ACMDRIVERID MSACM_RegisterDriverFromRegistry(LPCWSTR pszRegEntry)
     /* The requested registry entry must have the format msacm.XXXXX in order to
        be recognized in any future sessions of msacm
      */
-    if (0 == strncmpiW(pszRegEntry, msacmW, sizeof(msacmW)/sizeof(WCHAR))) {
+    if (0 == strncmpiW(pszRegEntry, msacmW, ARRAY_SIZE(msacmW))) {
         lRet = RegOpenKeyExW(HKEY_LOCAL_MACHINE, drvkey, 0, KEY_QUERY_VALUE, &hKey);
         if (lRet != ERROR_SUCCESS) {
             WARN("unable to open registry key - 0x%08x\n", lRet);
@@ -373,31 +373,31 @@ void MSACM_RegisterAllDrivers(void)
     if (lRet == ERROR_SUCCESS) {
 	RegQueryInfoKeyW( hKey, 0, 0, 0, &cnt, 0, 0, 0, 0, 0, 0, 0);
 	for (i = 0; i < cnt; i++) {
-	    bufLen = sizeof(buf) / sizeof(buf[0]);
+	    bufLen = ARRAY_SIZE(buf);
 	    lRet = RegEnumKeyExW(hKey, i, buf, &bufLen, 0, 0, 0, &lastWrite);
 	    if (lRet != ERROR_SUCCESS) continue;
-	    if (strncmpiW(buf, msacmW, sizeof(msacmW)/sizeof(msacmW[0]))) continue;
+	    if (strncmpiW(buf, msacmW, ARRAY_SIZE(msacmW))) continue;
 	    if (!(name = strchrW(buf, '='))) continue;
 	    *name = 0;
 	    MSACM_RegisterDriver(buf, name + 1, 0);
 	}
 	i = 0;
-	cnt = sizeof(valname) / sizeof(*valname);
+	cnt = ARRAY_SIZE(valname);
 	bufLen = sizeof(buf);
 	while(RegEnumValueW(hKey, i, valname, &cnt, 0,
 		    &type, (BYTE*)buf, &bufLen) == ERROR_SUCCESS){
-	    if(!strncmpiW(valname, msacmW, sizeof(msacmW) / sizeof(*msacmW)))
+	    if (!strncmpiW(valname, msacmW, ARRAY_SIZE(msacmW)))
 		MSACM_RegisterDriver(valname, buf, 0);
 	    ++i;
 	}
     	RegCloseKey( hKey );
     }
 
-    if (GetPrivateProfileSectionW(drv32, buf, sizeof(buf)/sizeof(buf[0]), sys))
+    if (GetPrivateProfileSectionW(drv32, buf, ARRAY_SIZE(buf), sys))
     {
 	for(s = buf; *s;  s += strlenW(s) + 1)
 	{
-	    if (strncmpiW(s, msacmW, sizeof(msacmW)/sizeof(msacmW[0]))) continue;
+	    if (strncmpiW(s, msacmW, ARRAY_SIZE(msacmW))) continue;
 	    if (!(name = strchrW(s, '='))) continue;
 	    *name = 0;
 	    MSACM_RegisterDriver(s, name + 1, 0);
@@ -737,11 +737,16 @@ static PWINE_ACMLOCALDRIVER MSACM_pLastACMLocalDriver;
 static PWINE_ACMLOCALDRIVER MSACM_UnregisterLocalDriver(PWINE_ACMLOCALDRIVER paldrv)
 {
     PWINE_ACMLOCALDRIVER pNextACMLocalDriver;
+    LONG ref;
 
     if (paldrv->pACMInstList) {
         ERR("local driver instances still present after closing all drivers - memory leak\n");
         return NULL;
     }
+
+    ref = InterlockedDecrement(&paldrv->ref);
+    if (ref)
+        return paldrv;
 
     if (paldrv == MSACM_pFirstACMLocalDriver)
         MSACM_pFirstACMLocalDriver = paldrv->pNextACMLocalDrv;
@@ -883,7 +888,11 @@ PWINE_ACMLOCALDRIVER MSACM_RegisterLocalDriver(HMODULE hModule, DRIVERPROC lpDri
     /* look up previous instance of local driver module */
     for (paldrv = MSACM_pFirstACMLocalDriver; paldrv; paldrv = paldrv->pNextACMLocalDrv)
     {
-        if (paldrv->hModule == hModule && paldrv->lpDrvProc == lpDriverProc) return paldrv;
+        if (paldrv->hModule == hModule && paldrv->lpDrvProc == lpDriverProc)
+        {
+            InterlockedIncrement(&paldrv->ref);
+            return paldrv;
+        }
     }
 
     paldrv = HeapAlloc(MSACM_hHeap, 0, sizeof(WINE_ACMLOCALDRIVER));
@@ -892,6 +901,7 @@ PWINE_ACMLOCALDRIVER MSACM_RegisterLocalDriver(HMODULE hModule, DRIVERPROC lpDri
     paldrv->hModule = hModule;
     paldrv->lpDrvProc = lpDriverProc;
     paldrv->pACMInstList = NULL;
+    paldrv->ref = 1;
 
     paldrv->pNextACMLocalDrv = NULL;
     paldrv->pPrevACMLocalDrv = MSACM_pLastACMLocalDriver;
@@ -1085,7 +1095,7 @@ LRESULT MSACM_CloseLocalDriver(PWINE_ACMLOCALDRIVERINST paldrv)
             MSACM_DRIVER_SendMessage(lpDrv0, DRV_CLOSE, 0L, 0L);
             lpDrv0->dwDriverID = 0;
             MSACM_RemoveFromList(lpDrv0);
-            HeapFree(GetProcessHeap(), 0, lpDrv0);
+            HeapFree(MSACM_hHeap, 0, lpDrv0);
         }
 
         HeapFree(MSACM_hHeap, 0, paldrv);

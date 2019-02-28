@@ -33,14 +33,14 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(mshtml);
 
-typedef struct {
+struct HTMLStyleElement {
     HTMLElement element;
 
     IHTMLStyleElement IHTMLStyleElement_iface;
 
     nsIDOMHTMLStyleElement *nsstyle;
     IHTMLStyleSheet *style_sheet;
-} HTMLStyleElement;
+};
 
 static inline HTMLStyleElement *impl_from_IHTMLStyleElement(IHTMLStyleElement *iface)
 {
@@ -340,13 +340,13 @@ static void HTMLStyleElement_unlink(HTMLDOMNode *iface)
 }
 
 static const NodeImplVtbl HTMLStyleElementImplVtbl = {
+    &CLSID_HTMLStyleElement,
     HTMLStyleElement_QI,
     HTMLStyleElement_destructor,
     HTMLElement_cpc,
     HTMLElement_clone,
     HTMLElement_handle_event,
     HTMLElement_get_attr_col,
-    NULL,
     NULL,
     NULL,
     NULL,
@@ -371,7 +371,7 @@ static dispex_static_data_t HTMLStyleElement_dispex = {
     HTMLElement_init_dispex_info
 };
 
-HRESULT HTMLStyleElement_Create(HTMLDocumentNode *doc, nsIDOMHTMLElement *nselem, HTMLElement **elem)
+HRESULT HTMLStyleElement_Create(HTMLDocumentNode *doc, nsIDOMElement *nselem, HTMLElement **elem)
 {
     HTMLStyleElement *ret;
     nsresult nsres;
@@ -385,7 +385,7 @@ HRESULT HTMLStyleElement_Create(HTMLDocumentNode *doc, nsIDOMHTMLElement *nselem
 
     HTMLElement_Init(&ret->element, doc, nselem, &HTMLStyleElement_dispex);
 
-    nsres = nsIDOMHTMLElement_QueryInterface(nselem, &IID_nsIDOMHTMLStyleElement, (void**)&ret->nsstyle);
+    nsres = nsIDOMElement_QueryInterface(nselem, &IID_nsIDOMHTMLStyleElement, (void**)&ret->nsstyle);
     assert(nsres == NS_OK);
 
     *elem = &ret->element;

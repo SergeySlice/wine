@@ -94,7 +94,6 @@ static const struct
     { OSMESA_RGB_565,  16,  5, 0,  6, 5,  5, 11, 0, 0,   16, 32, 8 },
     { OSMESA_RGB_565,  16,  5, 0,  6, 5,  5, 11, 0, 0,   16, 16, 8 },
 };
-static const int nb_formats = sizeof(pixel_formats) / sizeof(pixel_formats[0]);
 
 static BOOL init_opengl(void)
 {
@@ -113,14 +112,6 @@ static BOOL init_opengl(void)
         return FALSE;
     }
 
-    for (i = 0; i < sizeof(opengl_func_names)/sizeof(opengl_func_names[0]); i++)
-    {
-        if (!(((void **)&opengl_funcs.gl)[i] = wine_dlsym( osmesa_handle, opengl_func_names[i], buffer, sizeof(buffer) )))
-        {
-            ERR( "%s not found in %s (%s), disabling.\n", opengl_func_names[i], SONAME_LIBOSMESA, buffer );
-            goto failed;
-        }
-    }
 #define LOAD_FUNCPTR(f) do if (!(p##f = wine_dlsym( osmesa_handle, #f, buffer, sizeof(buffer) ))) \
     { \
         ERR( "%s not found in %s (%s), disabling.\n", #f, SONAME_LIBOSMESA, buffer ); \
@@ -133,6 +124,15 @@ static BOOL init_opengl(void)
     LOAD_FUNCPTR(OSMesaMakeCurrent);
     LOAD_FUNCPTR(OSMesaPixelStore);
 #undef LOAD_FUNCPTR
+
+    for (i = 0; i < ARRAY_SIZE( opengl_func_names ); i++)
+    {
+        if (!(((void **)&opengl_funcs.gl)[i] = pOSMesaGetProcAddress( opengl_func_names[i] )))
+        {
+            ERR( "%s not found in %s, disabling.\n", opengl_func_names[i], SONAME_LIBOSMESA );
+            goto failed;
+        }
+    }
 
     return TRUE;
 
@@ -147,7 +147,7 @@ failed:
  */
 static int dibdrv_wglDescribePixelFormat( HDC hdc, int fmt, UINT size, PIXELFORMATDESCRIPTOR *descr )
 {
-    int ret = sizeof(pixel_formats) / sizeof(pixel_formats[0]);
+    int ret = ARRAY_SIZE( pixel_formats );
 
     if (!descr) return ret;
     if (fmt <= 0 || fmt > ret) return 0;
@@ -197,7 +197,7 @@ static struct wgl_context *dibdrv_wglCreateContext( HDC hdc )
 
     if (!(context = HeapAlloc( GetProcessHeap(), 0, sizeof( *context )))) return NULL;
     context->format = GetPixelFormat( hdc );
-    if (!context->format || context->format > nb_formats) context->format = 1;
+    if (!context->format || context->format > ARRAY_SIZE( pixel_formats )) context->format = 1;
 
     if (!(context->context = pOSMesaCreateContextExt( pixel_formats[context->format - 1].mesa,
                                                       pixel_formats[context->format - 1].depth_bits,
@@ -213,10 +213,11 @@ static struct wgl_context *dibdrv_wglCreateContext( HDC hdc )
 /***********************************************************************
  *		dibdrv_wglDeleteContext
  */
-static void dibdrv_wglDeleteContext( struct wgl_context *context )
+static BOOL dibdrv_wglDeleteContext( struct wgl_context *context )
 {
     pOSMesaDestroyContext( context->context );
     HeapFree( GetProcessHeap(), 0, context );
+    return TRUE;
 }
 
 /***********************************************************************
@@ -304,7 +305,7 @@ static BOOL dibdrv_wglMakeCurrent( HDC hdc, struct wgl_context *context )
  */
 static BOOL dibdrv_wglSetPixelFormat( HDC hdc, int fmt, const PIXELFORMATDESCRIPTOR *descr )
 {
-    if (fmt <= 0 || fmt > nb_formats) return FALSE;
+    if (fmt <= 0 || fmt > ARRAY_SIZE( pixel_formats )) return FALSE;
     return GdiSetPixelFormat( hdc, fmt, descr );
 }
 

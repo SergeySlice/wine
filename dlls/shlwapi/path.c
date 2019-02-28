@@ -538,17 +538,25 @@ int WINAPI PathGetDriveNumberA(LPCSTR lpszPath)
  *
  * See PathGetDriveNumberA.
  */
-int WINAPI PathGetDriveNumberW(LPCWSTR lpszPath)
+int WINAPI PathGetDriveNumberW(const WCHAR *path)
 {
-  TRACE ("(%s)\n",debugstr_w(lpszPath));
+    WCHAR drive;
 
-  if (lpszPath)
-  {
-      WCHAR tl = tolowerW(lpszPath[0]);
-      if (tl >= 'a' && tl <= 'z' && lpszPath[1] == ':')
-          return tl - 'a';
-  }
-  return -1;
+    static const WCHAR nt_prefixW[] = {'\\','\\','?','\\'};
+
+    TRACE("(%s)\n", debugstr_w(path));
+
+    if (!path)
+        return -1;
+
+    if (!strncmpW(path, nt_prefixW, 4))
+        path += 4;
+
+    drive = tolowerW(path[0]);
+    if (drive < 'a' || drive > 'z' || path[1] != ':')
+        return -1;
+
+    return drive - 'a';
 }
 
 /*************************************************************************
@@ -3256,7 +3264,7 @@ HRESULT WINAPI PathCreateFromUrlA(LPCSTR pszUrl, LPSTR pszPath,
     WCHAR *pathW = bufW;
     UNICODE_STRING urlW;
     HRESULT ret;
-    DWORD lenW = sizeof(bufW)/sizeof(WCHAR), lenA;
+    DWORD lenW = ARRAY_SIZE(bufW), lenA;
 
     if (!pszUrl || !pszPath || !pcchPath || !*pcchPath)
         return E_INVALIDARG;
@@ -3676,7 +3684,7 @@ VOID WINAPI PathSetDlgItemPathW(HWND hDlg, int id, LPCWSTR lpszPath)
     return;
 
   if (lpszPath)
-    lstrcpynW(path, lpszPath, sizeof(path) / sizeof(WCHAR));
+    lstrcpynW(path, lpszPath, ARRAY_SIZE(path));
   else
     path[0] = '\0';
 
@@ -4097,7 +4105,6 @@ BOOL WINAPI PathUnExpandEnvStringsA(LPCSTR path, LPSTR buffer, UINT buf_len)
 
 static const WCHAR allusersprofileW[] = {'%','A','L','L','U','S','E','R','S','P','R','O','F','I','L','E','%',0};
 static const WCHAR appdataW[] = {'%','A','P','P','D','A','T','A','%',0};
-static const WCHAR computernameW[] = {'%','C','O','M','P','U','T','E','R','N','A','M','E','%',0};
 static const WCHAR programfilesW[] = {'%','P','r','o','g','r','a','m','F','i','l','e','s','%',0};
 static const WCHAR systemrootW[] = {'%','S','y','s','t','e','m','R','o','o','t','%',0};
 static const WCHAR systemdriveW[] = {'%','S','y','s','t','e','m','D','r','i','v','e','%',0};
@@ -4115,7 +4122,7 @@ static void init_envvars_map(struct envvars_map *map)
 {
     while (map->var)
     {
-        map->len = ExpandEnvironmentStringsW(map->var, map->path, sizeof(map->path)/sizeof(WCHAR));
+        map->len = ExpandEnvironmentStringsW(map->var, map->path, ARRAY_SIZE(map->path));
         /* exclude null from length */
         if (map->len) map->len--;
         map++;
@@ -4132,13 +4139,12 @@ BOOL WINAPI PathUnExpandEnvStringsW(LPCWSTR path, LPWSTR buffer, UINT buf_len)
     static struct envvars_map null_var = {NULL, 0, {0}, 0};
     struct envvars_map *match = &null_var, *cur;
     struct envvars_map envvars[] = {
-        { allusersprofileW, sizeof(allusersprofileW)/sizeof(WCHAR) },
-        { appdataW,         sizeof(appdataW)/sizeof(WCHAR)         },
-        { computernameW,    sizeof(computernameW)/sizeof(WCHAR)    },
-        { programfilesW,    sizeof(programfilesW)/sizeof(WCHAR)    },
-        { systemrootW,      sizeof(systemrootW)/sizeof(WCHAR)      },
-        { systemdriveW,     sizeof(systemdriveW)/sizeof(WCHAR)     },
-        { userprofileW,     sizeof(userprofileW)/sizeof(WCHAR)     },
+        { allusersprofileW, ARRAY_SIZE(allusersprofileW) },
+        { appdataW,         ARRAY_SIZE(appdataW)         },
+        { programfilesW,    ARRAY_SIZE(programfilesW)    },
+        { systemrootW,      ARRAY_SIZE(systemrootW)      },
+        { systemdriveW,     ARRAY_SIZE(systemdriveW)     },
+        { userprofileW,     ARRAY_SIZE(userprofileW)     },
         { NULL }
     };
     DWORD pathlen;
@@ -4211,8 +4217,6 @@ HRESULT WINAPI SHGetWebFolderFilePathW(LPCWSTR lpszFile, LPWSTR lpszPath, DWORD 
 {
   static const WCHAR szWeb[] = {'\\','W','e','b','\\','\0'};
   static const WCHAR szWebMui[] = {'m','u','i','\\','%','0','4','x','\\','\0'};
-#define szWebLen (sizeof(szWeb)/sizeof(WCHAR))
-#define szWebMuiLen ((sizeof(szWebMui)+1)/sizeof(WCHAR))
   DWORD dwLen, dwFileLen;
   LANGID lidSystem, lidUser;
 
@@ -4225,11 +4229,11 @@ HRESULT WINAPI SHGetWebFolderFilePathW(LPCWSTR lpszFile, LPWSTR lpszPath, DWORD 
 
   dwFileLen = strlenW(lpszFile);
 
-  if (dwLen + dwFileLen + szWebLen >= dwPathLen)
+  if (dwLen + dwFileLen + ARRAY_SIZE(szWeb) >= dwPathLen)
     return E_FAIL; /* lpszPath too short */
 
   strcpyW(lpszPath+dwLen, szWeb);
-  dwLen += szWebLen;
+  dwLen += ARRAY_SIZE(szWeb);
   dwPathLen = dwPathLen - dwLen; /* Remaining space */
 
   lidSystem = GetSystemDefaultUILanguage();
@@ -4237,11 +4241,11 @@ HRESULT WINAPI SHGetWebFolderFilePathW(LPCWSTR lpszFile, LPWSTR lpszPath, DWORD 
 
   if (lidSystem != lidUser)
   {
-    if (dwFileLen + szWebMuiLen < dwPathLen)
+    if (dwFileLen + ARRAY_SIZE(szWebMui) < dwPathLen)
     {
       /* Use localised content in the users UI language if present */
       wsprintfW(lpszPath + dwLen, szWebMui, lidUser);
-      strcpyW(lpszPath + dwLen + szWebMuiLen, lpszFile);
+      strcpyW(lpszPath + dwLen + ARRAY_SIZE(szWebMui), lpszFile);
       if (PathFileExistsW(lpszPath))
         return S_OK;
     }

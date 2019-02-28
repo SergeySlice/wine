@@ -978,7 +978,7 @@ static ULONG adapterAddressesFromIndex(ULONG family, ULONG flags, IF_INDEX index
     }
 
     total_size = sizeof(IP_ADAPTER_ADDRESSES);
-    total_size += IF_NAMESIZE;
+    total_size += 39; /* "{00000000-0000-0000-0000-000000000000}" */
     total_size += IF_NAMESIZE * sizeof(WCHAR);
     if (!(flags & GAA_FLAG_SKIP_FRIENDLY_NAME))
         total_size += IF_NAMESIZE * sizeof(WCHAR);
@@ -1009,10 +1009,11 @@ static ULONG adapterAddressesFromIndex(ULONG family, ULONG flags, IF_INDEX index
         aa->u.s.Length  = sizeof(IP_ADAPTER_ADDRESSES);
         aa->u.s.IfIndex = index;
 
-        getInterfaceNameByIndex(index, name);
-        memcpy(ptr, name, IF_NAMESIZE);
+        sprintf(ptr, "{%08x-0000-0000-0000-000000000000}", index);
         aa->AdapterName = ptr;
-        ptr += IF_NAMESIZE;
+        ptr += 39;
+
+        getInterfaceNameByIndex(index, name);
         if (!(flags & GAA_FLAG_SKIP_FRIENDLY_NAME))
         {
             aa->FriendlyName = (WCHAR *)ptr;
@@ -1067,7 +1068,7 @@ static ULONG adapterAddressesFromIndex(ULONG family, ULONG flags, IF_INDEX index
         {
             IP_ADAPTER_UNICAST_ADDRESS *ua;
             struct WS_sockaddr_in *sa;
-            aa->Flags |= IP_ADAPTER_IPV4_ENABLED;
+            aa->u1.s1.Ipv4Enabled = TRUE;
             ua = aa->FirstUnicastAddress = (IP_ADAPTER_UNICAST_ADDRESS *)ptr;
             for (i = 0; i < num_v4addrs; i++)
             {
@@ -1101,7 +1102,7 @@ static ULONG adapterAddressesFromIndex(ULONG family, ULONG flags, IF_INDEX index
             IP_ADAPTER_UNICAST_ADDRESS *ua;
             struct WS_sockaddr_in6 *sa;
 
-            aa->Flags |= IP_ADAPTER_IPV6_ENABLED;
+            aa->u1.s1.Ipv6Enabled = TRUE;
             if (aa->FirstUnicastAddress)
             {
                 for (ua = aa->FirstUnicastAddress; ua->Next; ua = ua->Next)
@@ -1299,7 +1300,7 @@ static int get_dns_servers( SOCKADDR_STORAGE *servers, int num, BOOL ip4_only )
     for (i = 0, addr = servers; addr < (servers + num) && i < _res.nscount; i++)
     {
 #ifdef HAVE_STRUCT___RES_STATE__U__EXT_NSCOUNT6
-        if (_res._u._ext.nsaddrs[i])
+        if (_res._u._ext.nsaddrs[i] && _res._u._ext.nsaddrs[i]->sin6_family == AF_INET6)
         {
             if (ip4_only) continue;
             sockaddr_in6_to_WS_storage( addr, _res._u._ext.nsaddrs[i] );
@@ -1716,7 +1717,7 @@ DWORD WINAPI GetIfEntry(PMIB_IFROW pIfRow)
  */
 DWORD WINAPI GetIfEntry2( MIB_IF_ROW2 *row2 )
 {
-    DWORD ret, len = sizeof(row2->Description)/sizeof(row2->Description[0]);
+    DWORD ret, len = ARRAY_SIZE(row2->Description);
     char buf[MAX_ADAPTER_NAME], *name;
     MIB_IFROW row;
 
@@ -1799,8 +1800,8 @@ DWORD WINAPI GetIfTable(PMIB_IFTABLE pIfTable, PULONG pdwSize, BOOL bOrder)
 {
   DWORD ret;
 
-  TRACE("pIfTable %p, pdwSize %p, bOrder %d\n", pdwSize, pdwSize,
-   (DWORD)bOrder);
+  TRACE("pIfTable %p, pdwSize %p, bOrder %d\n", pIfTable, pdwSize, bOrder);
+
   if (!pdwSize)
     ret = ERROR_INVALID_PARAMETER;
   else {
@@ -1851,17 +1852,21 @@ DWORD WINAPI GetIfTable(PMIB_IFTABLE pIfTable, PULONG pdwSize, BOOL bOrder)
 }
 
 /******************************************************************
- *    GetIfTable2 (IPHLPAPI.@)
+ *    GetIfTable2Ex (IPHLPAPI.@)
  */
-DWORD WINAPI GetIfTable2( MIB_IF_TABLE2 **table )
+DWORD WINAPI GetIfTable2Ex( MIB_IF_TABLE_LEVEL level, MIB_IF_TABLE2 **table )
 {
     DWORD i, nb_interfaces, size = sizeof(MIB_IF_TABLE2);
     InterfaceIndexTable *index_table;
     MIB_IF_TABLE2 *ret;
 
-    TRACE( "table %p\n", table );
+    TRACE( "level %u, table %p\n", level, table );
 
-    if (!table) return ERROR_INVALID_PARAMETER;
+    if (!table || level > MibIfTableNormalWithoutStatistics)
+        return ERROR_INVALID_PARAMETER;
+
+    if (level != MibIfTableNormal)
+        FIXME("level %u not fully supported\n", level);
 
     if ((nb_interfaces = get_interface_indices( FALSE, NULL )) > 1)
         size += (nb_interfaces - 1) * sizeof(MIB_IF_ROW2);
@@ -1886,6 +1891,15 @@ DWORD WINAPI GetIfTable2( MIB_IF_TABLE2 **table )
     HeapFree( GetProcessHeap(), 0, index_table );
     *table = ret;
     return NO_ERROR;
+}
+
+/******************************************************************
+ *    GetIfTable2 (IPHLPAPI.@)
+ */
+DWORD WINAPI GetIfTable2( MIB_IF_TABLE2 **table )
+{
+    TRACE( "table %p\n", table );
+    return GetIfTable2Ex(MibIfTableNormal, table);
 }
 
 /******************************************************************
@@ -2429,6 +2443,14 @@ DWORD WINAPI GetUdpTable(PMIB_UDPTABLE pUdpTable, PDWORD pdwSize, BOOL bOrder)
 }
 
 /******************************************************************
+ *    GetUdp6Table (IPHLPAPI.@)
+ */
+DWORD WINAPI GetUdp6Table(PMIB_UDP6TABLE pUdpTable, PDWORD pdwSize, BOOL bOrder)
+{
+    return GetExtendedUdpTable(pUdpTable, pdwSize, bOrder, WS_AF_INET6, UDP_TABLE_BASIC, 0);
+}
+
+/******************************************************************
  *    GetExtendedUdpTable (IPHLPAPI.@)
  */
 DWORD WINAPI GetExtendedUdpTable(PVOID pUdpTable, PDWORD pdwSize, BOOL bOrder,
@@ -2442,15 +2464,25 @@ DWORD WINAPI GetExtendedUdpTable(PVOID pUdpTable, PDWORD pdwSize, BOOL bOrder,
 
     if (!pdwSize) return ERROR_INVALID_PARAMETER;
 
-    if (ulAf != WS_AF_INET)
-    {
-        FIXME("ulAf = %u not supported\n", ulAf);
-        return ERROR_NOT_SUPPORTED;
-    }
     if (TableClass == UDP_TABLE_OWNER_MODULE)
         FIXME("UDP_TABLE_OWNER_MODULE not fully supported\n");
 
-    if ((ret = build_udp_table(TableClass, &table, bOrder, GetProcessHeap(), 0, &size)))
+    switch (ulAf)
+    {
+        case WS_AF_INET:
+            ret = build_udp_table(TableClass, &table, bOrder, GetProcessHeap(), 0, &size);
+            break;
+
+        case WS_AF_INET6:
+            ret = build_udp6_table(TableClass, &table, bOrder, GetProcessHeap(), 0, &size);
+            break;
+
+        default:
+            FIXME("ulAf = %u not supported\n", ulAf);
+            ret = ERROR_NOT_SUPPORTED;
+    }
+
+    if (ret)
         return ret;
 
     if (!pUdpTable || *pdwSize < size)
@@ -2464,6 +2496,151 @@ DWORD WINAPI GetExtendedUdpTable(PVOID pUdpTable, PDWORD pdwSize, BOOL bOrder,
         memcpy(pUdpTable, table, size);
     }
     HeapFree(GetProcessHeap(), 0, table);
+    return ret;
+}
+
+DWORD WINAPI GetUnicastIpAddressEntry(MIB_UNICASTIPADDRESS_ROW *row)
+{
+    IP_ADAPTER_ADDRESSES *aa, *ptr;
+    ULONG size = 0;
+    DWORD ret;
+
+    TRACE("%p\n", row);
+
+    if (!row)
+        return ERROR_INVALID_PARAMETER;
+
+    ret = GetAdaptersAddresses(row->Address.si_family, 0, NULL, NULL, &size);
+    if (ret != ERROR_BUFFER_OVERFLOW)
+        return ret;
+    if (!(ptr = HeapAlloc(GetProcessHeap(), 0, size)))
+        return ERROR_OUTOFMEMORY;
+    if ((ret = GetAdaptersAddresses(row->Address.si_family, 0, NULL, ptr, &size)))
+    {
+        HeapFree(GetProcessHeap(), 0, ptr);
+        return ret;
+    }
+
+    ret = ERROR_FILE_NOT_FOUND;
+    for (aa = ptr; aa; aa = aa->Next)
+    {
+        IP_ADAPTER_UNICAST_ADDRESS *ua;
+
+        if (aa->u.s.IfIndex != row->InterfaceIndex &&
+            memcmp(&aa->Luid, &row->InterfaceLuid, sizeof(row->InterfaceLuid)))
+            continue;
+        ret = ERROR_NOT_FOUND;
+
+        ua = aa->FirstUnicastAddress;
+        while (ua)
+        {
+            SOCKADDR_INET *uaaddr = (SOCKADDR_INET *)ua->Address.lpSockaddr;
+
+            if ((row->Address.si_family == WS_AF_INET6 &&
+                 !memcmp(&row->Address.Ipv6.sin6_addr, &uaaddr->Ipv6.sin6_addr, sizeof(uaaddr->Ipv6.sin6_addr))) ||
+                (row->Address.si_family == WS_AF_INET &&
+                 row->Address.Ipv4.sin_addr.S_un.S_addr == uaaddr->Ipv4.sin_addr.S_un.S_addr))
+            {
+                memcpy(&row->InterfaceLuid, &aa->Luid, sizeof(aa->Luid));
+                row->InterfaceIndex     = aa->u.s.IfIndex;
+                row->PrefixOrigin       = ua->PrefixOrigin;
+                row->SuffixOrigin       = ua->SuffixOrigin;
+                row->ValidLifetime      = ua->ValidLifetime;
+                row->PreferredLifetime  = ua->PreferredLifetime;
+                row->OnLinkPrefixLength = ua->OnLinkPrefixLength;
+                row->SkipAsSource       = 0;
+                row->DadState           = ua->DadState;
+                if (row->Address.si_family == WS_AF_INET6)
+                    row->ScopeId.u.Value  = row->Address.Ipv6.sin6_scope_id;
+                else
+                    row->ScopeId.u.Value  = 0;
+                NtQuerySystemTime(&row->CreationTimeStamp);
+                HeapFree(GetProcessHeap(), 0, ptr);
+                return NO_ERROR;
+            }
+            ua = ua->Next;
+        }
+    }
+    HeapFree(GetProcessHeap(), 0, ptr);
+
+    return ret;
+}
+
+DWORD WINAPI GetUnicastIpAddressTable(ADDRESS_FAMILY family, MIB_UNICASTIPADDRESS_TABLE **table)
+{
+    IP_ADAPTER_ADDRESSES *aa, *ptr;
+    MIB_UNICASTIPADDRESS_TABLE *data;
+    DWORD ret, count = 0;
+    ULONG size, flags;
+
+    TRACE("%u, %p\n", family, table);
+
+    if (!table || (family != WS_AF_INET && family != WS_AF_INET6 && family != WS_AF_UNSPEC))
+        return ERROR_INVALID_PARAMETER;
+
+    flags = GAA_FLAG_SKIP_ANYCAST |
+            GAA_FLAG_SKIP_MULTICAST |
+            GAA_FLAG_SKIP_DNS_SERVER |
+            GAA_FLAG_SKIP_FRIENDLY_NAME;
+
+    ret = GetAdaptersAddresses(family, flags, NULL, NULL, &size);
+    if (ret != ERROR_BUFFER_OVERFLOW)
+        return ret;
+    if (!(ptr = HeapAlloc(GetProcessHeap(), 0, size)))
+        return ERROR_OUTOFMEMORY;
+    if ((ret = GetAdaptersAddresses(family, flags, NULL, ptr, &size)))
+    {
+        HeapFree(GetProcessHeap(), 0, ptr);
+        return ret;
+    }
+
+    for (aa = ptr; aa; aa = aa->Next)
+    {
+        IP_ADAPTER_UNICAST_ADDRESS *ua = aa->FirstUnicastAddress;
+        while (ua)
+        {
+            count++;
+            ua = ua->Next;
+        }
+    }
+
+    if (!(data = HeapAlloc(GetProcessHeap(), 0, sizeof(*data) + (count - 1) * sizeof(data->Table[0]))))
+    {
+        HeapFree(GetProcessHeap(), 0, ptr);
+        return ERROR_OUTOFMEMORY;
+    }
+
+    data->NumEntries = 0;
+    for (aa = ptr; aa; aa = aa->Next)
+    {
+        IP_ADAPTER_UNICAST_ADDRESS *ua = aa->FirstUnicastAddress;
+        while (ua)
+        {
+            MIB_UNICASTIPADDRESS_ROW *row = &data->Table[data->NumEntries];
+            memcpy(&row->Address, ua->Address.lpSockaddr, ua->Address.iSockaddrLength);
+            memcpy(&row->InterfaceLuid, &aa->Luid, sizeof(aa->Luid));
+            row->InterfaceIndex     = aa->u.s.IfIndex;
+            row->PrefixOrigin       = ua->PrefixOrigin;
+            row->SuffixOrigin       = ua->SuffixOrigin;
+            row->ValidLifetime      = ua->ValidLifetime;
+            row->PreferredLifetime  = ua->PreferredLifetime;
+            row->OnLinkPrefixLength = ua->OnLinkPrefixLength;
+            row->SkipAsSource       = 0;
+            row->DadState           = ua->DadState;
+            if (row->Address.si_family == WS_AF_INET6)
+                row->ScopeId.u.Value  = row->Address.Ipv6.sin6_scope_id;
+            else
+                row->ScopeId.u.Value  = 0;
+            NtQuerySystemTime(&row->CreationTimeStamp);
+
+            data->NumEntries++;
+            ua = ua->Next;
+        }
+    }
+
+    HeapFree(GetProcessHeap(), 0, ptr);
+
+    *table = data;
     return ret;
 }
 
@@ -2573,8 +2750,8 @@ DWORD WINAPI NotifyAddrChange(PHANDLE Handle, LPOVERLAPPED overlapped)
 /******************************************************************
  *    NotifyIpInterfaceChange (IPHLPAPI.@)
  */
-DWORD WINAPI NotifyIpInterfaceChange(ULONG family, PVOID callback, PVOID context,
-                                     BOOLEAN init_notify, PHANDLE handle)
+DWORD WINAPI NotifyIpInterfaceChange(ADDRESS_FAMILY family, PIPINTERFACE_CHANGE_CALLBACK callback,
+                                     PVOID context, BOOLEAN init_notify, PHANDLE handle)
 {
     FIXME("(family %d, callback %p, context %p, init_notify %d, handle %p): stub\n",
           family, callback, context, init_notify, handle);
@@ -2605,6 +2782,18 @@ DWORD WINAPI NotifyRouteChange(PHANDLE Handle, LPOVERLAPPED overlapped)
   return ERROR_NOT_SUPPORTED;
 }
 
+
+/******************************************************************
+ *    NotifyUnicastIpAddressChange (IPHLPAPI.@)
+ */
+DWORD WINAPI NotifyUnicastIpAddressChange(ADDRESS_FAMILY family, PUNICAST_IPADDRESS_CHANGE_CALLBACK callback,
+                                          PVOID context, BOOLEAN init_notify, PHANDLE handle)
+{
+    FIXME("(family %d, callback %p, context %p, init_notify %d, handle %p): stub\n",
+          family, callback, context, init_notify, handle);
+    if (handle) *handle = NULL;
+    return ERROR_NOT_SUPPORTED;
+}
 
 /******************************************************************
  *    SendARP (IPHLPAPI.@)
@@ -2933,6 +3122,7 @@ DWORD WINAPI ConvertInterfaceLuidToGuid(const NET_LUID *luid, GUID *guid)
     row.dwIndex = luid->Info.NetLuidIndex;
     if ((ret = GetIfEntry( &row ))) return ret;
 
+    memset( guid, 0, sizeof(*guid) );
     guid->Data1 = luid->Info.NetLuidIndex;
     return NO_ERROR;
 }
@@ -3048,4 +3238,78 @@ DWORD WINAPI ConvertInterfaceNameToLuidW(const WCHAR *name, NET_LUID *luid)
     luid->Info.NetLuidIndex = index;
     luid->Info.IfType       = row.dwType;
     return NO_ERROR;
+}
+
+/******************************************************************
+ *    ConvertLengthToIpv4Mask (IPHLPAPI.@)
+ */
+DWORD WINAPI ConvertLengthToIpv4Mask(ULONG mask_len, ULONG *mask)
+{
+    if (mask_len > 32)
+    {
+        *mask = INADDR_NONE;
+        return ERROR_INVALID_PARAMETER;
+    }
+
+    if (mask_len == 0)
+        *mask = 0;
+    else
+        *mask = htonl(~0u << (32 - mask_len));
+
+    return NO_ERROR;
+}
+
+/******************************************************************
+ *    if_nametoindex (IPHLPAPI.@)
+ */
+IF_INDEX WINAPI IPHLP_if_nametoindex(const char *name)
+{
+    IF_INDEX idx;
+
+    TRACE("(%s)\n", name);
+    if (getInterfaceIndexByName(name, &idx) == NO_ERROR)
+        return idx;
+
+    return 0;
+}
+
+/******************************************************************
+ *    if_indextoname (IPHLPAPI.@)
+ */
+PCHAR WINAPI IPHLP_if_indextoname(NET_IFINDEX index, PCHAR name)
+{
+    TRACE("(%u, %p)\n", index, name);
+
+    return getInterfaceNameByIndex(index, name);
+}
+
+/******************************************************************
+ *    GetIpForwardTable2 (IPHLPAPI.@)
+ */
+DWORD WINAPI GetIpForwardTable2(ADDRESS_FAMILY family, PMIB_IPFORWARD_TABLE2 *table)
+{
+    static int once;
+
+    if (!once++) FIXME("(%u %p): stub\n", family, table);
+    return ERROR_NOT_SUPPORTED;
+}
+
+/******************************************************************
+ *    GetIpNetTable2 (IPHLPAPI.@)
+ */
+DWORD WINAPI GetIpNetTable2(ADDRESS_FAMILY family, PMIB_IPNET_TABLE2 *table)
+{
+    static int once;
+
+    if (!once++) FIXME("(%u %p): stub\n", family, table);
+    return ERROR_NOT_SUPPORTED;
+}
+
+/******************************************************************
+ *    GetIpInterfaceTable (IPHLPAPI.@)
+ */
+DWORD WINAPI GetIpInterfaceTable(ADDRESS_FAMILY family, PMIB_IPINTERFACE_TABLE *table)
+{
+    FIXME("(%u %p): stub\n", family, table);
+    return ERROR_NOT_SUPPORTED;
 }

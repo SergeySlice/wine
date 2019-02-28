@@ -112,7 +112,7 @@ static ULONG WINAPI ShellItem_Release(IShellItem2 *iface)
     if (ref == 0)
     {
         ILFree(This->pidl);
-        HeapFree(GetProcessHeap(), 0, This);
+        heap_free(This);
     }
 
     return ref;
@@ -551,7 +551,7 @@ HRESULT WINAPI IShellItem_Constructor(IUnknown *pUnkOuter, REFIID riid, void **p
 
     if (pUnkOuter) return CLASS_E_NOAGGREGATION;
 
-    This = HeapAlloc(GetProcessHeap(), 0, sizeof(ShellItem));
+    This = heap_alloc(sizeof(*This));
     This->IShellItem2_iface.lpVtbl = &ShellItem2_Vtbl;
     This->ref = 1;
     This->pidl = NULL;
@@ -637,6 +637,55 @@ HRESULT WINAPI SHCreateItemFromParsingName(PCWSTR pszPath,
     return ret;
 }
 
+HRESULT WINAPI SHCreateItemFromRelativeName(IShellItem *parent, PCWSTR name, IBindCtx *pbc,
+                                            REFIID riid, void **ppv)
+{
+    LPITEMIDLIST pidl_folder = NULL, pidl = NULL;
+    IShellFolder *desktop = NULL, *folder = NULL;
+    HRESULT hr;
+
+    TRACE("(%p, %s, %p, %s, %p)\n", parent, wine_dbgstr_w(name), pbc, debugstr_guid(riid), ppv);
+
+    if(!ppv)
+        return E_INVALIDARG;
+    *ppv = NULL;
+    if(!name)
+        return E_INVALIDARG;
+
+    hr = SHGetIDListFromObject((IUnknown*)parent, &pidl_folder);
+    if(hr != S_OK)
+        return hr;
+
+    hr = SHGetDesktopFolder(&desktop);
+    if(hr != S_OK)
+        goto cleanup;
+
+    if(!_ILIsDesktop(pidl_folder))
+    {
+        hr = IShellFolder_BindToObject(desktop, pidl_folder, NULL, &IID_IShellFolder,
+                                       (void**)&folder);
+        if(hr != S_OK)
+            goto cleanup;
+    }
+
+    hr = IShellFolder_ParseDisplayName(folder ? folder : desktop, NULL, pbc, (LPWSTR)name,
+                                       NULL, &pidl, NULL);
+    if(hr != S_OK)
+        goto cleanup;
+    hr = SHCreateItemFromIDList(pidl, riid, ppv);
+
+cleanup:
+    if(pidl_folder)
+        ILFree(pidl_folder);
+    if(pidl)
+        ILFree(pidl);
+    if(desktop)
+        IShellFolder_Release(desktop);
+    if(folder)
+        IShellFolder_Release(folder);
+    return hr;
+}
+
 HRESULT WINAPI SHCreateItemFromIDList(PCIDLIST_ABSOLUTE pidl, REFIID riid, void **ppv)
 {
     IPersistIDList *persist;
@@ -660,6 +709,41 @@ HRESULT WINAPI SHCreateItemFromIDList(PCIDLIST_ABSOLUTE pidl, REFIID riid, void 
     ret = IPersistIDList_QueryInterface(persist, riid, ppv);
     IPersistIDList_Release(persist);
     return ret;
+}
+
+HRESULT WINAPI SHCreateItemInKnownFolder(REFKNOWNFOLDERID rfid, DWORD flags,
+                                         PCWSTR filename, REFIID riid, void **ppv)
+{
+    HRESULT hr;
+    IShellItem *parent = NULL;
+    LPITEMIDLIST pidl = NULL;
+
+    TRACE("(%p, %x, %s, %s, %p)\n", rfid, flags, wine_dbgstr_w(filename),
+          debugstr_guid(riid), ppv);
+
+    if(!rfid || !ppv)
+        return E_INVALIDARG;
+
+    *ppv = NULL;
+    hr = SHGetKnownFolderIDList(rfid, flags, NULL, &pidl);
+    if(hr != S_OK)
+        return hr;
+
+    hr = SHCreateItemFromIDList(pidl, &IID_IShellItem, (void**)&parent);
+    if(hr != S_OK)
+    {
+        ILFree(pidl);
+        return hr;
+    }
+
+    if(filename)
+        hr = SHCreateItemFromRelativeName(parent, filename, NULL, riid, ppv);
+    else
+        hr = IShellItem_QueryInterface(parent, riid, ppv);
+
+    ILFree(pidl);
+    IShellItem_Release(parent);
+    return hr;
 }
 
 HRESULT WINAPI SHGetItemFromDataObject(IDataObject *pdtobj,
@@ -834,7 +918,7 @@ static ULONG WINAPI IEnumShellItems_fnRelease(IEnumShellItems *iface)
     {
         TRACE("Freeing.\n");
         IShellItemArray_Release(This->array);
-        HeapFree(GetProcessHeap(), 0, This);
+        heap_free(This);
         return 0;
     }
 
@@ -923,7 +1007,7 @@ static HRESULT IEnumShellItems_Constructor(IShellItemArray *array, IEnumShellIte
     IEnumShellItemsImpl *This;
     HRESULT ret;
 
-    This = HeapAlloc(GetProcessHeap(), 0, sizeof(IEnumShellItemsImpl));
+    This = heap_alloc(sizeof(*This));
     if(!This)
         return E_OUTOFMEMORY;
 
@@ -1004,8 +1088,8 @@ static ULONG WINAPI IShellItemArray_fnRelease(IShellItemArray *iface)
         for(i = 0; i < This->item_count; i++)
             IShellItem_Release(This->array[i]);
 
-        HeapFree(GetProcessHeap(), 0, This->array);
-        HeapFree(GetProcessHeap(), 0, This);
+        heap_free(This->array);
+        heap_free(This);
         return 0;
     }
 
@@ -1152,17 +1236,17 @@ static HRESULT create_shellitemarray(IShellItem **items, DWORD count, IShellItem
 
     TRACE("(%p, %d, %p)\n", items, count, ret);
 
-    This = HeapAlloc(GetProcessHeap(), 0, sizeof(IShellItemArrayImpl));
+    This = heap_alloc(sizeof(*This));
     if(!This)
         return E_OUTOFMEMORY;
 
     This->IShellItemArray_iface.lpVtbl = &vt_IShellItemArray;
     This->ref = 1;
 
-    This->array = HeapAlloc(GetProcessHeap(), 0, count*sizeof(IShellItem*));
+    This->array = heap_alloc(count*sizeof(IShellItem*));
     if (!This->array)
     {
-        HeapFree(GetProcessHeap(), 0, This);
+        heap_free(This);
         return E_OUTOFMEMORY;
     }
     memcpy(This->array, items, count*sizeof(IShellItem*));
@@ -1192,7 +1276,7 @@ HRESULT WINAPI SHCreateShellItemArray(PCIDLIST_ABSOLUTE pidlParent,
     if(!ppidl)
         return E_INVALIDARG;
 
-    array = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, cidl*sizeof(IShellItem*));
+    array = heap_alloc_zero(cidl*sizeof(IShellItem*));
     if(!array)
         return E_OUTOFMEMORY;
 
@@ -1205,7 +1289,7 @@ HRESULT WINAPI SHCreateShellItemArray(PCIDLIST_ABSOLUTE pidlParent,
     if(SUCCEEDED(ret))
     {
         ret = create_shellitemarray(array, cidl, ppsiItemArray);
-        HeapFree(GetProcessHeap(), 0, array);
+        heap_free(array);
         if(SUCCEEDED(ret))
             return ret;
     }
@@ -1213,7 +1297,7 @@ HRESULT WINAPI SHCreateShellItemArray(PCIDLIST_ABSOLUTE pidlParent,
     /* Something failed, clean up. */
     for(i = 0; i < cidl; i++)
         if(array[i]) IShellItem_Release(array[i]);
-    HeapFree(GetProcessHeap(), 0, array);
+    heap_free(array);
     return ret;
 }
 
@@ -1270,13 +1354,13 @@ HRESULT WINAPI SHCreateShellItemArrayFromDataObject(IDataObject *pdo, REFIID rii
 
         parent_pidl = (LPCITEMIDLIST) ((LPBYTE)pida+pida->aoffset[0]);
 
-        children = HeapAlloc(GetProcessHeap(), 0, sizeof(LPCITEMIDLIST)*pida->cidl);
+        children = heap_alloc(sizeof(LPCITEMIDLIST)*pida->cidl);
         for(i = 0; i < pida->cidl; i++)
             children[i] = (LPCITEMIDLIST) ((LPBYTE)pida+pida->aoffset[i+1]);
 
         ret = SHCreateShellItemArray(parent_pidl, NULL, pida->cidl, children, &psia);
 
-        HeapFree(GetProcessHeap(), 0, children);
+        heap_free(children);
 
         GlobalUnlock(medium.u.hGlobal);
         GlobalFree(medium.u.hGlobal);
@@ -1305,7 +1389,7 @@ HRESULT WINAPI SHCreateShellItemArrayFromIDLists(UINT cidl,
     if(cidl == 0)
         return E_INVALIDARG;
 
-    array = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, cidl*sizeof(IShellItem*));
+    array = heap_alloc_zero(cidl*sizeof(IShellItem*));
     if(!array)
         return E_OUTOFMEMORY;
 
@@ -1319,16 +1403,34 @@ HRESULT WINAPI SHCreateShellItemArrayFromIDLists(UINT cidl,
     if(SUCCEEDED(ret))
     {
         ret = create_shellitemarray(array, cidl, psia);
-        HeapFree(GetProcessHeap(), 0, array);
+        heap_free(array);
         if(SUCCEEDED(ret))
             return ret;
     }
 
     for(i = 0; i < cidl; i++)
         if(array[i]) IShellItem_Release(array[i]);
-    HeapFree(GetProcessHeap(), 0, array);
+    heap_free(array);
     *psia = NULL;
     return ret;
+}
+
+HRESULT WINAPI SHGetPropertyStoreFromParsingName(const WCHAR *path, IBindCtx *pbc, GETPROPERTYSTOREFLAGS flags,
+    REFIID riid, void **ppv)
+{
+    IShellItem2 *item;
+    HRESULT hr;
+
+    TRACE("(%s %p %#x %p %p)\n", debugstr_w(path), pbc, flags, riid, ppv);
+
+    hr = SHCreateItemFromParsingName(path, pbc, &IID_IShellItem2, (void **)&item);
+    if(SUCCEEDED(hr))
+    {
+        hr = IShellItem2_GetPropertyStore(item, flags, riid, ppv);
+        IShellItem2_Release(item);
+    }
+
+    return hr;
 }
 
 static HRESULT WINAPI CustomDestinationList_QueryInterface(ICustomDestinationList *iface, REFIID riid, void **obj)
@@ -1369,7 +1471,7 @@ static ULONG WINAPI CustomDestinationList_Release(ICustomDestinationList *iface)
     TRACE("(%p), new refcount=%i\n", This, ref);
 
     if (ref == 0)
-        HeapFree(GetProcessHeap(), 0, This);
+        heap_free(This);
 
     return ref;
 }
@@ -1481,7 +1583,7 @@ HRESULT WINAPI CustomDestinationList_Constructor(IUnknown *outer, REFIID riid, v
     if (outer)
         return CLASS_E_NOAGGREGATION;
 
-    if(!(list = HeapAlloc(GetProcessHeap(), 0, sizeof(*list))))
+    if(!(list = heap_alloc(sizeof(*list))))
         return E_OUTOFMEMORY;
 
     list->ICustomDestinationList_iface.lpVtbl = &CustomDestinationListVtbl;

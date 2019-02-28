@@ -29,6 +29,7 @@
 
 #include "wine/debug.h"
 #include "undocshell.h"
+#include "commoncontrols.h"
 #include "pidl.h"
 #include "shell32_main.h"
 #include "shellapi.h"
@@ -36,6 +37,8 @@
 #include "shellfolder.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(shell);
+
+#define SHV_CHANGE_NOTIFY (WM_USER + 0x1111)
 
 /* original margins and control size */
 typedef struct tagLAYOUT_DATA
@@ -52,6 +55,7 @@ typedef struct tagbrowse_info
     LPITEMIDLIST  pidlRet;
     LAYOUT_DATA  *layout;  /* filled by LayoutInit, used by LayoutUpdate */
     SIZE          szMin;
+    ULONG         hNotify; /* change notification handle */
 } browse_info;
 
 typedef struct tagTV_ITEMDATA
@@ -80,8 +84,6 @@ static const LAYOUT_INFO g_layout_info[] =
     {IDOK,              BF_BOTTOM|BF_RIGHT},
     {IDCANCEL,          BF_BOTTOM|BF_RIGHT}
 };
-
-#define LAYOUT_INFO_COUNT (sizeof(g_layout_info)/sizeof(g_layout_info[0]))
 
 #define SUPPORTEDFLAGS (BIF_STATUSTEXT | \
                         BIF_BROWSEFORCOMPUTER | \
@@ -282,7 +284,10 @@ static void InitializeTreeView( browse_info *info )
 static int GetIcon(LPCITEMIDLIST lpi, UINT uFlags)
 {
     SHFILEINFOW sfi;
-    SHGetFileInfoW((LPCWSTR)lpi, 0 ,&sfi, sizeof(SHFILEINFOW), uFlags);
+    IImageList *list;
+
+    list = (IImageList *)SHGetFileInfoW((LPCWSTR)lpi, 0 ,&sfi, sizeof(SHFILEINFOW), uFlags);
+    if (list) IImageList_Release(list);
     return sfi.iIcon;
 }
 
@@ -611,6 +616,55 @@ static LRESULT BrsFolder_Treeview_Rename(browse_info *info, NMTVDISPINFOW *pnmtv
     return 0;
 }
 
+static HRESULT BrsFolder_Rename(browse_info *info, HTREEITEM rename)
+{
+    SendMessageW(info->hwndTreeView, TVM_SELECTITEM, TVGN_CARET, (LPARAM)rename);
+    SendMessageW(info->hwndTreeView, TVM_EDITLABELW, 0, (LPARAM)rename);
+    return S_OK;
+}
+
+static LRESULT BrsFolder_Treeview_Keydown(browse_info *info, LPNMTVKEYDOWN keydown)
+{
+    HTREEITEM selected_item;
+
+    /* Old dialog doesn't support those advanced features */
+    if (!(info->lpBrowseInfo->ulFlags & BIF_NEWDIALOGSTYLE))
+        return 0;
+
+    selected_item = (HTREEITEM)SendMessageW(info->hwndTreeView, TVM_GETNEXTITEM, TVGN_CARET, 0);
+
+    switch (keydown->wVKey)
+    {
+    case VK_F2:
+        BrsFolder_Rename(info, selected_item);
+        break;
+    case VK_DELETE:
+        {
+            const ITEMIDLIST *item_id;
+            ISFHelper *psfhlp;
+            HRESULT hr;
+            TVITEMW item;
+            TV_ITEMDATA *item_data;
+
+            item.mask  = TVIF_PARAM;
+            item.hItem = selected_item;
+            SendMessageW(info->hwndTreeView, TVM_GETITEMW, 0, (LPARAM)&item);
+            item_data = (TV_ITEMDATA *)item.lParam;
+            item_id = item_data->lpi;
+
+            hr = IShellFolder_QueryInterface(item_data->lpsfParent, &IID_ISFHelper, (void**)&psfhlp);
+            if(FAILED(hr))
+                return 0;
+
+            /* perform the item deletion - tree view gets updated over shell notification */
+            ISFHelper_DeleteItems(psfhlp, 1, &item_id);
+            ISFHelper_Release(psfhlp);
+        }
+        break;
+    }
+    return 0;
+}
+
 static LRESULT BrsFolder_OnNotify( browse_info *info, UINT CtlID, LPNMHDR lpnmh )
 {
     NMTREEVIEWW *pnmtv = (NMTREEVIEWW *)lpnmh;
@@ -638,6 +692,9 @@ static LRESULT BrsFolder_OnNotify( browse_info *info, UINT CtlID, LPNMHDR lpnmh 
     case TVN_ENDLABELEDITW:
         return BrsFolder_Treeview_Rename( info, (LPNMTVDISPINFOW)pnmtv );
 
+    case TVN_KEYDOWN:
+        return BrsFolder_Treeview_Keydown( info, (LPNMTVKEYDOWN)pnmtv );
+
     default:
         WARN("unhandled (%d)\n", pnmtv->hdr.code);
         break;
@@ -649,6 +706,8 @@ static LRESULT BrsFolder_OnNotify( browse_info *info, UINT CtlID, LPNMHDR lpnmh 
 
 static BOOL BrsFolder_OnCreate( HWND hWnd, browse_info *info )
 {
+    LPITEMIDLIST computer_pidl;
+    SHChangeNotifyEntry ntreg;
     LPBROWSEINFOW lpBrowseInfo = info->lpBrowseInfo;
 
     info->hWnd = hWnd;
@@ -663,7 +722,7 @@ static BOOL BrsFolder_OnCreate( HWND hWnd, browse_info *info )
     {
         RECT rcWnd;
 
-        info->layout = LayoutInit(hWnd, g_layout_info, LAYOUT_INFO_COUNT);
+        info->layout = LayoutInit(hWnd, g_layout_info, ARRAY_SIZE(g_layout_info));
 
         /* TODO: Windows allows shrinking the windows a bit */
         GetWindowRect(hWnd, &rcWnd);
@@ -714,16 +773,17 @@ static BOOL BrsFolder_OnCreate( HWND hWnd, browse_info *info )
     else
         ERR("treeview control missing!\n");
 
+    /* Register for change notifications */
+    SHGetFolderLocation(NULL, CSIDL_DESKTOP, NULL, 0, &computer_pidl);
+
+    ntreg.pidl = computer_pidl;
+    ntreg.fRecursive = TRUE;
+
+    info->hNotify = SHChangeNotifyRegister(hWnd, SHCNRF_InterruptLevel, SHCNE_ALLEVENTS, SHV_CHANGE_NOTIFY, 1, &ntreg);
+
     browsefolder_callback( info->lpBrowseInfo, hWnd, BFFM_INITIALIZED, 0 );
 
     return TRUE;
-}
-
-static HRESULT BrsFolder_Rename(browse_info *info, HTREEITEM rename)
-{
-    SendMessageW(info->hwndTreeView, TVM_SELECTITEM, TVGN_CARET, (LPARAM)rename);
-    SendMessageW(info->hwndTreeView, TVM_EDITLABELW, 0, (LPARAM)rename);
-    return S_OK;
 }
 
 static HRESULT BrsFolder_NewFolder(browse_info *info)
@@ -947,13 +1007,13 @@ static BOOL BrsFolder_OnSetSelectionA(browse_info *info, LPVOID selection, BOOL 
         return BrsFolder_OnSetSelectionW(info, selection, is_str);
 
     if ((length = MultiByteToWideChar(CP_ACP, 0, selection, -1, NULL, 0)) &&
-        (selectionW = HeapAlloc(GetProcessHeap(), 0, length * sizeof(WCHAR))) &&
+        (selectionW = heap_alloc(length * sizeof(WCHAR))) &&
         MultiByteToWideChar(CP_ACP, 0, selection, -1, selectionW, length))
     {
         result = BrsFolder_OnSetSelectionW(info, selectionW, is_str);
     }
 
-    HeapFree(GetProcessHeap(), 0, selectionW);
+    heap_free(selectionW);
     return result;
 }
 
@@ -977,7 +1037,60 @@ static INT BrsFolder_OnDestroy(browse_info *info)
         info->layout = NULL;
     }
 
+    SHChangeNotifyDeregister(info->hNotify);
+
     return 0;
+}
+
+/* Find a treeview node by recursively walking the treeview */
+static HTREEITEM BrsFolder_FindItemByPidl(browse_info *info, LPCITEMIDLIST pidl, HTREEITEM hItem)
+{
+    TV_ITEMW item;
+    TV_ITEMDATA *item_data;
+    HRESULT hr;
+
+    item.mask = TVIF_HANDLE | TVIF_PARAM;
+    item.hItem = hItem;
+    SendMessageW(info->hwndTreeView, TVM_GETITEMW, 0, (LPARAM)&item);
+    item_data = (TV_ITEMDATA *)item.lParam;
+
+    hr = IShellFolder_CompareIDs(item_data->lpsfParent, 0, item_data->lpifq, pidl);
+    if(SUCCEEDED(hr) && !HRESULT_CODE(hr))
+        return hItem;
+
+    hItem = (HTREEITEM)SendMessageW(info->hwndTreeView, TVM_GETNEXTITEM, TVGN_CHILD, (LPARAM)hItem);
+
+    while (hItem)
+    {
+        HTREEITEM newItem = BrsFolder_FindItemByPidl(info, pidl, hItem);
+        if (newItem)
+            return newItem;
+        hItem = (HTREEITEM)SendMessageW(info->hwndTreeView, TVM_GETNEXTITEM, TVGN_NEXT, (LPARAM)hItem);
+    }
+    return NULL;
+}
+
+static LRESULT BrsFolder_OnChange(browse_info *info, const LPCITEMIDLIST *pidls, LONG event)
+{
+    BOOL ret = TRUE;
+
+    TRACE("(%p)->(%p, %p, 0x%08x)\n", info, pidls[0], pidls[1], event);
+
+    switch (event)
+    {
+        case SHCNE_RMDIR:
+        case SHCNE_DELETE:
+        {
+            HTREEITEM handle_root = (HTREEITEM)SendMessageW(info->hwndTreeView, TVM_GETNEXTITEM, TVGN_ROOT, 0);
+            HTREEITEM handle_item = BrsFolder_FindItemByPidl(info, pidls[0], handle_root);
+
+            if (handle_item)
+                SendMessageW(info->hwndTreeView, TVM_DELETEITEM, 0, (LPARAM)handle_item);
+
+            break;
+        }
+    }
+    return ret;
 }
 
 /*************************************************************************
@@ -1008,7 +1121,7 @@ static INT_PTR CALLBACK BrsFolderDlgProc( HWND hWnd, UINT msg, WPARAM wParam,
 
     case WM_SIZE:
         if (info->layout)  /* new style dialogs */
-            LayoutUpdate(hWnd, info->layout, g_layout_info, LAYOUT_INFO_COUNT);
+            LayoutUpdate(hWnd, info->layout, g_layout_info, ARRAY_SIZE(g_layout_info));
         return 0;
 
     case BFFM_SETSTATUSTEXTA:
@@ -1040,6 +1153,9 @@ static INT_PTR CALLBACK BrsFolderDlgProc( HWND hWnd, UINT msg, WPARAM wParam,
     case BFFM_SETEXPANDED: /* unicode only */
         return BrsFolder_OnSetExpanded(info, (LPVOID)lParam, (BOOL)wParam, NULL);
 
+    case SHV_CHANGE_NOTIFY:
+        return BrsFolder_OnChange(info, (const LPCITEMIDLIST*)wParam, (LONG)lParam);
+
     case WM_DESTROY:
         return BrsFolder_OnDestroy(info);
     }
@@ -1067,14 +1183,14 @@ LPITEMIDLIST WINAPI SHBrowseForFolderA (LPBROWSEINFOA lpbi)
     bi.hwndOwner = lpbi->hwndOwner;
     bi.pidlRoot = lpbi->pidlRoot;
     if (lpbi->pszDisplayName)
-        bi.pszDisplayName = HeapAlloc( GetProcessHeap(), 0, MAX_PATH * sizeof(WCHAR) );
+        bi.pszDisplayName = heap_alloc( MAX_PATH * sizeof(WCHAR) );
     else
         bi.pszDisplayName = NULL;
 
     if (lpbi->lpszTitle)
     {
         len = MultiByteToWideChar( CP_ACP, 0, lpbi->lpszTitle, -1, NULL, 0 );
-        title = HeapAlloc( GetProcessHeap(), 0, len * sizeof(WCHAR) );
+        title = heap_alloc( len * sizeof(WCHAR) );
         MultiByteToWideChar( CP_ACP, 0, lpbi->lpszTitle, -1, title, len );
     }
     else
@@ -1090,9 +1206,9 @@ LPITEMIDLIST WINAPI SHBrowseForFolderA (LPBROWSEINFOA lpbi)
     {
         WideCharToMultiByte( CP_ACP, 0, bi.pszDisplayName, -1,
                              lpbi->pszDisplayName, MAX_PATH, 0, NULL);
-        HeapFree( GetProcessHeap(), 0, bi.pszDisplayName );
+        heap_free( bi.pszDisplayName );
     }
-    HeapFree(GetProcessHeap(), 0, title);
+    heap_free(title);
     lpbi->iImage = bi.iImage;
     return lpid;
 }

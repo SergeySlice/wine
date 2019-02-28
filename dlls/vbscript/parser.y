@@ -71,8 +71,6 @@ static class_decl_t *add_dim_prop(parser_ctx_t*,class_decl_t*,dim_decl_t*,unsign
 
 static statement_t *link_statements(statement_t*,statement_t*);
 
-static const WCHAR propertyW[] = {'p','r','o','p','e','r','t','y',0};
-
 #define STORAGE_IS_PRIVATE    1
 #define STORAGE_IS_DEFAULT    2
 
@@ -108,17 +106,18 @@ static const WCHAR propertyW[] = {'p','r','o','p','e','r','t','y',0};
 %token tTRUE tFALSE
 %token tNOT tAND tOR tXOR tEQV tIMP tNEQ
 %token tIS tLTEQ tGTEQ tMOD
-%token tCALL tDIM tSUB tFUNCTION tPROPERTY tGET tLET tCONST
+%token tCALL tDIM tSUB tFUNCTION tGET tLET tCONST
 %token tIF tELSE tELSEIF tEND tTHEN tEXIT
-%token tWHILE tWEND tDO tLOOP tUNTIL tFOR tTO tSTEP tEACH tIN
+%token tWHILE tWEND tDO tLOOP tUNTIL tFOR tTO tEACH tIN
 %token tSELECT tCASE
 %token tBYREF tBYVAL
-%token tOPTION tEXPLICIT
+%token tOPTION
 %token tSTOP
 %token tNOTHING tEMPTY tNULL
-%token tCLASS tSET tNEW tPUBLIC tPRIVATE tDEFAULT tME
-%token tERROR tNEXT tON tRESUME tGOTO
+%token tCLASS tSET tNEW tPUBLIC tPRIVATE tME
+%token tNEXT tON tRESUME tGOTO
 %token <string> tIdentifier tString
+%token <string> tDEFAULT tERROR tEXPLICIT tPROPERTY tSTEP
 %token <lng> tLong tShort
 %token <dbl> tDouble
 
@@ -148,7 +147,7 @@ Program
 
 OptionExplicit_opt
     : /* empty */                { $$ = FALSE; }
-    | tOPTION tEXPLICIT tNL      { $$ = TRUE; }
+    | tOPTION tEXPLICIT StSep    { $$ = TRUE; }
 
 SourceElements
     : /* empty */
@@ -164,7 +163,7 @@ StatementsNl
     | StatementNl StatementsNl              { $$ = link_statements($1, $2); }
 
 StatementNl
-    : Statement tNL                 { $$ = $1; }
+    : Statement tNL                         { $$ = $1; }
 
 Statement
     : ':'                                   { $$ = NULL; }
@@ -180,15 +179,15 @@ SimpleStatement
                                             { $1->args = $2; $$ = new_assign_statement(ctx, $1, $4); CHECK_ERROR; }
     | tDIM DimDeclList                      { $$ = new_dim_statement(ctx, $2); CHECK_ERROR; }
     | IfStatement                           { $$ = $1; }
-    | tWHILE Expression tNL StatementsNl_opt tWEND
+    | tWHILE Expression StSep StatementsNl_opt tWEND
                                             { $$ = new_while_statement(ctx, STAT_WHILE, $2, $4); CHECK_ERROR; }
-    | tDO DoType Expression tNL StatementsNl_opt tLOOP
+    | tDO DoType Expression StSep StatementsNl_opt tLOOP
                                             { $$ = new_while_statement(ctx, $2 ? STAT_WHILELOOP : STAT_UNTIL, $3, $5);
                                               CHECK_ERROR; }
-    | tDO tNL StatementsNl_opt tLOOP DoType Expression
+    | tDO StSep StatementsNl_opt tLOOP DoType Expression
                                             { $$ = new_while_statement(ctx, $5 ? STAT_DOWHILE : STAT_DOUNTIL, $6, $3);
                                               CHECK_ERROR; }
-    | tDO tNL StatementsNl_opt tLOOP        { $$ = new_while_statement(ctx, STAT_DOWHILE, NULL, $3); CHECK_ERROR; }
+    | tDO StSep StatementsNl_opt tLOOP      { $$ = new_while_statement(ctx, STAT_DOWHILE, NULL, $3); CHECK_ERROR; }
     | FunctionDecl                          { $$ = new_function_statement(ctx, $1); CHECK_ERROR; }
     | tEXIT tDO                             { $$ = new_statement(ctx, STAT_EXITDO, 0); CHECK_ERROR; }
     | tEXIT tFOR                            { $$ = new_statement(ctx, STAT_EXITFOR, 0); CHECK_ERROR; }
@@ -201,9 +200,9 @@ SimpleStatement
     | tON tERROR tRESUME tNEXT              { $$ = new_onerror_statement(ctx, TRUE); CHECK_ERROR; }
     | tON tERROR tGOTO '0'                  { $$ = new_onerror_statement(ctx, FALSE); CHECK_ERROR; }
     | tCONST ConstDeclList                  { $$ = new_const_statement(ctx, $2); CHECK_ERROR; }
-    | tFOR Identifier '=' Expression tTO Expression Step_opt tNL StatementsNl_opt tNEXT
+    | tFOR Identifier '=' Expression tTO Expression Step_opt StSep StatementsNl_opt tNEXT
                                             { $$ = new_forto_statement(ctx, $2, $4, $6, $7, $9); CHECK_ERROR; }
-    | tFOR tEACH Identifier tIN Expression tNL StatementsNl_opt tNEXT
+    | tFOR tEACH Identifier tIN Expression StSep StatementsNl_opt tNEXT
                                             { $$ = new_foreach_statement(ctx, $3, $5, $7); }
     | tSELECT tCASE Expression StSep CaseClausules tEND tSELECT
                                             { $$ = new_select_statement(ctx, $3, $5); }
@@ -396,29 +395,29 @@ PrimaryExpression
     | tME                           { $$ = new_expression(ctx, EXPR_ME, 0); CHECK_ERROR; }
 
 ClassDeclaration
-    : tCLASS Identifier tNL ClassBody tEND tCLASS tNL       { $4->name = $2; $$ = $4; }
+    : tCLASS Identifier StSep ClassBody tEND tCLASS StSep       { $4->name = $2; $$ = $4; }
 
 ClassBody
-    : /* empty */                               { $$ = new_class_decl(ctx); }
-    | FunctionDecl tNL ClassBody                { $$ = add_class_function(ctx, $3, $1); CHECK_ERROR; }
+    : /* empty */                                 { $$ = new_class_decl(ctx); }
+    | FunctionDecl StSep ClassBody                { $$ = add_class_function(ctx, $3, $1); CHECK_ERROR; }
     /* FIXME: We should use DimDecl here to support arrays, but that conflicts with PropertyDecl. */
-    | Storage tIdentifier tNL ClassBody         { dim_decl_t *dim_decl = new_dim_decl(ctx, $2, FALSE, NULL); CHECK_ERROR;
+    | Storage tIdentifier StSep ClassBody         { dim_decl_t *dim_decl = new_dim_decl(ctx, $2, FALSE, NULL); CHECK_ERROR;
                                                   $$ = add_dim_prop(ctx, $4, dim_decl, $1); CHECK_ERROR; }
-    | tDIM DimDecl tNL ClassBody                { $$ = add_dim_prop(ctx, $4, $2, 0); CHECK_ERROR; }
-    | PropertyDecl tNL ClassBody                { $$ = add_class_function(ctx, $3, $1); CHECK_ERROR; }
+    | tDIM DimDecl StSep ClassBody                { $$ = add_dim_prop(ctx, $4, $2, 0); CHECK_ERROR; }
+    | PropertyDecl StSep ClassBody                { $$ = add_class_function(ctx, $3, $1); CHECK_ERROR; }
 
 PropertyDecl
-    : Storage_opt tPROPERTY tGET tIdentifier ArgumentsDecl_opt tNL StatementsNl_opt tEND tPROPERTY
+    : Storage_opt tPROPERTY tGET tIdentifier ArgumentsDecl_opt StSep StatementsNl_opt tEND tPROPERTY
                                     { $$ = new_function_decl(ctx, $4, FUNC_PROPGET, $1, $5, $7); CHECK_ERROR; }
-    | Storage_opt tPROPERTY tLET tIdentifier '(' ArgumentDecl ')' tNL StatementsNl_opt tEND tPROPERTY
+    | Storage_opt tPROPERTY tLET tIdentifier '(' ArgumentDecl ')' StSep StatementsNl_opt tEND tPROPERTY
                                     { $$ = new_function_decl(ctx, $4, FUNC_PROPLET, $1, $6, $9); CHECK_ERROR; }
-    | Storage_opt tPROPERTY tSET tIdentifier '(' ArgumentDecl ')' tNL StatementsNl_opt tEND tPROPERTY
+    | Storage_opt tPROPERTY tSET tIdentifier '(' ArgumentDecl ')' StSep StatementsNl_opt tEND tPROPERTY
                                     { $$ = new_function_decl(ctx, $4, FUNC_PROPSET, $1, $6, $9); CHECK_ERROR; }
 
 FunctionDecl
-    : Storage_opt tSUB Identifier ArgumentsDecl_opt tNL StatementsNl_opt tEND tSUB
+    : Storage_opt tSUB Identifier ArgumentsDecl_opt StSep StatementsNl_opt tEND tSUB
                                     { $$ = new_function_decl(ctx, $3, FUNC_SUB, $1, $4, $6); CHECK_ERROR; }
-    | Storage_opt tFUNCTION Identifier ArgumentsDecl_opt tNL StatementsNl_opt tEND tFUNCTION
+    | Storage_opt tFUNCTION Identifier ArgumentsDecl_opt StSep StatementsNl_opt tEND tFUNCTION
                                     { $$ = new_function_decl(ctx, $3, FUNC_FUNCTION, $1, $4, $6); CHECK_ERROR; }
 
 Storage_opt
@@ -443,15 +442,21 @@ ArgumentDecl
     | tBYREF Identifier EmptyBrackets_opt       { $$ = new_argument_decl(ctx, $2, TRUE); }
     | tBYVAL Identifier EmptyBrackets_opt       { $$ = new_argument_decl(ctx, $2, FALSE); }
 
-/* 'property' may be both keyword and identifier, depending on context */
+/* these keywords may also be an identifier, depending on context */
 Identifier
     : tIdentifier    { $$ = $1; }
-    | tPROPERTY      { $$ = propertyW; }
+    | tDEFAULT       { $$ = $1; }
+    | tERROR         { $$ = $1; }
+    | tEXPLICIT      { $$ = $1; }
+    | tPROPERTY      { $$ = $1; }
+    | tSTEP          { $$ = $1; }
 
-/* Some statements accept both new line and ':' as a separator */
+/* Most statements accept both new line and ':' as separators */
 StSep
     : tNL
     | ':'
+    | tNL StSep
+    | ':' StSep
 
 %%
 
@@ -967,7 +972,7 @@ void *parser_alloc(parser_ctx_t *ctx, size_t size)
 
 HRESULT parse_script(parser_ctx_t *ctx, const WCHAR *code, const WCHAR *delimiter)
 {
-    const WCHAR html_delimiterW[] = {'<','/','s','c','r','i','p','t','>',0};
+    static const WCHAR html_delimiterW[] = {'<','/','s','c','r','i','p','t','>',0};
 
     ctx->code = ctx->ptr = code;
     ctx->end = ctx->code + strlenW(ctx->code);

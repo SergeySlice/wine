@@ -213,6 +213,7 @@ struct wined3d_sm1_data
 {
     struct wined3d_shader_version shader_version;
     const struct wined3d_sm1_opcode_info *opcode_table;
+    const DWORD *start;
 
     struct wined3d_shader_src_param src_rel_addr[4];
     struct wined3d_shader_src_param pred_rel_addr;
@@ -532,20 +533,23 @@ static unsigned int shader_skip_unrecognized(const struct wined3d_sm1_data *priv
     return tokens_read;
 }
 
-static void *shader_sm1_init(const DWORD *byte_code, const struct wined3d_shader_signature *output_signature)
+static void *shader_sm1_init(const DWORD *byte_code, size_t byte_code_size,
+        const struct wined3d_shader_signature *output_signature)
 {
     struct wined3d_sm1_data *priv;
     BYTE major, minor;
 
+    TRACE("Version: 0x%08x.\n", *byte_code);
+
     major = WINED3D_SM1_VERSION_MAJOR(*byte_code);
     minor = WINED3D_SM1_VERSION_MINOR(*byte_code);
-    if (WINED3D_SHADER_VERSION(major, minor) > WINED3D_SHADER_VERSION(3, 0))
+    if (WINED3D_SHADER_VERSION(major, minor) > WINED3D_SHADER_VERSION(3, 255))
     {
         WARN("Invalid shader version %u.%u (%#x).\n", major, minor, *byte_code);
         return NULL;
     }
 
-    if (!(priv = HeapAlloc(GetProcessHeap(), 0, sizeof(*priv))))
+    if (!(priv = heap_alloc(sizeof(*priv))))
         return NULL;
 
     if (output_signature->element_count)
@@ -565,28 +569,27 @@ static void *shader_sm1_init(const DWORD *byte_code, const struct wined3d_shader
 
         default:
             FIXME("Unrecognized shader type %#x.\n", *byte_code >> 16);
-            HeapFree(GetProcessHeap(), 0, priv);
+            heap_free(priv);
             return NULL;
     }
+    priv->shader_version.major = WINED3D_SM1_VERSION_MAJOR(*byte_code);
+    priv->shader_version.minor = WINED3D_SM1_VERSION_MINOR(*byte_code);
+
+    priv->start = &byte_code[1];
 
     return priv;
 }
 
 static void shader_sm1_free(void *data)
 {
-    HeapFree(GetProcessHeap(), 0, data);
+    heap_free(data);
 }
 
 static void shader_sm1_read_header(void *data, const DWORD **ptr, struct wined3d_shader_version *shader_version)
 {
     struct wined3d_sm1_data *priv = data;
-    DWORD version_token;
 
-    version_token = *(*ptr)++;
-    TRACE("Version: 0x%08x.\n", version_token);
-
-    priv->shader_version.major = WINED3D_SM1_VERSION_MAJOR(version_token);
-    priv->shader_version.minor = WINED3D_SM1_VERSION_MINOR(version_token);
+    *ptr = priv->start;
     *shader_version = priv->shader_version;
 }
 

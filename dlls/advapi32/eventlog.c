@@ -815,16 +815,6 @@ ULONG WINAPI TraceEvent( TRACEHANDLE SessionHandle, PEVENT_TRACE_HEADER EventTra
 }
 
 /******************************************************************************
- * EventEnabled [ADVAPI32.@]
- *
- */
-BOOLEAN WINAPI EventEnabled( REGHANDLE handle, PCEVENT_DESCRIPTOR descriptor )
-{
-    FIXME("(%s, %p): stub\n", wine_dbgstr_longlong(handle), descriptor);
-    return FALSE;
-}
-
-/******************************************************************************
  * EventProviderEnabled [ADVAPI32.@]
  *
  */
@@ -840,17 +830,9 @@ BOOLEAN WINAPI EventProviderEnabled( REGHANDLE handle, UCHAR level, ULONGLONG ke
  */
 ULONG WINAPI EventActivityIdControl(ULONG code, GUID *guid)
 {
-    FIXME("0x%x, %p: stub\n", code, guid);
-    return ERROR_SUCCESS;
-}
+    static int once;
 
-/******************************************************************************
- * EventWrite [ADVAPI32.@]
- */
-ULONG WINAPI EventWrite( REGHANDLE handle, PCEVENT_DESCRIPTOR descriptor, ULONG count,
-                         PEVENT_DATA_DESCRIPTOR data )
-{
-    FIXME("%s, %p, %u, %p: stub\n", wine_dbgstr_longlong(handle), descriptor, count, data);
+    if (!once++) FIXME("0x%x, %p: stub\n", code, guid);
     return ERROR_SUCCESS;
 }
 
@@ -879,7 +861,9 @@ ULONG WINAPI QueryTraceW( TRACEHANDLE handle, LPCWSTR sessionname, PEVENT_TRACE_
  */
 TRACEHANDLE WINAPI OpenTraceA( PEVENT_TRACE_LOGFILEA logfile )
 {
-    FIXME("%p: stub\n", logfile);
+    static int once;
+
+    if (!once++) FIXME("%p: stub\n", logfile);
     SetLastError(ERROR_ACCESS_DENIED);
     return INVALID_PROCESSTRACE_HANDLE;
 }
@@ -889,7 +873,9 @@ TRACEHANDLE WINAPI OpenTraceA( PEVENT_TRACE_LOGFILEA logfile )
  */
 TRACEHANDLE WINAPI OpenTraceW( PEVENT_TRACE_LOGFILEW logfile )
 {
-    FIXME("%p: stub\n", logfile);
+    static int once;
+
+    if (!once++) FIXME("%p: stub\n", logfile);
     SetLastError(ERROR_ACCESS_DENIED);
     return INVALID_PROCESSTRACE_HANDLE;
 }
@@ -944,4 +930,13 @@ ULONG WINAPI EnumerateTraceGuids(PTRACE_GUID_PROPERTIES *propertiesarray,
 {
     FIXME("%p %d %p: stub\n", propertiesarray, arraycount, guidcount);
     return ERROR_INVALID_PARAMETER;
+}
+
+/******************************************************************************
+ * TraceSetInformation [ADVAPI32.@]
+ */
+ULONG WINAPI TraceSetInformation(TRACEHANDLE handle, TRACE_INFO_CLASS infoclass, VOID* info, ULONG len)
+{
+    FIXME("%s %d %p %d: stub\n", wine_dbgstr_longlong(handle), infoclass, info, len);
+    return ERROR_CALL_NOT_IMPLEMENTED;
 }

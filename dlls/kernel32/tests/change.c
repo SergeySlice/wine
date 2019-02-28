@@ -254,11 +254,12 @@ static void test_FindFirstChangeNotification(void)
 static void test_ffcn(void)
 {
     DWORD filter;
-    HANDLE handle;
+    HANDLE handle, file;
     LONG r;
-    WCHAR path[MAX_PATH], subdir[MAX_PATH];
+    WCHAR path[MAX_PATH], subdir[MAX_PATH], filename[MAX_PATH];
     static const WCHAR szBoo[] = { '\\','b','o','o',0 };
     static const WCHAR szHoo[] = { '\\','h','o','o',0 };
+    static const WCHAR szZoo[] = { '\\','z','o','o',0 };
 
     SetLastError(0xdeadbeef);
     r = GetTempPathW( MAX_PATH, path );
@@ -275,6 +276,9 @@ static void test_ffcn(void)
     lstrcpyW( subdir, path );
     lstrcatW( subdir, szHoo );
 
+    lstrcpyW( filename, path );
+    lstrcatW( filename, szZoo );
+
     RemoveDirectoryW( subdir );
     RemoveDirectoryW( path );
     
@@ -286,6 +290,38 @@ static void test_ffcn(void)
 
     handle = FindFirstChangeNotificationW( path, 1, filter);
     ok( handle != INVALID_HANDLE_VALUE, "invalid handle\n");
+
+    r = WaitForSingleObject( handle, 0 );
+    ok( r == STATUS_TIMEOUT, "should time out\n");
+
+    file = CreateFileW( filename, GENERIC_READ | GENERIC_WRITE, 0, NULL,
+                        CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0 );
+    ok( file != INVALID_HANDLE_VALUE, "CreateFile error %u\n", GetLastError() );
+    CloseHandle(file);
+
+    r = WaitForSingleObject( handle, 0 );
+    ok( r == WAIT_OBJECT_0, "should be ready\n");
+
+    r = WaitForSingleObject( handle, 0 );
+    ok( r == WAIT_OBJECT_0, "should be ready\n");
+
+    r = FindNextChangeNotification(handle);
+    ok( r == TRUE, "find next failed\n");
+
+    r = WaitForSingleObject( handle, 0 );
+    ok( r == STATUS_TIMEOUT, "should time out\n");
+
+    r = DeleteFileW( filename );
+    ok( r == TRUE, "failed to remove file\n");
+
+    r = WaitForSingleObject( handle, 0 );
+    ok( r == WAIT_OBJECT_0, "should be ready\n");
+
+    r = WaitForSingleObject( handle, 0 );
+    ok( r == WAIT_OBJECT_0, "should be ready\n");
+
+    r = FindNextChangeNotification(handle);
+    ok( r == TRUE, "find next failed\n");
 
     r = WaitForSingleObject( handle, 0 );
     ok( r == STATUS_TIMEOUT, "should time out\n");
@@ -383,6 +419,7 @@ static void test_readdirectorychanges(void)
     static const WCHAR szHoo[] = { '\\','h','o','o',0 };
     static const WCHAR szGa[] = { '\\','h','o','o','\\','g','a',0 };
     PFILE_NOTIFY_INFORMATION pfni;
+    BOOL got_subdir_change = FALSE;
 
     if (!pReadDirectoryChangesW)
     {
@@ -550,26 +587,40 @@ static void test_readdirectorychanges(void)
     r = CreateDirectoryW( subsubdir, NULL );
     ok( r == TRUE, "failed to create directory\n");
 
-    r = WaitForSingleObject( ov.hEvent, 1000 );
-    ok( r == WAIT_OBJECT_0, "should be ready\n" );
-
-    ok( (NTSTATUS)ov.Internal == STATUS_SUCCESS, "ov.Internal wrong\n");
-    ok( ov.InternalHigh == 0x18 || ov.InternalHigh == 0x12 + 0x18,
-        "ov.InternalHigh wrong %lx\n", ov.InternalHigh);
-
-    pfni = (PFILE_NOTIFY_INFORMATION) buffer;
-    if (pfni->NextEntryOffset)  /* we may get a modified event on the parent dir */
+    while (1)
     {
-        ok( pfni->NextEntryOffset == 0x12, "offset wrong %x\n", pfni->NextEntryOffset );
-        ok( pfni->Action == FILE_ACTION_MODIFIED, "action wrong %d\n", pfni->Action );
-        ok( pfni->FileNameLength == 3*sizeof(WCHAR), "len wrong\n" );
-        ok( !memcmp(pfni->FileName,&szGa[1],3*sizeof(WCHAR)), "name wrong\n");
-        pfni = (PFILE_NOTIFY_INFORMATION)((char *)pfni + pfni->NextEntryOffset);
+        r = WaitForSingleObject( ov.hEvent, 1000 );
+        ok(r == WAIT_OBJECT_0, "should be ready\n" );
+        if (r == WAIT_TIMEOUT) break;
+
+        ok((NTSTATUS) ov.Internal == STATUS_SUCCESS, "ov.Internal wrong\n");
+
+        pfni = (PFILE_NOTIFY_INFORMATION) buffer;
+        while (1)
+        {
+            /* We might get one or more modified events on the parent dir */
+            if (pfni->Action == FILE_ACTION_MODIFIED)
+            {
+                ok(pfni->FileNameLength == 3 * sizeof(WCHAR), "len wrong\n" );
+                ok(!memcmp(pfni->FileName, &szGa[1], 3 * sizeof(WCHAR)), "name wrong\n");
+            }
+            else
+            {
+                ok(pfni->Action == FILE_ACTION_ADDED, "action wrong\n");
+                ok(pfni->FileNameLength == 6 * sizeof(WCHAR), "len wrong\n" );
+                ok(!memcmp(pfni->FileName, &szGa[1], 6 * sizeof(WCHAR)), "name wrong\n");
+                got_subdir_change = TRUE;
+            }
+            if (!pfni->NextEntryOffset) break;
+            pfni = (PFILE_NOTIFY_INFORMATION)((char *)pfni + pfni->NextEntryOffset);
+        }
+
+        if (got_subdir_change) break;
+
+        r = pReadDirectoryChangesW(hdir,buffer,sizeof buffer,FALSE,filter,NULL,&ov,NULL);
+        ok(r==TRUE, "should return true\n");
     }
-    ok( pfni->NextEntryOffset == 0, "offset wrong\n" );
-    ok( pfni->Action == FILE_ACTION_ADDED, "action wrong\n" );
-    ok( pfni->FileNameLength == 6*sizeof(WCHAR), "len wrong\n" );
-    ok( !memcmp(pfni->FileName,&szGa[1],6*sizeof(WCHAR)), "name wrong\n" );
+    ok(got_subdir_change, "didn't get subdir change\n");
 
     r = RemoveDirectoryW( subsubdir );
     ok( r == TRUE, "failed to remove directory\n");

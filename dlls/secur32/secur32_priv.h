@@ -23,6 +23,7 @@
 
 #include <sys/types.h>
 #include <limits.h>
+#include "wine/heap.h"
 #include "wine/list.h"
 #include "schannel.h"
 
@@ -136,7 +137,7 @@ PSTR  SECUR32_AllocMultiByteFromWide(PCWSTR str) DECLSPEC_HIDDEN;
 void SECUR32_initSchannelSP(void) DECLSPEC_HIDDEN;
 void SECUR32_initNegotiateSP(void) DECLSPEC_HIDDEN;
 void SECUR32_initNTLMSP(void) DECLSPEC_HIDDEN;
-void SECUR32_initKerberosSP(void) DECLSPEC_HIDDEN;
+void load_auth_packages(void) DECLSPEC_HIDDEN;
 
 /* Cleanup functions for built-in providers */
 void SECUR32_deinitSchannelSP(void) DECLSPEC_HIDDEN;
@@ -189,21 +190,6 @@ void SECUR32_arc4Cleanup(arc4_info *a4i) DECLSPEC_HIDDEN;
 #define NTLMSSP_NEGOTIATE_KEY_EXCHANGE              0x40000000
 #define NTLMSSP_NEGOTIATE_56                        0x80000000
 
-SECURITY_STATUS SEC_ENTRY ntlm_AcquireCredentialsHandleW(SEC_WCHAR *, SEC_WCHAR *,
-    ULONG, PLUID, PVOID, SEC_GET_KEY_FN, PVOID, PCredHandle, PTimeStamp) DECLSPEC_HIDDEN;
-SECURITY_STATUS SEC_ENTRY ntlm_InitializeSecurityContextW(PCredHandle, PCtxtHandle,
-    SEC_WCHAR *, ULONG fContextReq, ULONG, ULONG, PSecBufferDesc, ULONG, PCtxtHandle,
-    PSecBufferDesc, ULONG *, PTimeStamp) DECLSPEC_HIDDEN;
-SECURITY_STATUS SEC_ENTRY ntlm_AcceptSecurityContext(PCredHandle, PCtxtHandle, PSecBufferDesc,
-    ULONG, ULONG, PCtxtHandle, PSecBufferDesc, ULONG *, PTimeStamp) DECLSPEC_HIDDEN;
-SECURITY_STATUS SEC_ENTRY ntlm_QueryContextAttributesA(PCtxtHandle, ULONG, void *) DECLSPEC_HIDDEN;
-SECURITY_STATUS SEC_ENTRY ntlm_QueryContextAttributesW(PCtxtHandle, ULONG, void *) DECLSPEC_HIDDEN;
-SECURITY_STATUS SEC_ENTRY ntlm_EncryptMessage(PCtxtHandle, ULONG, PSecBufferDesc, ULONG) DECLSPEC_HIDDEN;
-SECURITY_STATUS SEC_ENTRY ntlm_DecryptMessage(PCtxtHandle, PSecBufferDesc, ULONG, PULONG) DECLSPEC_HIDDEN;
-SECURITY_STATUS SEC_ENTRY ntlm_FreeCredentialsHandle(PCredHandle) DECLSPEC_HIDDEN;
-SECURITY_STATUS SEC_ENTRY ntlm_DeleteSecurityContext(PCtxtHandle) DECLSPEC_HIDDEN;
-SECURITY_STATUS SEC_ENTRY ntlm_MakeSignature(PCtxtHandle, ULONG, PSecBufferDesc, ULONG) DECLSPEC_HIDDEN;
-SECURITY_STATUS SEC_ENTRY ntlm_VerifySignature(PCtxtHandle, PSecBufferDesc, ULONG, PULONG) DECLSPEC_HIDDEN;
 
 SecPkgInfoW *ntlm_package_infoW DECLSPEC_HIDDEN;
 SecPkgInfoA *ntlm_package_infoA DECLSPEC_HIDDEN;
@@ -252,6 +238,7 @@ extern void schan_imp_set_session_target(schan_imp_session session, const char *
 extern SECURITY_STATUS schan_imp_handshake(schan_imp_session session) DECLSPEC_HIDDEN;
 extern unsigned int schan_imp_get_session_cipher_block_size(schan_imp_session session) DECLSPEC_HIDDEN;
 extern unsigned int schan_imp_get_max_message_size(schan_imp_session session) DECLSPEC_HIDDEN;
+extern ALG_ID schan_imp_get_key_signature_algorithm(schan_imp_session session) DECLSPEC_HIDDEN;
 extern SECURITY_STATUS schan_imp_get_connection_info(schan_imp_session session,
                                                      SecPkgContext_ConnectionInfo *info) DECLSPEC_HIDDEN;
 extern SECURITY_STATUS schan_imp_get_session_peer_certificate(schan_imp_session session, HCERTSTORE,
@@ -260,7 +247,7 @@ extern SECURITY_STATUS schan_imp_send(schan_imp_session session, const void *buf
                                       SIZE_T *length) DECLSPEC_HIDDEN;
 extern SECURITY_STATUS schan_imp_recv(schan_imp_session session, void *buffer,
                                       SIZE_T *length) DECLSPEC_HIDDEN;
-extern BOOL schan_imp_allocate_certificate_credentials(schan_credentials*) DECLSPEC_HIDDEN;
+extern BOOL schan_imp_allocate_certificate_credentials(schan_credentials *, const CERT_CONTEXT *) DECLSPEC_HIDDEN;
 extern void schan_imp_free_certificate_credentials(schan_credentials*) DECLSPEC_HIDDEN;
 extern DWORD schan_imp_enabled_protocols(void) DECLSPEC_HIDDEN;
 extern BOOL schan_imp_init(void) DECLSPEC_HIDDEN;

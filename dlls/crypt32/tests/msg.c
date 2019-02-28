@@ -575,7 +575,7 @@ static CRYPT_DATA_BLOB b1[] = {
     { sizeof(u2), u2 },
     { sizeof(u2), u2 },
 };
-static const struct update_accum a1 = { sizeof(b1) / sizeof(b1[0]), b1 };
+static const struct update_accum a1 = { ARRAY_SIZE(b1), b1 };
 /* The updates of a definite-length encoded message */
 static BYTE u3[] = { 0x30,0x13,0x06,0x09,0x2a,0x86,0x48,0x86,0xf7,0x0d,0x01,
  0x07,0x01,0xa0,0x06,0x04,0x04 };
@@ -583,7 +583,7 @@ static CRYPT_DATA_BLOB b2[] = {
     { sizeof(u3), u3 },
     { sizeof(u2), u2 },
 };
-static const struct update_accum a2 = { sizeof(b2) / sizeof(b2[0]), b2 };
+static const struct update_accum a2 = { ARRAY_SIZE(b2), b2 };
 /* The updates of an indefinite-length encoded message */
 static BYTE u4[] = { 0x30,0x80,0x06,0x09,0x2a,0x86,0x48,0x86,0xf7,0x0d,0x01,
  0x07,0x01,0xa0,0x80,0x24,0x80 };
@@ -597,7 +597,7 @@ static CRYPT_DATA_BLOB b3[] = {
     { sizeof(u2), u2 },
     { sizeof(u6), u6 },
 };
-static const struct update_accum a3 = { sizeof(b3) / sizeof(b3[0]), b3 };
+static const struct update_accum a3 = { ARRAY_SIZE(b3), b3 };
 
 static void check_updates(LPCSTR header, const struct update_accum *expected,
  const struct update_accum *got)
@@ -2857,7 +2857,7 @@ static void test_decode_msg_get_param(void)
     HCRYPTPROV hCryptProv;
     HCRYPTKEY key = 0;
     BOOL ret;
-    DWORD size = 0, value;
+    DWORD size = 0, value, req_size;
     LPBYTE buf;
     CMSG_CTRL_DECRYPT_PARA decryptPara = { sizeof(decryptPara), 0 };
 
@@ -2947,7 +2947,10 @@ static void test_decode_msg_get_param(void)
         signer.SerialNumber.cbData = sizeof(serialNum);
         signer.SerialNumber.pbData = serialNum;
         signer.HashAlgorithm.pszObjId = oid_rsa_md5;
+        req_size = size;
+        size += 10;
         CryptMsgGetParam(msg, CMSG_SIGNER_INFO_PARAM, 0, buf, &size);
+        ok(size == req_size, "size = %u, expected %u\n", size, req_size);
         compare_signer_info((CMSG_SIGNER_INFO *)buf, &signer);
         CryptMemFree(buf);
     }

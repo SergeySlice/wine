@@ -35,13 +35,13 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(mshtml);
 
-typedef struct {
+struct HTMLAnchorElement {
     HTMLElement element;
 
     IHTMLAnchorElement IHTMLAnchorElement_iface;
 
     nsIDOMHTMLAnchorElement *nsanchor;
-} HTMLAnchorElement;
+};
 
 static HRESULT navigate_href_new_window(HTMLElement *element, nsAString *href_str, const WCHAR *target)
 {
@@ -727,7 +727,7 @@ static HRESULT HTMLAnchorElement_QI(HTMLDOMNode *iface, REFIID riid, void **ppv)
     return HTMLElement_QI(&This->element.node, riid, ppv);
 }
 
-static HRESULT HTMLAnchorElement_handle_event(HTMLDOMNode *iface, eventid_t eid, nsIDOMEvent *event, BOOL *prevent_default)
+static HRESULT HTMLAnchorElement_handle_event(HTMLDOMNode *iface, DWORD eid, nsIDOMEvent *event, BOOL *prevent_default)
 {
     HTMLAnchorElement *This = impl_from_HTMLDOMNode(iface);
     nsAString href_str, target_str;
@@ -779,13 +779,13 @@ static void HTMLAnchorElement_unlink(HTMLDOMNode *iface)
 }
 
 static const NodeImplVtbl HTMLAnchorElementImplVtbl = {
+    &CLSID_HTMLAnchorElement,
     HTMLAnchorElement_QI,
     HTMLElement_destructor,
     HTMLElement_cpc,
     HTMLElement_clone,
     HTMLAnchorElement_handle_event,
     HTMLElement_get_attr_col,
-    NULL,
     NULL,
     NULL,
     NULL,
@@ -811,7 +811,7 @@ static dispex_static_data_t HTMLAnchorElement_dispex = {
     HTMLElement_init_dispex_info
 };
 
-HRESULT HTMLAnchorElement_Create(HTMLDocumentNode *doc, nsIDOMHTMLElement *nselem, HTMLElement **elem)
+HRESULT HTMLAnchorElement_Create(HTMLDocumentNode *doc, nsIDOMElement *nselem, HTMLElement **elem)
 {
     HTMLAnchorElement *ret;
     nsresult nsres;
@@ -825,7 +825,7 @@ HRESULT HTMLAnchorElement_Create(HTMLDocumentNode *doc, nsIDOMHTMLElement *nsele
 
     HTMLElement_Init(&ret->element, doc, nselem, &HTMLAnchorElement_dispex);
 
-    nsres = nsIDOMHTMLElement_QueryInterface(nselem, &IID_nsIDOMHTMLAnchorElement, (void**)&ret->nsanchor);
+    nsres = nsIDOMElement_QueryInterface(nselem, &IID_nsIDOMHTMLAnchorElement, (void**)&ret->nsanchor);
     assert(nsres == NS_OK);
 
     *elem = &ret->element;

@@ -22,7 +22,6 @@
 #include "config.h"
 #include "wine/port.h"
 
-#include <math.h>
 #include <stdio.h>
 
 #include "wined3d_private.h"
@@ -34,6 +33,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(d3d);
 static void nvts_activate_dimensions(const struct wined3d_state *state, DWORD stage, struct wined3d_context *context)
 {
     const struct wined3d_gl_info *gl_info = context->gl_info;
+    struct wined3d_texture *texture;
     BOOL bumpmap = FALSE;
 
     if (stage > 0
@@ -48,9 +48,9 @@ static void nvts_activate_dimensions(const struct wined3d_state *state, DWORD st
         context->texShaderBumpMap &= ~(1u << stage);
     }
 
-    if (state->textures[stage])
+    if ((texture = state->textures[stage]))
     {
-        switch (state->textures[stage]->target)
+        switch (wined3d_texture_gl(texture)->target)
         {
             case GL_TEXTURE_2D:
                 gl_info->gl_ops.gl.p_glTexEnvi(GL_TEXTURE_SHADER_NV, GL_SHADER_OPERATION_NV,
@@ -69,6 +69,9 @@ static void nvts_activate_dimensions(const struct wined3d_state *state, DWORD st
             case GL_TEXTURE_CUBE_MAP_ARB:
                 gl_info->gl_ops.gl.p_glTexEnvi(GL_TEXTURE_SHADER_NV, GL_SHADER_OPERATION_NV, GL_TEXTURE_CUBE_MAP_ARB);
                 checkGLcall("glTexEnvi(GL_TEXTURE_SHADER_NV, GL_SHADER_OPERATION_NV, GL_TEXTURE_CUBE_MAP_ARB)");
+                break;
+            default:
+                FIXME("Unhandled target %#x.\n", wined3d_texture_gl(texture)->target);
                 break;
         }
     }
@@ -761,21 +764,8 @@ static void nvrc_fragment_free(struct wined3d_device *device) {}
 
 static BOOL nvts_color_fixup_supported(struct color_fixup_desc fixup)
 {
-    if (TRACE_ON(d3d))
-    {
-        TRACE("Checking support for fixup:\n");
-        dump_color_fixup_desc(fixup);
-    }
-
     /* We only support identity conversions. */
-    if (is_identity_fixup(fixup))
-    {
-        TRACE("[OK]\n");
-        return TRUE;
-    }
-
-    TRACE("[FAILED]\n");
-    return FALSE;
+    return is_identity_fixup(fixup);
 }
 
 static const struct StateEntryTemplate nvrc_fragmentstate_template[] =

@@ -36,7 +36,7 @@ static void test_findAttribute(void)
     BYTE blobbin[] = {0x02,0x01,0x01};
     static CHAR oid[] = "1.2.3";
     CRYPT_ATTR_BLOB blobs[] = { { sizeof blobbin, blobbin }, };
-    CRYPT_ATTRIBUTE attr = { oid, sizeof(blobs) / sizeof(blobs[0]), blobs };
+    CRYPT_ATTRIBUTE attr = { oid, ARRAY_SIZE(blobs), blobs };
 
     /* returns NULL, last error not set */
     SetLastError(0xdeadbeef);
@@ -128,10 +128,8 @@ static void test_findRDNAttr(void)
     CERT_RDN_ATTR attrs[] = {
      { oid, CERT_RDN_IA5_STRING, { sizeof bin, bin } },
     };
-    CERT_RDN rdns[] = {
-     { sizeof(attrs) / sizeof(attrs[0]), attrs },
-    };
-    CERT_NAME_INFO nameInfo = { sizeof(rdns) / sizeof(rdns[0]), rdns };
+    CERT_RDN rdns[] = { { ARRAY_SIZE(attrs), attrs } };
+    CERT_NAME_INFO nameInfo = { ARRAY_SIZE(rdns), rdns };
 
     if (0)
     {
@@ -307,8 +305,32 @@ static void test_readTrustedPublisherDWORD(void)
 
 static void test_getDefaultCryptProv(void)
 {
+#define ALG(id) id, #id
+    static const struct
+    {
+        ALG_ID algid;
+        const char *name;
+        BOOL optional;
+    } test_prov[] =
+    {
+        { ALG(CALG_MD2), TRUE },
+        { ALG(CALG_MD4), TRUE },
+        { ALG(CALG_MD5), TRUE },
+        { ALG(CALG_SHA), TRUE },
+        { ALG(CALG_RSA_SIGN) },
+        { ALG(CALG_DSS_SIGN) },
+        { ALG(CALG_NO_SIGN) },
+        { ALG(CALG_ECDSA), TRUE },
+        { ALG(CALG_ECDH), TRUE },
+        { ALG(CALG_RSA_KEYX) },
+        { ALG(CALG_RSA_KEYX) },
+    };
+#undef ALG
     HCRYPTPROV (WINAPI *pI_CryptGetDefaultCryptProv)(DWORD w);
     HCRYPTPROV prov;
+    BOOL ret;
+    DWORD size, i;
+    LPSTR name;
 
     pI_CryptGetDefaultCryptProv = (void *)GetProcAddress(hCrypt, "I_CryptGetDefaultCryptProv");
     if (!pI_CryptGetDefaultCryptProv) return;
@@ -325,6 +347,34 @@ static void test_getDefaultCryptProv(void)
     prov = pI_CryptGetDefaultCryptProv(0);
     ok(prov != 0, "I_CryptGetDefaultCryptProv failed: %08x\n", GetLastError());
     CryptReleaseContext(prov, 0);
+
+    for (i = 0; i < ARRAY_SIZE(test_prov); i++)
+    {
+        if (winetest_debug > 1)
+            trace("%u: algid %#x (%s): class %u, type %u, sid %u\n", i, test_prov[i].algid, test_prov[i].name,
+                  GET_ALG_CLASS(test_prov[i].algid) >> 13, GET_ALG_TYPE(test_prov[i].algid) >> 9, GET_ALG_SID(test_prov[i].algid));
+
+        prov = pI_CryptGetDefaultCryptProv(test_prov[i].algid);
+        if (!prov)
+        {
+todo_wine_if(test_prov[i].algid == CALG_DSS_SIGN || test_prov[i].algid == CALG_NO_SIGN)
+            ok(test_prov[i].optional, "%u: I_CryptGetDefaultCryptProv(%#x) failed\n", i, test_prov[i].algid);
+            continue;
+        }
+
+        ret = CryptGetProvParam(prov, PP_NAME, NULL, &size, 0);
+        if (ret) /* some provders don't support PP_NAME */
+        {
+            name = CryptMemAlloc(size);
+            ret = CryptGetProvParam(prov, PP_NAME, (BYTE *)name, &size, 0);
+            ok(ret, "%u: CryptGetProvParam failed %#x\n", i, GetLastError());
+            if (winetest_debug > 1)
+                trace("%u: algid %#x, name %s\n", i, test_prov[i].algid, name);
+            CryptMemFree(name);
+        }
+
+        CryptReleaseContext(prov, 0);
+    }
 }
 
 static void test_CryptInstallOssGlobal(void)

@@ -23,10 +23,9 @@ use strict;
 
 # base URLs for www.unicode.org files
 my $MAPPINGS = "http://www.unicode.org/Public/MAPPINGS";
-my $UNIDATA = "http://www.unicode.org/Public/9.0.0/ucd";
+my $UNIDATA = "http://www.unicode.org/Public/11.0.0/ucd";
 my $REPORTS = "http://www.unicode.org/reports";
 my $RFCS = "http://www.rfc-editor.org/rfc";
-my $VERTICALDATA = "http://www.unicode.org/Public/vertical/revision-15";
 
 # Sort keys file
 my $SORTKEYS = "tr10/allkeys.txt";
@@ -173,7 +172,8 @@ my %indic_types =
     "Consonant_With_Stacker" => 0x001f,
     "Consonant_Prefixed" => 0x0020,
     "Syllable_Modifier" => 0x0021,
-    "Consonant_Killer" => 0x0022
+    "Consonant_Killer" => 0x0022,
+    "Consonant_Initial_Postfixed" => 0x0023,
 );
 
 my %matra_types =
@@ -191,7 +191,8 @@ my %matra_types =
     "Bottom_And_Right"  => 0x0b,
     "Top_And_Bottom_And_Right"  => 0x0c,
     "Overstruck"  => 0x0d,
-    "Invisible"  => 0x0e
+    "Invisible"  => 0x0e,
+    "Bottom_And_Left"  => 0x0f
 );
 
 my %nameprep_flags =
@@ -359,6 +360,8 @@ my @joining_table = ();
 my @direction_table = ();
 my @decomp_table = ();
 my @compose_table = ();
+my @combining_class_table = ();
+my @full_compatmap_table = ();
 my $default_char;
 my $default_wchar;
 
@@ -456,6 +459,10 @@ sub READ_DEFAULTS($)
         {
             $digitmap_table[$src] = ord $dig;
         }
+        if ($comb ne "")
+        {
+            $combining_class_table[$src] = $comb;
+        }
 
         # copy the category and direction for everything between First/Last pairs
         if ($name =~ /, First>/) { $start = $src; }
@@ -470,6 +477,16 @@ sub READ_DEFAULTS($)
         }
 
         next if $decomp eq "";  # no decomposition, skip it
+
+        if ($decomp =~ /^<([a-zA-Z]+)>\s+([0-9a-fA-F]+)/)
+        {
+            my @seq = ();
+            for my $ch (split /\s+/, (split /\s+/, $decomp, 2)[1])
+            {
+                push @seq, (hex $ch);
+            }
+            $full_compatmap_table[$src] = \@seq;
+        }
 
         if ($decomp =~ /^<([a-zA-Z]+)>\s+([0-9a-fA-F]+)$/)
         {
@@ -511,11 +528,19 @@ sub READ_DEFAULTS($)
                 $decomp_table[$src] = [ hex $1, hex $2 ];
                 push @compose_table, [ hex $1, hex $2, $src ];
             }
-            elsif ($decomp =~ /^(<[a-z]+>\s)*([0-9a-fA-F]+)$/ &&
-                   (($src >= 0xf900 && $src < 0xfb00) || ($src >= 0xfe30 && $src < 0xfffd)))
+            elsif ($decomp =~ /^([0-9a-fA-F]+)$/)
             {
-                # Single char decomposition in the compatibility range
-                $compatmap_table[$src] = hex $2;
+                # Single char decomposition
+                if (hex $1 < 65536)
+                {
+                    $decomp_table[$src] = [ hex $1, 0 ];
+                }
+
+                if (($src >= 0xf900 && $src < 0xfb00) || ($src >= 0xfe30 && $src < 0xfffd))
+                {
+                    # Single char decomposition in the compatibility range
+                    $compatmap_table[$src] = hex $1;
+                }
             }
         }
         else
@@ -1462,7 +1487,12 @@ my %scripts =
     "Old_Hungarian"          => 134,
     "Osage"                  => 135,
     "SignWriting"            => 136,
-    "Tangut"                 => 137
+    "Tangut"                 => 137,
+    # Win10 RS4
+    "Masaram_Gondi"          => 138,
+    "Nushu"                  => 139,
+    "Soyombo"                => 140,
+    "Zanabazar_Square"       => 141,
 );
 
 ################################################################
@@ -1672,7 +1702,7 @@ sub dump_vertical($)
     my $filename = shift;
     my @vertical_table;
 
-    my $INPUT = open_data_file( $VERTICALDATA, "VerticalOrientation-15.txt" );
+    my $INPUT = open_data_file( $UNIDATA, "VerticalOrientation.txt" );
     while (<$INPUT>)
     {
         next if /^\#/;  # skip comments
@@ -1705,7 +1735,7 @@ sub dump_vertical($)
     open OUTPUT,">$filename.new" or die "Cannot create $filename";
     print "Building $filename\n";
     print OUTPUT "/* Unicode Vertical Orientation */\n";
-    print OUTPUT "/* generated from $VERTICALDATA/VerticalOrientation-15.txt */\n";
+    print OUTPUT "/* generated from $UNIDATA/VerticalOrientation.txt */\n";
     print OUTPUT "/* DO NOT EDIT!! */\n\n";
     print OUTPUT "#include \"wine/unicode.h\"\n\n";
 
@@ -2258,6 +2288,100 @@ EOF
     save_file($filename);
 }
 
+sub dump_full_compat_table()
+{
+    # first determine all the 16-char subsets that contain something
+
+    my @filled = (0) x 4096;
+    my $pos = 16;  # for the null subset
+    my $data_total = 0;
+    for (my $i = 0; $i < 65536; $i++)
+    {
+        next unless defined $full_compatmap_table[$i];
+        if ($filled[$i >> 4] == 0)
+        {
+            $filled[$i >> 4] = $pos;
+            $pos += 16;
+        }
+        $data_total += $#{$full_compatmap_table[$i]} + 1;
+    }
+    my $total = $pos;
+
+    # now count the 256-char subsets that contain something
+
+    my @filled_idx = (256) x 256;
+    $pos = 256 + 16;
+    for (my $i = 0; $i < 4096; $i++)
+    {
+        next unless $filled[$i];
+        $filled_idx[$i >> 4] = $pos;
+        $pos += 16;
+        $i |= 15;
+    }
+    my $null_offset = $pos;  # null mapping
+    $total += $pos + 1; # add the offset sentinel
+
+    # add the index offsets to the subsets positions
+
+    for (my $i = 0; $i < 4096; $i++)
+    {
+        next unless $filled[$i];
+        $filled[$i] += $null_offset;
+    }
+
+    # dump the main index
+
+    printf OUTPUT "static const WCHAR compatmap_table[%d] =\n", $total + $data_total;
+    printf OUTPUT "{\n    /* index */\n";
+    printf OUTPUT "%s", DUMP_ARRAY( "0x%04x", 0, @filled_idx );
+    printf OUTPUT ",\n    /* null sub-index */\n%s", DUMP_ARRAY( "0x%04x", 0, ($null_offset) x 16 );
+
+    # dump the second-level indexes
+
+    for (my $i = 0; $i < 256; $i++)
+    {
+        next unless ($filled_idx[$i] > 256);
+        my @table = @filled[($i<<4)..($i<<4)+15];
+        for (my $j = 0; $j < 16; $j++) { $table[$j] ||= $null_offset; }
+        printf OUTPUT ",\n    /* sub-index %02x */\n", $i;
+        printf OUTPUT "%s", DUMP_ARRAY( "0x%04x", 0, @table );
+    }
+
+    # dump the 16-char offsets
+
+    printf OUTPUT ",\n    /* null offsets */\n";
+    printf OUTPUT "%s", DUMP_ARRAY( "0x%04x", 0, ($total) x (16) );
+
+    $pos = $total;
+
+    my @data;
+    for (my $i = 0; $i < 4096; $i++)
+    {
+        next unless $filled[$i];
+        my @table = (0) x (16);
+        for (my $j = 0; $j < 16; $j++)
+        {
+            $table[$j] = $pos;
+            if (defined $full_compatmap_table[($i<<4) + $j])
+            {
+                $pos += $#{$full_compatmap_table[($i<<4) + $j]} + 1;
+                push @data, @{$full_compatmap_table[($i<<4) + $j]};
+            }
+        }
+        printf OUTPUT ",\n    /* offsets 0x%03x0 .. 0x%03xf */\n", $i, $i;
+        printf OUTPUT "%s", DUMP_ARRAY( "0x%04x", 0, @table );
+    }
+
+    my @sentinel = $pos;
+    printf OUTPUT ",\n    /* offset sentinel */\n";
+    printf OUTPUT "%s", DUMP_ARRAY( "0x%04x", 0, @sentinel );
+
+    printf OUTPUT ",\n    /* data */\n";
+    printf OUTPUT "%s", DUMP_ARRAY( "0x%04x", 0, @data );
+
+    printf OUTPUT "\n};\n\n";
+}
+
 ################################################################
 # dump the char decomposition table
 sub dump_decompose_table($)
@@ -2346,20 +2470,71 @@ sub dump_decompose_table($)
     }
 
     printf OUTPUT "\n};\n\n";
+
+    dump_full_compat_table();
+
     print OUTPUT <<"EOF";
-unsigned int DECLSPEC_HIDDEN wine_decompose( WCHAR ch, WCHAR *dst, unsigned int dstlen )
+static const WCHAR *get_compatmap_entry( WCHAR ch, unsigned int *len )
 {
-    const WCHAR *ptr = table + table[table[ch >> 8] + ((ch >> 4) & 0x0f)] + 2 * (ch & 0xf);
-    unsigned int res;
+    unsigned short offset_offs = compatmap_table[compatmap_table[ch >> 8] + ((ch >> 4) & 0xf)] + (ch & 0xf);
+    unsigned short start = compatmap_table[offset_offs];
+    unsigned short end = compatmap_table[offset_offs + 1];
+
+    if (end > start)
+    {
+        *len = end - start;
+        return compatmap_table + start;
+    }
+
+    return NULL;
+}
+
+unsigned int DECLSPEC_HIDDEN wine_decompose( int flags, WCHAR ch, WCHAR *dst, unsigned int dstlen )
+{
+    const WCHAR *ptr = NULL;
+    unsigned int res, len, dst_pos = 0;
 
     *dst = ch;
+
+    if (flags & WINE_DECOMPOSE_COMPAT)
+        ptr = get_compatmap_entry( ch, &len );
+
+    if (!ptr)
+    {
+        ptr = table + table[table[ch >> 8] + ((ch >> 4) & 0x0f)] + 2 * (ch & 0xf);
+        len = ptr[1] ? 2 : 1;
+    }
+
     if (!*ptr) return 1;
-    if (dstlen <= 1) return 0;
-    /* apply the decomposition recursively to the first char */
-    if ((res = wine_decompose( *ptr, dst, dstlen-1 ))) dst[res++] = ptr[1];
-    return res;
+    if (dstlen < len) return 0;
+    /* apply the decomposition recursively */
+    while (len--)
+    {
+        if (!(res = wine_decompose( flags, *ptr++, dst + dst_pos, dstlen - dst_pos - len ))) return 0;
+        dst_pos += res;
+    }
+
+    return dst_pos;
 }
 EOF
+    close OUTPUT;
+    save_file($filename);
+}
+
+################################################################
+# dump the combining class table
+sub dump_combining_class($)
+{
+    my $filename = shift;
+
+    open OUTPUT,">$filename.new" or die "Cannot create $filename";
+    print "Building $filename\n";
+    print OUTPUT "/* Unicode Combining Classes */\n";
+    print OUTPUT "/* generated from $UNIDATA/UnicodeData.txt */\n";
+    print OUTPUT "/* DO NOT EDIT!! */\n\n";
+    print OUTPUT "#include \"wine/unicode.h\"\n\n";
+
+    dump_two_level_mapping( "combining_class_table", 0, @combining_class_table );
     close OUTPUT;
     save_file($filename);
 }
@@ -2598,6 +2773,7 @@ dump_compose_table( "libs/port/compose.c" );
 dump_decompose_table( "libs/port/decompose.c" );
 DUMP_CTYPE_TABLES( "libs/wine/wctype.c" );
 dump_digit_folding( "libs/port/digitmap.c" );
+dump_combining_class( "libs/port/combclass.c" );
 dump_mirroring( "dlls/usp10/mirror.c" );
 dump_mirroring( "dlls/dwrite/mirror.c" );
 dump_bracket( "dlls/usp10/bracket.c" );

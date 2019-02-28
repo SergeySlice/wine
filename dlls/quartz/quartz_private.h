@@ -33,6 +33,7 @@
 #include "wine/strmbase.h"
 #include "wine/list.h"
 
+/* see IAsyncReader::Request on MSDN for the explanation of this */
 #define MEDIATIME_FROM_BYTES(x) ((LONGLONG)(x) * 10000000)
 #define SEC_FROM_MEDIATIME(time) ((time) / 10000000)
 #define BYTES_FROM_MEDIATIME(time) SEC_FROM_MEDIATIME(time)
@@ -60,7 +61,6 @@ HRESULT VMR9Impl_create(IUnknown *pUnkOuter, LPVOID *ppv) DECLSPEC_HIDDEN;
 HRESULT EnumMonikerImpl_Create(IMoniker ** ppMoniker, ULONG nMonikerCount, IEnumMoniker ** ppEnum) DECLSPEC_HIDDEN;
 
 HRESULT IEnumRegFiltersImpl_Construct(REGFILTER * pInRegFilters, const ULONG size, IEnumRegFilters ** ppEnum) DECLSPEC_HIDDEN;
-HRESULT IEnumFiltersImpl_Construct(IGraphVersion * pVersionSource, IBaseFilter *** pppFilters, ULONG * pNumFilters, IEnumFilters ** ppEnum) DECLSPEC_HIDDEN;
 
 extern const char * qzdebugstr_guid(const GUID * id) DECLSPEC_HIDDEN;
 extern void video_unregister_windowclass(void) DECLSPEC_HIDDEN;

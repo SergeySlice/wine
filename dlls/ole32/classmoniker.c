@@ -536,14 +536,14 @@ static HRESULT WINAPI ClassMoniker_GetDisplayName(IMoniker* iface,
 
     *ppszDisplayName = CoTaskMemAlloc(sizeof(wszClsidPrefix) + (CHARS_IN_GUID-2) * sizeof(WCHAR));
 
-    StringFromGUID2(&This->clsid, *ppszDisplayName+sizeof(wszClsidPrefix)/sizeof(WCHAR)-2, CHARS_IN_GUID);
+    StringFromGUID2(&This->clsid, *ppszDisplayName+ARRAY_SIZE(wszClsidPrefix)-2, CHARS_IN_GUID);
 
     /* note: this overwrites the opening curly bracket of the CLSID string generated above */
     memcpy(*ppszDisplayName, wszClsidPrefix, sizeof(wszClsidPrefix)-sizeof(WCHAR));
 
     /* note: this overwrites the closing curly bracket of the CLSID string generated above */
-    (*ppszDisplayName)[sizeof(wszClsidPrefix)/sizeof(WCHAR)-2+CHARS_IN_GUID-2] = ':';
-    (*ppszDisplayName)[sizeof(wszClsidPrefix)/sizeof(WCHAR)-2+CHARS_IN_GUID-1] = '\0';
+    (*ppszDisplayName)[ARRAY_SIZE(wszClsidPrefix)-2+CHARS_IN_GUID-2] = ':';
+    (*ppszDisplayName)[ARRAY_SIZE(wszClsidPrefix)-2+CHARS_IN_GUID-1] = '\0';
 
     TRACE("string is %s\n", debugstr_w(*ppszDisplayName));
     return S_OK;
@@ -804,30 +804,8 @@ HRESULT ClassMoniker_CreateFromDisplayName(LPBC pbc, LPCOLESTR szDisplayName, LP
     return hr;
 }
 
-static HRESULT WINAPI ClassMonikerCF_QueryInterface(IClassFactory *iface, REFIID riid, void **ppv)
-{
-    *ppv = NULL;
-    if (IsEqualIID(riid, &IID_IUnknown) || IsEqualIID(riid, &IID_IClassFactory))
-    {
-        *ppv = iface;
-        IClassFactory_AddRef(iface);
-        return S_OK;
-    }
-    return E_NOINTERFACE;
-}
-
-static ULONG WINAPI ClassMonikerCF_AddRef(LPCLASSFACTORY iface)
-{
-    return 2; /* non-heap based object */
-}
-
-static ULONG WINAPI ClassMonikerCF_Release(LPCLASSFACTORY iface)
-{
-    return 1; /* non-heap based object */
-}
-
-static HRESULT WINAPI ClassMonikerCF_CreateInstance(LPCLASSFACTORY iface,
-    LPUNKNOWN pUnk, REFIID riid, LPVOID *ppv)
+HRESULT WINAPI ClassMoniker_CreateInstance(IClassFactory *iface,
+    IUnknown *pUnk, REFIID riid, void **ppv)
 {
     HRESULT hr;
     IMoniker *pmk;
@@ -846,26 +824,4 @@ static HRESULT WINAPI ClassMonikerCF_CreateInstance(LPCLASSFACTORY iface,
     IMoniker_Release(pmk);
 
     return hr;
-}
-
-static HRESULT WINAPI ClassMonikerCF_LockServer(LPCLASSFACTORY iface, BOOL fLock)
-{
-    FIXME("(%d), stub!\n",fLock);
-    return S_OK;
-}
-
-static const IClassFactoryVtbl ClassMonikerCFVtbl =
-{
-    ClassMonikerCF_QueryInterface,
-    ClassMonikerCF_AddRef,
-    ClassMonikerCF_Release,
-    ClassMonikerCF_CreateInstance,
-    ClassMonikerCF_LockServer
-};
-
-static IClassFactory ClassMonikerCF = { &ClassMonikerCFVtbl };
-
-HRESULT ClassMonikerCF_Create(REFIID riid, LPVOID *ppv)
-{
-    return IClassFactory_QueryInterface(&ClassMonikerCF, riid, ppv);
 }

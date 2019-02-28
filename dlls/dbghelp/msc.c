@@ -169,6 +169,8 @@ static void codeview_init_basic_types(struct module* module)
     cv_basic_types[T_REAL80] = &symt_new_basic(module, btFloat, "long double", 10)->symt;
     cv_basic_types[T_RCHAR]  = &symt_new_basic(module, btInt,   "signed char", 1)->symt;
     cv_basic_types[T_WCHAR]  = &symt_new_basic(module, btWChar, "wchar_t", 2)->symt;
+    cv_basic_types[T_CHAR16] = &symt_new_basic(module, btChar16,"char16_t", 2)->symt;
+    cv_basic_types[T_CHAR32] = &symt_new_basic(module, btChar32,"char32_t", 4)->symt;
     cv_basic_types[T_INT2]   = &symt_new_basic(module, btInt,   "INT2", 2)->symt;
     cv_basic_types[T_UINT2]  = &symt_new_basic(module, btUInt,  "UINT2", 2)->symt;
     cv_basic_types[T_INT4]   = &symt_new_basic(module, btInt,   "INT4", 4)->symt;
@@ -195,6 +197,8 @@ static void codeview_init_basic_types(struct module* module)
     cv_basic_types[T_32PREAL80] = &symt_new_pointer(module, cv_basic_types[T_REAL80], 4)->symt;
     cv_basic_types[T_32PRCHAR]  = &symt_new_pointer(module, cv_basic_types[T_RCHAR], 4)->symt;
     cv_basic_types[T_32PWCHAR]  = &symt_new_pointer(module, cv_basic_types[T_WCHAR], 4)->symt;
+    cv_basic_types[T_32PCHAR16] = &symt_new_pointer(module, cv_basic_types[T_CHAR16], 4)->symt;
+    cv_basic_types[T_32PCHAR32] = &symt_new_pointer(module, cv_basic_types[T_CHAR32], 4)->symt;
     cv_basic_types[T_32PINT2]   = &symt_new_pointer(module, cv_basic_types[T_INT2], 4)->symt;
     cv_basic_types[T_32PUINT2]  = &symt_new_pointer(module, cv_basic_types[T_UINT2], 4)->symt;
     cv_basic_types[T_32PINT4]   = &symt_new_pointer(module, cv_basic_types[T_INT4], 4)->symt;
@@ -221,6 +225,8 @@ static void codeview_init_basic_types(struct module* module)
     cv_basic_types[T_64PREAL80] = &symt_new_pointer(module, cv_basic_types[T_REAL80], 8)->symt;
     cv_basic_types[T_64PRCHAR]  = &symt_new_pointer(module, cv_basic_types[T_RCHAR], 8)->symt;
     cv_basic_types[T_64PWCHAR]  = &symt_new_pointer(module, cv_basic_types[T_WCHAR], 8)->symt;
+    cv_basic_types[T_64PCHAR16] = &symt_new_pointer(module, cv_basic_types[T_CHAR16], 8)->symt;
+    cv_basic_types[T_64PCHAR32] = &symt_new_pointer(module, cv_basic_types[T_CHAR32], 8)->symt;
     cv_basic_types[T_64PINT2]   = &symt_new_pointer(module, cv_basic_types[T_INT2], 8)->symt;
     cv_basic_types[T_64PUINT2]  = &symt_new_pointer(module, cv_basic_types[T_UINT2], 8)->symt;
     cv_basic_types[T_64PINT4]   = &symt_new_pointer(module, cv_basic_types[T_INT4], 8)->symt;
@@ -247,6 +253,8 @@ static void codeview_init_basic_types(struct module* module)
     cv_basic_types[T_PREAL80] = &symt_new_pointer(module, cv_basic_types[T_REAL80], sizeof(void*))->symt;
     cv_basic_types[T_PRCHAR]  = &symt_new_pointer(module, cv_basic_types[T_RCHAR],  sizeof(void*))->symt;
     cv_basic_types[T_PWCHAR]  = &symt_new_pointer(module, cv_basic_types[T_WCHAR],  sizeof(void*))->symt;
+    cv_basic_types[T_PCHAR16] = &symt_new_pointer(module, cv_basic_types[T_CHAR16], sizeof(void*))->symt;
+    cv_basic_types[T_PCHAR32] = &symt_new_pointer(module, cv_basic_types[T_CHAR32], sizeof(void*))->symt;
     cv_basic_types[T_PINT2]   = &symt_new_pointer(module, cv_basic_types[T_INT2],   sizeof(void*))->symt;
     cv_basic_types[T_PUINT2]  = &symt_new_pointer(module, cv_basic_types[T_UINT2],  sizeof(void*))->symt;
     cv_basic_types[T_PINT4]   = &symt_new_pointer(module, cv_basic_types[T_INT4],   sizeof(void*))->symt;
@@ -2059,29 +2067,32 @@ static BOOL codeview_snarf_public(const struct msc_debug_info* msc_dbg, const BY
 
         switch (sym->generic.id)
         {
-	case S_PUB_V1: /* FIXME is this really a 'data_v1' structure ?? */
+        case S_PUB_V1:
             if (!(dbghelp_options & SYMOPT_NO_PUBLICS))
             {
                 symt_new_public(msc_dbg->module, compiland,
-                                terminate_string(&sym->data_v1.p_name),
-                                codeview_get_address(msc_dbg, sym->data_v1.segment, sym->data_v1.offset), 1);
+                                terminate_string(&sym->public_v1.p_name),
+                                sym->public_v1.symtype == SYMTYPE_FUNCTION,
+                                codeview_get_address(msc_dbg, sym->public_v1.segment, sym->public_v1.offset), 1);
             }
             break;
-	case S_PUB_V2: /* FIXME is this really a 'data_v2' structure ?? */
+        case S_PUB_V2:
             if (!(dbghelp_options & SYMOPT_NO_PUBLICS))
             {
                 symt_new_public(msc_dbg->module, compiland,
-                                terminate_string(&sym->data_v2.p_name),
-                                codeview_get_address(msc_dbg, sym->data_v2.segment, sym->data_v2.offset), 1);
+                                terminate_string(&sym->public_v2.p_name),
+                                sym->public_v2.symtype == SYMTYPE_FUNCTION,
+                                codeview_get_address(msc_dbg, sym->public_v2.segment, sym->public_v2.offset), 1);
             }
-	    break;
+            break;
 
         case S_PUB_V3:
             if (!(dbghelp_options & SYMOPT_NO_PUBLICS))
             {
                 symt_new_public(msc_dbg->module, compiland,
-                                sym->data_v3.name,
-                                codeview_get_address(msc_dbg, sym->data_v3.segment, sym->data_v3.offset), 1);
+                                sym->public_v3.name,
+                                sym->public_v3.symtype == SYMTYPE_FUNCTION,
+                                codeview_get_address(msc_dbg, sym->public_v3.segment, sym->public_v3.offset), 1);
             }
             break;
         case S_PUB_FUNC1_V3:
@@ -2436,17 +2447,17 @@ static HANDLE map_pdb_file(const struct process* pcs,
                            struct module* module)
 {
     HANDLE      hFile, hMap = NULL;
-    char        dbg_file_path[MAX_PATH];
+    WCHAR       dbg_file_path[MAX_PATH];
     BOOL        ret = FALSE;
 
     switch (lookup->kind)
     {
     case PDB_JG:
-        ret = path_find_symbol_file(pcs, lookup->filename, NULL, lookup->timestamp,
+        ret = path_find_symbol_file(pcs, module, lookup->filename, NULL, lookup->timestamp,
                                     lookup->age, dbg_file_path, &module->module.PdbUnmatched);
         break;
     case PDB_DS:
-        ret = path_find_symbol_file(pcs, lookup->filename, &lookup->guid, 0,
+        ret = path_find_symbol_file(pcs, module, lookup->filename, &lookup->guid, 0,
                                     lookup->age, dbg_file_path, &module->module.PdbUnmatched);
         break;
     }
@@ -2455,7 +2466,7 @@ static HANDLE map_pdb_file(const struct process* pcs,
         WARN("\tCouldn't find %s\n", lookup->filename);
         return NULL;
     }
-    if ((hFile = CreateFileA(dbg_file_path, GENERIC_READ, FILE_SHARE_READ, NULL,
+    if ((hFile = CreateFileW(dbg_file_path, GENERIC_READ, FILE_SHARE_READ, NULL,
                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL)) != INVALID_HANDLE_VALUE)
     {
         hMap = CreateFileMappingW(hFile, NULL, PAGE_READONLY, 0, 0, NULL);
@@ -2877,7 +2888,7 @@ static BOOL pdb_process_file(const struct process* pcs,
     if (ret)
     {
         struct pdb_module_info*     pdb_info = msc_dbg->module->format_info[DFI_PDB]->u.pdb_info;
-        msc_dbg->module->module.SymType = SymCv;
+        msc_dbg->module->module.SymType = SymPdb;
         if (pdb_info->pdb_files[0].kind == PDB_JG)
             msc_dbg->module->module.PdbSig = pdb_info->pdb_files[0].u.jg.timestamp;
         else
@@ -2885,7 +2896,7 @@ static BOOL pdb_process_file(const struct process* pcs,
         msc_dbg->module->module.PdbAge = pdb_info->pdb_files[0].age;
         MultiByteToWideChar(CP_ACP, 0, pdb_lookup->filename, -1,
                             msc_dbg->module->module.LoadedPdbName,
-                            sizeof(msc_dbg->module->module.LoadedPdbName) / sizeof(WCHAR));
+                            ARRAY_SIZE(msc_dbg->module->module.LoadedPdbName));
         /* FIXME: we could have a finer grain here */
         msc_dbg->module->module.LineNumbers = TRUE;
         msc_dbg->module->module.GlobalSymbols = TRUE;
@@ -3081,10 +3092,10 @@ static BOOL  pev_binop(struct pevaluator* pev, char op)
 static BOOL  pev_deref(struct pevaluator* pev)
 {
     char        res[PEV_MAX_LEN];
-    DWORD_PTR   v1, v2;
+    DWORD_PTR   v1, v2 = 0;
 
     if (!pev_pop_val(pev, &v1)) return FALSE;
-    if (!sw_read_mem(pev->csw, v1, &v2, sizeof(v2)))
+    if (!sw_read_mem(pev->csw, v1, &v2, pev->csw->cpu->word_size))
         return PEV_ERROR1(pev, "deref: cannot read mem at %lx\n", v1);
     snprintf(res, sizeof(res), "%ld", v2);
     pev_push(pev, res);
@@ -3188,8 +3199,8 @@ done:
     return FALSE;
 }
 
-BOOL         pdb_virtual_unwind(struct cpu_stack_walk* csw, DWORD_PTR ip,
-                                CONTEXT* context, struct pdb_cmd_pair* cpair)
+BOOL pdb_virtual_unwind(struct cpu_stack_walk *csw, DWORD_PTR ip,
+    union ctx *context, struct pdb_cmd_pair *cpair)
 {
     struct module_pair          pair;
     struct pdb_module_info*     pdb_info;

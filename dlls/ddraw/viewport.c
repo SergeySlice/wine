@@ -68,13 +68,15 @@ void viewport_activate(struct d3d_viewport *This, BOOL ignore_lights)
         }
     }
 
-    /* And copy the values in the structure used by the device */
-    if (This->use_vp2)
+    if (This->version == DDRAW_VIEWPORT_VERSION_NONE)
     {
-        if (!This->viewports.vp2.dvMinZ && !This->viewports.vp2.dvMaxZ
-                && !This->viewports.vp2.dvClipWidth && !This->viewports.vp2.dvClipHeight)
-            return;
+        TRACE("Viewport data was not set.\n");
+        return;
+    }
 
+    /* And copy the values in the structure used by the device */
+    if (This->version == DDRAW_VIEWPORT_VERSION_2)
+    {
         vp.dwX = This->viewports.vp2.dwX;
         vp.dwY = This->viewports.vp2.dwY;
         vp.dwHeight = This->viewports.vp2.dwHeight;
@@ -225,7 +227,7 @@ static ULONG WINAPI d3d_viewport_Release(IDirect3DViewport3 *iface)
     TRACE("%p decreasing refcount to %u.\n", viewport, ref);
 
     if (!ref)
-        HeapFree(GetProcessHeap(), 0, viewport);
+        heap_free(viewport);
 
     return ref;
 }
@@ -253,109 +255,129 @@ static HRESULT WINAPI d3d_viewport_Initialize(IDirect3DViewport3 *iface, IDirect
     return DDERR_ALREADYINITIALIZED;
 }
 
-/*****************************************************************************
- * IDirect3DViewport3::GetViewport
- *
- * Returns the viewport data assigned to this viewport interface
- *
- * Params:
- *  Data: Address to store the data
- *
- * Returns:
- *  D3D_OK on success
- *  DDERR_INVALIDPARAMS if Data is NULL
- *
- *****************************************************************************/
-static HRESULT WINAPI d3d_viewport_GetViewport(IDirect3DViewport3 *iface, D3DVIEWPORT *lpData)
+static HRESULT WINAPI d3d_viewport_GetViewport(IDirect3DViewport3 *iface, D3DVIEWPORT *vp)
 {
-    struct d3d_viewport *This = impl_from_IDirect3DViewport3(iface);
-    DWORD dwSize;
+    struct d3d_viewport *viewport = impl_from_IDirect3DViewport3(iface);
+    DWORD size;
 
-    TRACE("iface %p, data %p.\n", iface, lpData);
+    TRACE("iface %p, vp %p.\n", iface, vp);
+
+    if (!vp)
+        return DDERR_INVALIDPARAMS;
+
+    if (viewport->version == DDRAW_VIEWPORT_VERSION_NONE)
+    {
+        WARN("Viewport data was not set.\n");
+        return D3DERR_VIEWPORTDATANOTSET;
+    }
 
     wined3d_mutex_lock();
 
-    dwSize = lpData->dwSize;
-    if (!This->use_vp2)
-        memcpy(lpData, &(This->viewports.vp1), dwSize);
-    else {
+    size = vp->dwSize;
+    if (viewport->version == DDRAW_VIEWPORT_VERSION_1)
+    {
+        memcpy(vp, &viewport->viewports.vp1, size);
+    }
+    else
+    {
         D3DVIEWPORT vp1;
+
         vp1.dwSize = sizeof(vp1);
-        vp1.dwX = This->viewports.vp2.dwX;
-        vp1.dwY = This->viewports.vp2.dwY;
-        vp1.dwWidth = This->viewports.vp2.dwWidth;
-        vp1.dwHeight = This->viewports.vp2.dwHeight;
-        vp1.dvMaxX = 0.0;
-        vp1.dvMaxY = 0.0;
-        vp1.dvScaleX = 0.0;
-        vp1.dvScaleY = 0.0;
-        vp1.dvMinZ = This->viewports.vp2.dvMinZ;
-        vp1.dvMaxZ = This->viewports.vp2.dvMaxZ;
-        memcpy(lpData, &vp1, dwSize);
+        vp1.dwX = viewport->viewports.vp2.dwX;
+        vp1.dwY = viewport->viewports.vp2.dwY;
+        vp1.dwWidth = viewport->viewports.vp2.dwWidth;
+        vp1.dwHeight = viewport->viewports.vp2.dwHeight;
+        vp1.dvMaxX = 0.0f;
+        vp1.dvMaxY = 0.0f;
+        vp1.dvScaleX = 0.0f;
+        vp1.dvScaleY = 0.0f;
+        vp1.dvMinZ = viewport->viewports.vp2.dvMinZ;
+        vp1.dvMaxZ = viewport->viewports.vp2.dvMaxZ;
+        memcpy(vp, &vp1, size);
     }
 
     if (TRACE_ON(ddraw))
     {
         TRACE("  returning D3DVIEWPORT :\n");
-        _dump_D3DVIEWPORT(lpData);
+        _dump_D3DVIEWPORT(vp);
     }
 
     wined3d_mutex_unlock();
 
-    return DD_OK;
+    return D3D_OK;
 }
 
-/*****************************************************************************
- * IDirect3DViewport3::SetViewport
- *
- * Sets the viewport information for this interface
- *
- * Params:
- *  lpData: Viewport to set
- *
- * Returns:
- *  D3D_OK on success
- *  DDERR_INVALIDPARAMS if Data is NULL
- *
- *****************************************************************************/
-static HRESULT WINAPI d3d_viewport_SetViewport(IDirect3DViewport3 *iface, D3DVIEWPORT *lpData)
+static HRESULT WINAPI d3d_viewport_SetViewport(IDirect3DViewport3 *iface, D3DVIEWPORT *vp)
 {
-    struct d3d_viewport *This = impl_from_IDirect3DViewport3(iface);
+    struct d3d_viewport *viewport = impl_from_IDirect3DViewport3(iface);
+    struct d3d_device *device = viewport->active_device;
+    struct wined3d_sub_resource_desc rt_desc;
+    struct wined3d_rendertarget_view *rtv;
     IDirect3DViewport3 *current_viewport;
+    struct ddraw_surface *surface;
 
-    TRACE("iface %p, data %p.\n", iface, lpData);
+    TRACE("iface %p, vp %p.\n", iface, vp);
+
+    if (!vp)
+        return DDERR_INVALIDPARAMS;
+
+    if (vp->dwSize != sizeof(*vp))
+    {
+        WARN("Invalid D3DVIEWPORT size %u.\n", vp->dwSize);
+        return DDERR_INVALIDPARAMS;
+    }
 
     if (TRACE_ON(ddraw))
     {
         TRACE("  getting D3DVIEWPORT :\n");
-        _dump_D3DVIEWPORT(lpData);
+        _dump_D3DVIEWPORT(vp);
+    }
+
+    if (!device)
+    {
+        WARN("Viewport not bound to a device, returning D3DERR_VIEWPORTHASNODEVICE.\n");
+        return D3DERR_VIEWPORTHASNODEVICE;
     }
 
     wined3d_mutex_lock();
 
-    This->use_vp2 = 0;
-    memset(&(This->viewports.vp1), 0, sizeof(This->viewports.vp1));
-    memcpy(&(This->viewports.vp1), lpData, lpData->dwSize);
-
-    /* Tests on two games show that these values are never used properly so override
-       them with proper ones :-)
-    */
-    This->viewports.vp1.dvMinZ = 0.0;
-    This->viewports.vp1.dvMaxZ = 1.0;
-
-    if (This->active_device)
+    if (device->version > 1)
     {
-        IDirect3DDevice3 *d3d_device3 = &This->active_device->IDirect3DDevice3_iface;
-        if (SUCCEEDED(IDirect3DDevice3_GetCurrentViewport(d3d_device3, &current_viewport)))
+        if (!(rtv = wined3d_device_get_rendertarget_view(device->wined3d_device, 0)))
         {
-            if (current_viewport == iface) viewport_activate(This, FALSE);
-            IDirect3DViewport3_Release(current_viewport);
+            wined3d_mutex_unlock();
+            return DDERR_INVALIDCAPS;
         }
+        surface = wined3d_rendertarget_view_get_sub_resource_parent(rtv);
+        wined3d_texture_get_sub_resource_desc(surface->wined3d_texture, surface->sub_resource_idx, &rt_desc);
+
+        if (vp->dwX > rt_desc.width || vp->dwWidth > rt_desc.width - vp->dwX
+            || vp->dwY > rt_desc.height || vp->dwHeight > rt_desc.height - vp->dwY)
+        {
+            WARN("Invalid viewport, returning DDERR_INVALIDPARAMS.\n");
+            wined3d_mutex_unlock();
+            return DDERR_INVALIDPARAMS;
+        }
+    }
+
+    viewport->version = DDRAW_VIEWPORT_VERSION_1;
+    viewport->viewports.vp1 = *vp;
+
+    /* Empirical testing on a couple of d3d1 games showed that these values
+     * should be ignored. */
+    viewport->viewports.vp1.dvMinZ = 0.0f;
+    viewport->viewports.vp1.dvMaxZ = 1.0f;
+
+    if (SUCCEEDED(IDirect3DDevice3_GetCurrentViewport(&device->IDirect3DDevice3_iface, &current_viewport)))
+    {
+        if (current_viewport == iface)
+            viewport_activate(viewport, FALSE);
+        IDirect3DViewport3_Release(current_viewport);
     }
 
     wined3d_mutex_unlock();
 
-    return DD_OK;
+    return D3D_OK;
 }
 
 /*****************************************************************************
@@ -660,13 +682,19 @@ static HRESULT WINAPI d3d_viewport_Clear(IDirect3DViewport3 *iface,
     HRESULT hr;
     IDirect3DViewport3 *current_viewport;
     IDirect3DDevice3 *d3d_device3;
+    D3DRECT full_rect;
 
     TRACE("iface %p, rect_count %u, rects %p, flags %#x.\n", iface, rect_count, rects, flags);
 
     if (!rects || !rect_count)
     {
         WARN("rect_count = %u, rects = %p, ignoring clear\n", rect_count, rects);
-        return D3D_OK;
+        full_rect.u1.x1 = 0;
+        full_rect.u2.y1 = 0;
+        full_rect.u3.x2 = This->viewports.vp1.dwWidth;
+        full_rect.u4.y2 = This->viewports.vp1.dwHeight;
+        rect_count = 1;
+        rects = &full_rect;
     }
 
     if (This->active_device == NULL) {
@@ -886,53 +914,50 @@ static HRESULT WINAPI d3d_viewport_NextLight(IDirect3DViewport3 *iface,
  * IDirect3DViewport2 Methods.
  *****************************************************************************/
 
-/*****************************************************************************
- * IDirect3DViewport3::GetViewport2
- *
- * Returns the currently set viewport in a D3DVIEWPORT2 structure.
- * Similar to IDirect3DViewport3::GetViewport
- *
- * Params:
- *  lpData: Pointer to the structure to fill
- *
- * Returns:
- *  D3D_OK on success
- *  DDERR_INVALIDPARAMS if the viewport was set with
- *                      IDirect3DViewport3::SetViewport
- *  DDERR_INVALIDPARAMS if Data is NULL
- *
- *****************************************************************************/
-static HRESULT WINAPI d3d_viewport_GetViewport2(IDirect3DViewport3 *iface, D3DVIEWPORT2 *lpData)
+static HRESULT WINAPI d3d_viewport_GetViewport2(IDirect3DViewport3 *iface, D3DVIEWPORT2 *vp)
 {
-    struct d3d_viewport *This = impl_from_IDirect3DViewport3(iface);
-    DWORD dwSize;
+    struct d3d_viewport *viewport = impl_from_IDirect3DViewport3(iface);
+    DWORD size;
 
-    TRACE("iface %p, data %p.\n", iface, lpData);
+    TRACE("iface %p, vp %p.\n", iface, vp);
+
+    if (!vp)
+        return DDERR_INVALIDPARAMS;
+
+    if (viewport->version == DDRAW_VIEWPORT_VERSION_NONE)
+    {
+        WARN("Viewport data was not set.\n");
+        return D3DERR_VIEWPORTDATANOTSET;
+    }
 
     wined3d_mutex_lock();
-    dwSize = lpData->dwSize;
-    if (This->use_vp2)
-        memcpy(lpData, &(This->viewports.vp2), dwSize);
-    else {
+    size = vp->dwSize;
+    if (viewport->version == DDRAW_VIEWPORT_VERSION_2)
+    {
+        memcpy(vp, &viewport->viewports.vp2, size);
+    }
+    else
+    {
         D3DVIEWPORT2 vp2;
+
         vp2.dwSize = sizeof(vp2);
-        vp2.dwX = This->viewports.vp1.dwX;
-        vp2.dwY = This->viewports.vp1.dwY;
-        vp2.dwWidth = This->viewports.vp1.dwWidth;
-        vp2.dwHeight = This->viewports.vp1.dwHeight;
-        vp2.dvClipX = 0.0;
-        vp2.dvClipY = 0.0;
-        vp2.dvClipWidth = 0.0;
-        vp2.dvClipHeight = 0.0;
-        vp2.dvMinZ = This->viewports.vp1.dvMinZ;
-        vp2.dvMaxZ = This->viewports.vp1.dvMaxZ;
-        memcpy(lpData, &vp2, dwSize);
+        vp2.dwX = viewport->viewports.vp1.dwX;
+        vp2.dwY = viewport->viewports.vp1.dwY;
+        vp2.dwWidth = viewport->viewports.vp1.dwWidth;
+        vp2.dwHeight = viewport->viewports.vp1.dwHeight;
+        vp2.dvClipX = 0.0f;
+        vp2.dvClipY = 0.0f;
+        vp2.dvClipWidth = 0.0f;
+        vp2.dvClipHeight = 0.0f;
+        vp2.dvMinZ = viewport->viewports.vp1.dvMinZ;
+        vp2.dvMaxZ = viewport->viewports.vp1.dvMaxZ;
+        memcpy(vp, &vp2, size);
     }
 
     if (TRACE_ON(ddraw))
     {
         TRACE("  returning D3DVIEWPORT2 :\n");
-        _dump_D3DVIEWPORT2(lpData);
+        _dump_D3DVIEWPORT2(vp);
     }
 
     wined3d_mutex_unlock();
@@ -940,45 +965,67 @@ static HRESULT WINAPI d3d_viewport_GetViewport2(IDirect3DViewport3 *iface, D3DVI
     return D3D_OK;
 }
 
-/*****************************************************************************
- * IDirect3DViewport3::SetViewport2
- *
- * Sets the viewport from a D3DVIEWPORT2 structure
- *
- * Params:
- *  lpData: Viewport to set
- *
- * Returns:
- *  D3D_OK on success
- *
- *****************************************************************************/
-static HRESULT WINAPI d3d_viewport_SetViewport2(IDirect3DViewport3 *iface, D3DVIEWPORT2 *lpData)
+static HRESULT WINAPI d3d_viewport_SetViewport2(IDirect3DViewport3 *iface, D3DVIEWPORT2 *vp)
 {
-    struct d3d_viewport *This = impl_from_IDirect3DViewport3(iface);
+    struct d3d_viewport *viewport = impl_from_IDirect3DViewport3(iface);
+    struct d3d_device *device = viewport->active_device;
+    struct wined3d_sub_resource_desc rt_desc;
+    struct wined3d_rendertarget_view *rtv;
     IDirect3DViewport3 *current_viewport;
+    struct ddraw_surface *surface;
 
-    TRACE("iface %p, data %p.\n", iface, lpData);
+    TRACE("iface %p, vp %p.\n", iface, vp);
+
+    if (!vp)
+        return DDERR_INVALIDPARAMS;
+
+    if (vp->dwSize != sizeof(*vp))
+    {
+        WARN("Invalid D3DVIEWPORT2 size %u.\n", vp->dwSize);
+        return DDERR_INVALIDPARAMS;
+    }
 
     if (TRACE_ON(ddraw))
     {
         TRACE("  getting D3DVIEWPORT2 :\n");
-        _dump_D3DVIEWPORT2(lpData);
+        _dump_D3DVIEWPORT2(vp);
+    }
+
+    if (!device)
+    {
+        WARN("Viewport not bound to a device, returning D3DERR_VIEWPORTHASNODEVICE.\n");
+        return D3DERR_VIEWPORTHASNODEVICE;
     }
 
     wined3d_mutex_lock();
 
-    This->use_vp2 = 1;
-    memset(&(This->viewports.vp2), 0, sizeof(This->viewports.vp2));
-    memcpy(&(This->viewports.vp2), lpData, lpData->dwSize);
-
-    if (This->active_device)
+    if (device->version > 1)
     {
-        IDirect3DDevice3 *d3d_device3 = &This->active_device->IDirect3DDevice3_iface;
-        if (SUCCEEDED(IDirect3DDevice3_GetCurrentViewport(d3d_device3, &current_viewport)))
+        if (!(rtv = wined3d_device_get_rendertarget_view(device->wined3d_device, 0)))
         {
-            if (current_viewport == iface) viewport_activate(This, FALSE);
-            IDirect3DViewport3_Release(current_viewport);
+            wined3d_mutex_unlock();
+            return DDERR_INVALIDCAPS;
         }
+        surface = wined3d_rendertarget_view_get_sub_resource_parent(rtv);
+        wined3d_texture_get_sub_resource_desc(surface->wined3d_texture, surface->sub_resource_idx, &rt_desc);
+
+        if (vp->dwX > rt_desc.width || vp->dwWidth > rt_desc.width - vp->dwX
+            || vp->dwY > rt_desc.height || vp->dwHeight > rt_desc.height - vp->dwY)
+        {
+            WARN("Invalid viewport, returning DDERR_INVALIDPARAMS.\n");
+            wined3d_mutex_unlock();
+            return DDERR_INVALIDPARAMS;
+        }
+    }
+
+    viewport->version = DDRAW_VIEWPORT_VERSION_2;
+    viewport->viewports.vp2 = *vp;
+
+    if (SUCCEEDED(IDirect3DDevice3_GetCurrentViewport(&device->IDirect3DDevice3_iface, &current_viewport)))
+    {
+        if (current_viewport == iface)
+            viewport_activate(viewport, FALSE);
+        IDirect3DViewport3_Release(current_viewport);
     }
 
     wined3d_mutex_unlock();
@@ -1152,6 +1199,6 @@ void d3d_viewport_init(struct d3d_viewport *viewport, struct ddraw *ddraw)
     viewport->IDirect3DViewport3_iface.lpVtbl = &d3d_viewport_vtbl;
     viewport->ref = 1;
     viewport->ddraw = ddraw;
-    viewport->use_vp2 = 0xff;
+    viewport->version = DDRAW_VIEWPORT_VERSION_NONE;
     list_init(&viewport->light_list);
 }

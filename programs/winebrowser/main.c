@@ -54,7 +54,7 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(winebrowser);
 
-typedef LPSTR (*wine_get_unix_file_name_t)(LPCWSTR unixname);
+typedef LPSTR (*CDECL wine_get_unix_file_name_t)(LPCWSTR unixname);
 
 static const WCHAR browser_key[] =
     {'S','o','f','t','w','a','r','e','\\','W','i','n','e','\\',
@@ -334,7 +334,7 @@ static WCHAR *encode_unix_path(const char *src)
     const char safe_chars[] = "/-_.~@&=+$,:";
     const char hex_digits[] = "0123456789ABCDEF";
     const WCHAR schema[] = {'f','i','l','e',':','/','/',0};
-    int len = sizeof(schema)/sizeof(schema[0]);
+    int len = ARRAY_SIZE(schema);
 
     tmp_src = src;
 

@@ -36,6 +36,8 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(msvcrt);
 
+BOOL WINAPI GetDaylightFlag(void);
+
 static const int MonthLengths[2][12] =
 {
     { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 },
@@ -765,21 +767,19 @@ double CDECL MSVCRT_difftime(MSVCRT___time32_t time1, MSVCRT___time32_t time2)
  */
 void CDECL MSVCRT__ftime64(struct MSVCRT___timeb64 *buf)
 {
-  TIME_ZONE_INFORMATION tzinfo;
   FILETIME ft;
   ULONGLONG time;
 
-  DWORD tzid = GetTimeZoneInformation(&tzinfo);
+  _tzset_init();
+
   GetSystemTimeAsFileTime(&ft);
 
   time = ((ULONGLONG)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
 
   buf->time = time / TICKSPERSEC - SECS_1601_TO_1970;
   buf->millitm = (time % TICKSPERSEC) / TICKSPERMSEC;
-  buf->timezone = tzinfo.Bias +
-      ( tzid == TIME_ZONE_ID_STANDARD ? tzinfo.StandardBias :
-      ( tzid == TIME_ZONE_ID_DAYLIGHT ? tzinfo.DaylightBias : 0 ));
-  buf->dstflag = (tzid == TIME_ZONE_ID_DAYLIGHT?1:0);
+  buf->timezone = MSVCRT___timezone / 60;
+  buf->dstflag = GetDaylightFlag();
 }
 
 /*********************************************************************
@@ -889,6 +889,18 @@ int * CDECL MSVCRT___p__dstbias(void)
 {
     return &MSVCRT__dstbias;
 }
+
+#if _MSVCR_VER >= 80
+/*********************************************************************
+ *              _get_dstbias (MSVCR80.@)
+ */
+int CDECL  MSVCRT__get_dstbias(int *seconds)
+{
+    if (!MSVCRT_CHECK_PMT(seconds != NULL)) return MSVCRT_EINVAL;
+    *seconds = MSVCRT__dstbias;
+    return 0;
+}
+#endif
 
 /*********************************************************************
  *		__p__timezone (MSVCRT.@)
@@ -1194,7 +1206,7 @@ static MSVCRT_size_t strftime_helper(char *str, MSVCRT_size_t max, const char *f
             MSVCRT__tzset();
             if(MSVCRT__get_tzname(&tmp, str+ret, max-ret, mstm->tm_isdst ? 1 : 0))
                 return 0;
-            ret += tmp;
+            ret += tmp-1;
             break;
         case 'U':
         case 'W':
@@ -1236,14 +1248,16 @@ einval_error:
     return 0;
 }
 
+#if _MSVCR_VER >= 80
 /********************************************************************
- *     _strftime_l (MSVCRT.@)
+ *     _strftime_l (MSVCR80.@)
  */
 MSVCRT_size_t CDECL MSVCRT__strftime_l( char *str, MSVCRT_size_t max, const char *format,
         const struct MSVCRT_tm *mstm, MSVCRT__locale_t loc )
 {
     return strftime_helper(str, max, format, mstm, NULL, loc);
 }
+#endif
 
 /*********************************************************************
  *		_Strftime (MSVCRT.@)
@@ -1263,16 +1277,14 @@ MSVCRT_size_t CDECL MSVCRT_strftime( char *str, MSVCRT_size_t max, const char *f
     return strftime_helper(str, max, format, mstm, NULL, NULL);
 }
 
-/*********************************************************************
- *              _wcsftime_l (MSVCRT.@)
- */
-MSVCRT_size_t CDECL MSVCRT__wcsftime_l( MSVCRT_wchar_t *str, MSVCRT_size_t max,
-        const MSVCRT_wchar_t *format, const struct MSVCRT_tm *mstm, MSVCRT__locale_t loc )
+static MSVCRT_size_t wcsftime_helper( MSVCRT_wchar_t *str, MSVCRT_size_t max,
+        const MSVCRT_wchar_t *format, const struct MSVCRT_tm *mstm,
+        MSVCRT___lc_time_data *time_data, MSVCRT__locale_t loc )
 {
     char *s, *fmt;
     MSVCRT_size_t len;
 
-    TRACE("%p %ld %s %p %p\n", str, max, debugstr_w(format), mstm, loc);
+    TRACE("%p %ld %s %p %p %p\n", str, max, debugstr_w(format), mstm, time_data, loc);
 
     len = MSVCRT__wcstombs_l( NULL, format, 0, loc ) + 1;
     if (!(fmt = MSVCRT_malloc( len ))) return 0;
@@ -1280,7 +1292,7 @@ MSVCRT_size_t CDECL MSVCRT__wcsftime_l( MSVCRT_wchar_t *str, MSVCRT_size_t max,
 
     if ((s = MSVCRT_malloc( max*4 )))
     {
-        if (!MSVCRT__strftime_l( s, max*4, fmt, mstm, loc )) s[0] = 0;
+        if (!strftime_helper( s, max*4, fmt, mstm, time_data, loc )) s[0] = 0;
         len = MSVCRT__mbstowcs_l( str, s, max, loc );
         MSVCRT_free( s );
     }
@@ -1291,13 +1303,34 @@ MSVCRT_size_t CDECL MSVCRT__wcsftime_l( MSVCRT_wchar_t *str, MSVCRT_size_t max,
 }
 
 /*********************************************************************
+ *              _wcsftime_l (MSVCRT.@)
+ */
+MSVCRT_size_t CDECL MSVCRT__wcsftime_l( MSVCRT_wchar_t *str, MSVCRT_size_t max,
+        const MSVCRT_wchar_t *format, const struct MSVCRT_tm *mstm, MSVCRT__locale_t loc )
+{
+    return wcsftime_helper(str, max, format, mstm, NULL, loc);
+}
+
+/*********************************************************************
  *     wcsftime (MSVCRT.@)
  */
 MSVCRT_size_t CDECL MSVCRT_wcsftime( MSVCRT_wchar_t *str, MSVCRT_size_t max,
                                      const MSVCRT_wchar_t *format, const struct MSVCRT_tm *mstm )
 {
-    return MSVCRT__wcsftime_l(str, max, format, mstm, NULL);
+    return wcsftime_helper(str, max, format, mstm, NULL, NULL);
 }
+
+#if _MSVCR_VER >= 110
+/*********************************************************************
+ *		_Wcsftime (MSVCR110.@)
+ */
+MSVCRT_size_t CDECL _Wcsftime(MSVCRT_wchar_t *str, MSVCRT_size_t max,
+        const MSVCRT_wchar_t *format, const struct MSVCRT_tm *mstm,
+        MSVCRT___lc_time_data *time_data)
+{
+    return wcsftime_helper(str, max, format, mstm, time_data, NULL);
+}
+#endif
 
 static char* asctime_buf(char *buf, const struct MSVCRT_tm *mstm)
 {
@@ -1316,9 +1349,16 @@ static char* asctime_buf(char *buf, const struct MSVCRT_tm *mstm)
         return NULL;
     }
 
+#if _MSVCR_VER>=140
+    /* C89 (4.12.3.1) uses space-padding for day of month. */
+    MSVCRT__snprintf(buf, 26, "%s %s %2d %02d:%02d:%02d %c%03d\n", wday[mstm->tm_wday],
+            month[mstm->tm_mon], mstm->tm_mday, mstm->tm_hour, mstm->tm_min,
+            mstm->tm_sec, '1'+(mstm->tm_year+900)/1000, (900+mstm->tm_year)%1000);
+#else
     MSVCRT__snprintf(buf, 26, "%s %s %02d %02d:%02d:%02d %c%03d\n", wday[mstm->tm_wday],
             month[mstm->tm_mon], mstm->tm_mday, mstm->tm_hour, mstm->tm_min,
             mstm->tm_sec, '1'+(mstm->tm_year+900)/1000, (900+mstm->tm_year)%1000);
+#endif
     return buf;
 }
 
@@ -1555,8 +1595,10 @@ int CDECL MSVCRT__wctime32_s(MSVCRT_wchar_t *buf, MSVCRT_size_t size,
     return MSVCRT__wasctime_s(buf, size, &tm);
 }
 
+#if _MSVCR_VER >= 80
+
 /*********************************************************************
- * _get_timezone (MSVCR100.@)
+ * _get_timezone (MSVCR80.@)
  */
 int CDECL _get_timezone(LONG *timezone)
 {
@@ -1567,7 +1609,7 @@ int CDECL _get_timezone(LONG *timezone)
 }
 
 /*********************************************************************
- * _get_daylight (MSVCR100.@)
+ * _get_daylight (MSVCR80.@)
  */
 int CDECL _get_daylight(int *hours)
 {
@@ -1576,3 +1618,58 @@ int CDECL _get_daylight(int *hours)
     *hours = MSVCRT___daylight;
     return 0;
 }
+
+#endif /* _MSVCR_VER >= 80 */
+
+#if _MSVCR_VER >= 140
+
+#define TIME_UTC 1
+
+struct _timespec32
+{
+    MSVCRT___time32_t tv_sec;
+    LONG tv_nsec;
+};
+
+struct _timespec64
+{
+    MSVCRT___time64_t tv_sec;
+    LONG tv_nsec;
+};
+
+/*********************************************************************
+ * _timespec64_get (UCRTBASE.@)
+ */
+int CDECL _timespec64_get(struct _timespec64 *ts, int base)
+{
+    ULONGLONG time;
+    FILETIME ft;
+
+    if(!MSVCRT_CHECK_PMT(ts != NULL)) return 0;
+    if(base != TIME_UTC) return 0;
+
+    GetSystemTimePreciseAsFileTime(&ft);
+    time = ((ULONGLONG)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
+
+    ts->tv_sec = time / TICKSPERSEC - SECS_1601_TO_1970;
+    ts->tv_nsec = time % TICKSPERSEC * 100;
+    return base;
+}
+
+/*********************************************************************
+ * _timespec32_get (UCRTBASE.@)
+ */
+int CDECL _timespec32_get(struct _timespec32 *ts, int base)
+{
+    struct _timespec64 ts64;
+
+    if(_timespec64_get(&ts64, base) != base)
+        return 0;
+    if(ts64.tv_sec != (MSVCRT___time32_t)ts64.tv_sec)
+        return 0;
+
+    ts->tv_sec = ts64.tv_sec;
+    ts->tv_nsec = ts64.tv_nsec;
+    return base;
+}
+#endif /* _MSVCR_VER >= 140 */

@@ -106,8 +106,14 @@ static void test_select( IWbemServices *services )
         {'S','E','L','E','C','T',' ','*',' ','F','R','O','M',' ',
          'W','i','n','3','2','_','V','i','d','e','o','C','o','n','t','r','o','l','l','e','r',' ','w','h','e','r','e',' ',
          'a','v','a','i','l','a','b','i','l','i','t','y',' ','=',' ','\'','3','\'',0};
+    static const WCHAR query12[] =
+        {'S','E','L','E','C','T',' ','*',' ','F','R','O','M',' ','W','i','n','3','2','_','B','I','O','S',
+         ' ','W','H','E','R','E',' ','N','A','M','E',' ','<','>',' ','N','U','L','L', 0};
+    static const WCHAR query13[] =
+        {'S','E','L','E','C','T',' ','*',' ','F','R','O','M',' ','W','i','n','3','2','_','B','I','O','S',
+         ' ','W','H','E','R','E',' ','N','U','L','L',' ','=',' ','N','A','M','E', 0};
     static const WCHAR *test[] = { query1, query2, query3, query4, query5, query6, query7, query8, query9, query10,
-                                   query11 };
+                                   query11, query12, query13 };
     HRESULT hr;
     IEnumWbemClassObject *result;
     BSTR wql = SysAllocString( wqlW );
@@ -135,7 +141,7 @@ static void test_select( IWbemServices *services )
     hr = IWbemServices_ExecQuery( services, wql, query, 0, NULL, &result );
     ok( hr == WBEM_E_INVALID_PARAMETER, "query failed %08x\n", hr );
 
-    for (i = 0; i < sizeof(test)/sizeof(test[0]); i++)
+    for (i = 0; i < ARRAY_SIZE( test ); i++)
     {
         hr = exec_query( services, test[i], &result );
         ok( hr == S_OK, "query %u failed: %08x\n", i, hr );
@@ -162,7 +168,7 @@ static void test_associators( IWbemServices *services )
     IEnumWbemClassObject *result;
     UINT i;
 
-    for (i = 0; i < sizeof(test)/sizeof(test[0]); i++)
+    for (i = 0; i < ARRAY_SIZE( test ); i++)
     {
         hr = exec_query( services, test[i], &result );
         todo_wine ok( hr == S_OK, "query %u failed: %08x\n", i, hr );
@@ -282,6 +288,8 @@ static void test_Win32_Bios( IWbemServices *services )
     static const WCHAR releasedateW[] = {'R','e','l','e','a','s','e','D','a','t','e',0};
     static const WCHAR serialnumberW[] = {'S','e','r','i','a','l','N','u','m','b','e','r',0};
     static const WCHAR smbiosbiosversionW[] = {'S','M','B','I','O','S','B','I','O','S','V','e','r','s','i','o','n',0};
+    static const WCHAR smbiosmajorversionW[] = {'S','M','B','I','O','S','M','a','j','o','r','V','e','r','s','i','o','n',0};
+    static const WCHAR smbiosminorversionW[] = {'S','M','B','I','O','S','M','i','n','o','r','V','e','r','s','i','o','n',0};
     static const WCHAR versionW[] = {'V','e','r','s','i','o','n',0};
     BSTR wql = SysAllocString( wqlW ), query = SysAllocString( queryW );
     IEnumWbemClassObject *result;
@@ -361,6 +369,22 @@ static void test_Win32_Bios( IWbemServices *services )
 
     type = 0xdeadbeef;
     VariantInit( &val );
+    hr = IWbemClassObject_Get( obj, smbiosmajorversionW, 0, &val, &type, NULL );
+    ok( hr == S_OK, "failed to get bios major version %08x\n", hr );
+    ok( V_VT( &val ) == VT_I4, "unexpected variant type 0x%x\n", V_VT( &val ) );
+    ok( type == CIM_UINT16, "unexpected type 0x%x\n", type );
+    trace( "bios major version: %u\n", V_I4( &val ) );
+
+    type = 0xdeadbeef;
+    VariantInit( &val );
+    hr = IWbemClassObject_Get( obj, smbiosminorversionW, 0, &val, &type, NULL );
+    ok( hr == S_OK, "failed to get bios minor version %08x\n", hr );
+    ok( V_VT( &val ) == VT_I4, "unexpected variant type 0x%x\n", V_VT( &val ) );
+    ok( type == CIM_UINT16, "unexpected type 0x%x\n", type );
+    trace( "bios minor version: %u\n", V_I4( &val ) );
+
+    type = 0xdeadbeef;
+    VariantInit( &val );
     hr = IWbemClassObject_Get( obj, versionW, 0, &val, &type, NULL );
     ok( hr == S_OK, "failed to get version %08x\n", hr );
     ok( V_VT( &val ) == VT_BSTR, "unexpected variant type 0x%x\n", V_VT( &val ) );
@@ -374,7 +398,7 @@ static void test_Win32_Bios( IWbemServices *services )
     SysFreeString( wql );
 }
 
-static void test_Win32_Process( IWbemServices *services )
+static void test_Win32_Process( IWbemServices *services, BOOL use_full_path )
 {
     static const WCHAR returnvalueW[] = {'R','e','t','u','r','n','V','a','l','u','e',0};
     static const WCHAR getownerW[] = {'G','e','t','O','w','n','e','r',0};
@@ -384,18 +408,33 @@ static void test_Win32_Process( IWbemServices *services )
     static const WCHAR idW[] = {'I','D',0};
     static const WCHAR fmtW[] = {'W','i','n','3','2','_','P','r','o','c','e','s','s','.',
         'H','a','n','d','l','e','=','"','%','u','"',0};
+    static const WCHAR full_path_fmt[] =
+        {'\\','\\','%','s','\\','R','O','O','T','\\','C','I','M','V','2',':',0};
     static const LONG expected_flavor = WBEM_FLAVOR_FLAG_PROPAGATE_TO_INSTANCE |
                                         WBEM_FLAVOR_NOT_OVERRIDABLE |
                                         WBEM_FLAVOR_ORIGIN_PROPAGATED;
+    WCHAR full_path[MAX_COMPUTERNAME_LENGTH + ARRAY_SIZE(full_path_fmt)];
     BSTR class, method;
-    IWbemClassObject *process, *out;
+    IWbemClassObject *process, *sig_in, *out;
     IWbemQualifierSet *qualifiers;
     VARIANT user, domain, retval, val;
+    DWORD full_path_len = 0;
     LONG flavor;
     CIMTYPE type;
     HRESULT hr;
 
-    class = SysAllocString( processW );
+    if (use_full_path)
+    {
+        WCHAR server[MAX_COMPUTERNAME_LENGTH+1];
+
+        full_path_len = ARRAY_SIZE(server);
+        ok( GetComputerNameW(server, &full_path_len), "GetComputerName failed\n" );
+        full_path_len = wsprintfW(full_path, full_path_fmt, server);
+    }
+
+    class = SysAllocStringLen( NULL, full_path_len + ARRAY_SIZE( processW ) );
+    memcpy( class, full_path, full_path_len * sizeof(WCHAR) );
+    memcpy( class + full_path_len, processW, sizeof(processW) );
     hr = IWbemServices_GetObject( services, class, 0, NULL, &process, NULL );
     SysFreeString( class );
     if (hr != S_OK)
@@ -403,14 +442,17 @@ static void test_Win32_Process( IWbemServices *services )
         win_skip( "Win32_Process not available\n" );
         return;
     }
-    hr = IWbemClassObject_GetMethod( process, getownerW, 0, NULL, NULL );
+    sig_in = (void*)0xdeadbeef;
+    hr = IWbemClassObject_GetMethod( process, getownerW, 0, &sig_in, NULL );
     ok( hr == S_OK, "failed to get GetOwner method %08x\n", hr );
+    ok( !sig_in, "sig_in != NULL\n");
     IWbemClassObject_Release( process );
 
     out = NULL;
     method = SysAllocString( getownerW );
-    class = SysAllocStringLen( NULL, sizeof(fmtW)/sizeof(fmtW[0]) + 10 );
-    wsprintfW( class, fmtW, GetCurrentProcessId() );
+    class = SysAllocStringLen( NULL, full_path_len + ARRAY_SIZE( fmtW ) + 10 );
+    memcpy( class, full_path, full_path_len * sizeof(WCHAR) );
+    wsprintfW( class + full_path_len, fmtW, GetCurrentProcessId() );
     hr = IWbemServices_ExecMethod( services, class, method, 0, NULL, NULL, &out, NULL );
     ok( hr == S_OK, "failed to execute method %08x\n", hr );
     SysFreeString( method );
@@ -487,12 +529,16 @@ static void test_Win32_ComputerSystem( IWbemServices *services )
     static const WCHAR modelW[] = {'M','o','d','e','l',0};
     static const WCHAR nameW[] = {'N','a','m','e',0};
     static const WCHAR usernameW[] = {'U','s','e','r','N','a','m','e',0};
+    static const WCHAR numprocessorsW[] =
+        {'N','u','m','b','e','r','O','f','P','r','o','c','e','s','s','o','r','s',0};
+    static const WCHAR numlogicalprocessorsW[] =
+        {'N','u','m','b','e','r','O','f','L','o','g','i','c','a','l','P','r','o','c','e','s','s','o','r','s',0};
     static const WCHAR queryW[] =
         {'S','E','L','E','C','T',' ','*',' ','F','R','O','M',' ','W','i','n','3','2','_',
          'C','o','m','p','u','t','e','r','S','y','s','t','e','m',0};
     BSTR wql = SysAllocString( wqlW ), query = SysAllocString( queryW );
     IEnumWbemClassObject *result;
-    IWbemClassObject *service;
+    IWbemClassObject *obj;
     VARIANT value;
     CIMTYPE type;
     HRESULT hr;
@@ -500,13 +546,13 @@ static void test_Win32_ComputerSystem( IWbemServices *services )
     WCHAR username[128];
     DWORD len, count;
 
-    len = sizeof(compname) / sizeof(compname[0]);
+    len = ARRAY_SIZE( compname );
     if (!GetComputerNameW( compname, &len ))
         compname[0] = 0;
 
     lstrcpyW( username, compname );
     lstrcatW( username, backslashW );
-    len = sizeof(username) / sizeof(username[0]) - lstrlenW( username );
+    len = ARRAY_SIZE( username ) - lstrlenW( username );
     if (!GetUserNameW( username + lstrlenW( username ), &len ))
         username[0] = 0;
 
@@ -523,17 +569,17 @@ static void test_Win32_ComputerSystem( IWbemServices *services )
         goto out;
     }
 
-    hr = IEnumWbemClassObject_Next( result, 10000, 1, &service, &count );
+    hr = IEnumWbemClassObject_Next( result, 10000, 1, &obj, &count );
     ok( hr == S_OK, "got %08x\n", hr );
 
     type = 0xdeadbeef;
     VariantInit( &value );
-    hr = IWbemClassObject_Get( service, memorytypeW, 0, &value, &type, NULL );
+    hr = IWbemClassObject_Get( obj, memorytypeW, 0, &value, &type, NULL );
     ok( hr == WBEM_E_NOT_FOUND, "got %08x\n", hr );
 
     type = 0xdeadbeef;
     VariantInit( &value );
-    hr = IWbemClassObject_Get( service, modelW, 0, &value, &type, NULL );
+    hr = IWbemClassObject_Get( obj, modelW, 0, &value, &type, NULL );
     ok( hr == S_OK, "failed to get model %08x\n", hr );
     ok( V_VT( &value ) == VT_BSTR, "unexpected variant type 0x%x\n", V_VT( &value ) );
     ok( type == CIM_STRING, "unexpected type 0x%x\n", type );
@@ -542,7 +588,7 @@ static void test_Win32_ComputerSystem( IWbemServices *services )
 
     type = 0xdeadbeef;
     VariantInit( &value );
-    hr = IWbemClassObject_Get( service, nameW, 0, &value, &type, NULL );
+    hr = IWbemClassObject_Get( obj, nameW, 0, &value, &type, NULL );
     ok( hr == S_OK, "failed to get computer name %08x\n", hr );
     ok( V_VT( &value ) == VT_BSTR, "unexpected variant type 0x%x\n", V_VT( &value ) );
     ok( type == CIM_STRING, "unexpected type 0x%x\n", type );
@@ -551,14 +597,33 @@ static void test_Win32_ComputerSystem( IWbemServices *services )
 
     type = 0xdeadbeef;
     VariantInit( &value );
-    hr = IWbemClassObject_Get( service, usernameW, 0, &value, &type, NULL );
+    hr = IWbemClassObject_Get( obj, numlogicalprocessorsW, 0, &value, &type, NULL );
+    ok( hr == S_OK || broken(hr == WBEM_E_NOT_FOUND) /* win2k3 */, "got %08x\n", hr );
+    if (hr == S_OK)
+    {
+        ok( V_VT( &value ) == VT_I4, "unexpected variant type 0x%x\n", V_VT( &value ) );
+        ok( type == CIM_UINT32, "unexpected type 0x%x\n", type );
+        trace( "numlogicalprocessors %u\n", V_I4( &value ) );
+    }
+
+    type = 0xdeadbeef;
+    VariantInit( &value );
+    hr = IWbemClassObject_Get( obj, numprocessorsW, 0, &value, &type, NULL );
+    ok( hr == S_OK, "got %08x\n", hr );
+    ok( V_VT( &value ) == VT_I4, "unexpected variant type 0x%x\n", V_VT( &value ) );
+    ok( type == CIM_UINT32, "unexpected type 0x%x\n", type );
+    trace( "numprocessors %u\n", V_I4( &value ) );
+
+    type = 0xdeadbeef;
+    VariantInit( &value );
+    hr = IWbemClassObject_Get( obj, usernameW, 0, &value, &type, NULL );
     ok( hr == S_OK, "failed to get computer name %08x\n", hr );
     ok( V_VT( &value ) == VT_BSTR, "unexpected variant type 0x%x\n", V_VT( &value ) );
     ok( type == CIM_STRING, "unexpected type 0x%x\n", type );
     ok( !lstrcmpiW( V_BSTR( &value ), username ), "got %s, expected %s\n", wine_dbgstr_w(V_BSTR(&value)), wine_dbgstr_w(username) );
     VariantClear( &value );
 
-    IWbemClassObject_Release( service );
+    IWbemClassObject_Release( obj );
     IEnumWbemClassObject_Release( result );
 out:
     SysFreeString( query );
@@ -680,6 +745,7 @@ static void test_Win32_SystemEnclosure( IWbemServices *services )
 
 static void test_StdRegProv( IWbemServices *services )
 {
+    static const WCHAR createkeyW[] = {'C','r','e','a','t','e','K','e','y',0};
     static const WCHAR enumkeyW[] = {'E','n','u','m','K','e','y',0};
     static const WCHAR enumvaluesW[] = {'E','n','u','m','V','a','l','u','e','s',0};
     static const WCHAR getstringvalueW[] = {'G','e','t','S','t','r','i','n','g','V','a','l','u','e',0};
@@ -695,11 +761,14 @@ static void test_StdRegProv( IWbemServices *services )
     static const WCHAR windowsW[] =
         {'S','o','f','t','w','a','r','e','\\','M','i','c','r','o','s','o','f','t','\\',
          'W','i','n','d','o','w','s','\\','C','u','r','r','e','n','t','V','e','r','s','i','o','n',0};
-    BSTR class = SysAllocString( stdregprovW ), method;
-    IWbemClassObject *reg, *sig_in, *in, *out;
+    static const WCHAR regtestW[] =
+        {'S','o','f','t','w','a','r','e','\\','S','t','d','R','e','g','P','r','o','v','T','e','s','t',0};
+    BSTR class = SysAllocString( stdregprovW ), method, name;
+    IWbemClassObject *reg, *sig_in, *sig_out, *in, *out;
     VARIANT defkey, subkey, retval, names, types, value, valuename;
     CIMTYPE type;
     HRESULT hr;
+    LONG res;
 
     hr = IWbemServices_GetObject( services, class, 0, NULL, &reg, NULL );
     if (hr != S_OK)
@@ -707,6 +776,67 @@ static void test_StdRegProv( IWbemServices *services )
         win_skip( "StdRegProv not available\n" );
         return;
     }
+
+    hr = IWbemClassObject_BeginMethodEnumeration( reg, 0 );
+    ok( hr == S_OK, "got %08x\n", hr );
+
+    while (IWbemClassObject_NextMethod( reg, 0, &name, &sig_in, &sig_out ) == S_OK)
+    {
+        SysFreeString( name );
+        IWbemClassObject_Release( sig_in );
+        IWbemClassObject_Release( sig_out );
+    }
+
+    hr = IWbemClassObject_EndMethodEnumeration( reg );
+    ok( hr == S_OK, "got %08x\n", hr );
+
+    hr = IWbemClassObject_BeginEnumeration( reg, 0 );
+    ok( hr == S_OK, "got %08x\n", hr );
+
+    while (IWbemClassObject_Next( reg, 0, &name, NULL, NULL, NULL ) == S_OK)
+        SysFreeString( name );
+
+    hr = IWbemClassObject_EndEnumeration( reg );
+    ok( hr == S_OK, "got %08x\n", hr );
+
+    hr = IWbemClassObject_GetMethod( reg, createkeyW, 0, &sig_in, NULL );
+    ok( hr == S_OK, "failed to get CreateKey method %08x\n", hr );
+
+    hr = IWbemClassObject_SpawnInstance( sig_in, 0, &in );
+    ok( hr == S_OK, "failed to spawn instance %08x\n", hr );
+
+    V_VT( &defkey ) = VT_I4;
+    V_I4( &defkey ) = 0x80000001;
+    hr = IWbemClassObject_Put( in, defkeyW, 0, &defkey, 0 );
+    ok( hr == S_OK, "failed to set root %08x\n", hr );
+
+    V_VT( &subkey ) = VT_BSTR;
+    V_BSTR( &subkey ) = SysAllocString( regtestW );
+    hr = IWbemClassObject_Put( in, subkeynameW, 0, &subkey, 0 );
+    ok( hr == S_OK, "failed to set subkey %08x\n", hr );
+
+    out = NULL;
+    method = SysAllocString( createkeyW );
+    hr = IWbemServices_ExecMethod( services, class, method, 0, NULL, in, &out, NULL );
+    ok( hr == S_OK, "failed to execute method %08x\n", hr );
+    SysFreeString( method );
+
+    type = 0xdeadbeef;
+    VariantInit( &retval );
+    hr = IWbemClassObject_Get( out, returnvalueW, 0, &retval, &type, NULL );
+    ok( hr == S_OK, "failed to get return value %08x\n", hr );
+    ok( V_VT( &retval ) == VT_I4, "unexpected variant type 0x%x\n", V_VT( &retval ) );
+    ok( !V_I4( &retval ), "unexpected error %u\n", V_UI4( &retval ) );
+    ok( type == CIM_UINT32, "unexpected type 0x%x\n", type );
+
+    res = RegDeleteKeyW( HKEY_CURRENT_USER, regtestW );
+    ok( !res, "got %d\n", res );
+
+    VariantClear( &subkey );
+    IWbemClassObject_Release( in );
+    IWbemClassObject_Release( out );
+    IWbemClassObject_Release( sig_in );
+
     hr = IWbemClassObject_GetMethod( reg, enumkeyW, 0, &sig_in, NULL );
     ok( hr == S_OK, "failed to get EnumKey method %08x\n", hr );
 
@@ -1012,6 +1142,7 @@ static void test_SystemSecurity( IWbemServices *services )
         win_skip( "__SystemSecurity not available\n" );
         return;
     }
+    IWbemClassObject_Release( reg );
 
     sid_size = sizeof(sid_admin_buffer);
     ret = CreateWellKnownSid( WinBuiltinAdministratorsSid, NULL, sid_admin, &sid_size );
@@ -1065,7 +1196,7 @@ static void test_SystemSecurity( IWbemServices *services )
     SysFreeString( class );
 }
 
-static void test_OperatingSystem( IWbemServices *services )
+static void test_Win32_OperatingSystem( IWbemServices *services )
 {
     static const WCHAR queryW[] =
         {'S','E','L','E','C','T',' ','*',' ','F','R','O','M',' ','W','i','n','3','2','_',
@@ -1073,6 +1204,7 @@ static void test_OperatingSystem( IWbemServices *services )
     static const WCHAR buildnumberW[] = {'B','u','i','l','d','N','u','m','b','e','r',0};
     static const WCHAR captionW[] = {'C','a','p','t','i','o','n',0};
     static const WCHAR csdversionW[] = {'C','S','D','V','e','r','s','i','o','n',0};
+    static const WCHAR freephysicalmemoryW[] = {'F','r','e','e','P','h','y','s','i','c','a','l','M','e','m','o','r','y',0};
     static const WCHAR nameW[] = {'N','a','m','e',0};
     static const WCHAR osproductsuiteW[] = {'O','S','P','r','o','d','u','c','t','S','u','i','t','e',0};
     static const WCHAR ostypeW[] = {'O','S','T','y','p','e',0};
@@ -1100,6 +1232,14 @@ static void test_OperatingSystem( IWbemServices *services )
     hr = IEnumWbemClassObject_Next( result, 10000, 1, &obj, &count );
     ok( hr == S_OK, "IEnumWbemClassObject_Next failed %08x\n", hr );
 
+    hr = IWbemClassObject_BeginEnumeration( obj, 0 );
+    ok( hr == S_OK, "got %08x\n", hr );
+
+    while (IWbemClassObject_Next( obj, 0, NULL, NULL, NULL, NULL ) == S_OK) {}
+
+    hr = IWbemClassObject_EndEnumeration( obj );
+    ok( hr == S_OK, "got %08x\n", hr );
+
     type = 0xdeadbeef;
     VariantInit( &val );
     hr = IWbemClassObject_Get( obj, buildnumberW, 0, &val, &type, NULL );
@@ -1125,6 +1265,15 @@ static void test_OperatingSystem( IWbemServices *services )
     ok( V_VT( &val ) == VT_BSTR || V_VT( &val ) == VT_NULL, "unexpected variant type 0x%x\n", V_VT( &val ) );
     ok( type == CIM_STRING, "unexpected type 0x%x\n", type );
     trace( "csdversion: %s\n", wine_dbgstr_w(V_BSTR( &val )) );
+    VariantClear( &val );
+
+    type = 0xdeadbeef;
+    VariantInit( &val );
+    hr = IWbemClassObject_Get( obj, freephysicalmemoryW, 0, &val, &type, NULL );
+    ok( hr == S_OK, "failed to get free physical memory size %08x\n", hr );
+    ok( V_VT( &val ) == VT_BSTR, "unexpected variant type 0x%x\n", V_VT( &val ) );
+    ok( type == CIM_UINT64, "unexpected type 0x%x\n", type );
+    trace( "freephysicalmemory %s\n", wine_dbgstr_w(V_BSTR(&val)) );
     VariantClear( &val );
 
     type = 0xdeadbeef;
@@ -1214,9 +1363,20 @@ static void test_OperatingSystem( IWbemServices *services )
     SysFreeString( wql );
 }
 
-static void test_ComputerSystemProduct( IWbemServices *services )
+static void test_Win32_ComputerSystemProduct( IWbemServices *services )
 {
-    static const WCHAR uuidW[] = {'U','U','I','D',0};
+    static const WCHAR identifyingnumberW[] =
+        {'I','d','e','n','t','i','f','y','i','n','g','N','u','m','b','e','r',0};
+    static const WCHAR nameW[] =
+        {'N','a','m','e',0};
+    static const WCHAR skunumberW[] =
+        {'S','K','U','N','u','m','b','e','r',0};
+    static const WCHAR uuidW[] =
+        {'U','U','I','D',0};
+    static const WCHAR vendorW[] =
+        {'V','e','n','d','o','r',0};
+    static const WCHAR versionW[] =
+        {'V','e','r','s','i','o','n',0};
     static const WCHAR queryW[] =
         {'S','E','L','E','C','T',' ','*',' ','F','R','O','M',' ','W','i','n','3','2','_',
          'C','o','m','p','u','t','e','r','S','y','s','t','e','m','P','r','o','d','u','c','t',0};
@@ -1240,11 +1400,55 @@ static void test_ComputerSystemProduct( IWbemServices *services )
 
     type = 0xdeadbeef;
     VariantInit( &value );
+    hr = IWbemClassObject_Get( obj, identifyingnumberW, 0, &value, &type, NULL );
+    ok( hr == S_OK, "got %08x\n", hr );
+    ok( V_VT( &value ) == VT_BSTR, "unexpected variant type 0x%x\n", V_VT( &value ) );
+    ok( type == CIM_STRING, "unexpected type 0x%x\n", type );
+    trace( "identifyingnumber %s\n", wine_dbgstr_w(V_BSTR(&value)) );
+    VariantClear( &value );
+
+    type = 0xdeadbeef;
+    VariantInit( &value );
+    hr = IWbemClassObject_Get( obj, nameW, 0, &value, &type, NULL );
+    ok( hr == S_OK, "got %08x\n", hr );
+    ok( V_VT( &value ) == VT_BSTR, "unexpected variant type 0x%x\n", V_VT( &value ) );
+    ok( type == CIM_STRING, "unexpected type 0x%x\n", type );
+    trace( "name %s\n", wine_dbgstr_w(V_BSTR(&value)) );
+    VariantClear( &value );
+
+    type = 0xdeadbeef;
+    VariantInit( &value );
+    hr = IWbemClassObject_Get( obj, skunumberW, 0, &value, &type, NULL );
+    ok( hr == S_OK, "got %08x\n", hr );
+    ok( V_VT( &value ) == VT_NULL, "unexpected variant type 0x%x\n", V_VT( &value ) );
+    ok( type == CIM_STRING, "unexpected type 0x%x\n", type );
+    VariantClear( &value );
+
+    type = 0xdeadbeef;
+    VariantInit( &value );
     hr = IWbemClassObject_Get( obj, uuidW, 0, &value, &type, NULL );
-    ok( hr == S_OK, "failed to get computer name %08x\n", hr );
+    ok( hr == S_OK, "got %08x\n", hr );
     ok( V_VT( &value ) == VT_BSTR, "unexpected variant type 0x%x\n", V_VT( &value ) );
     ok( type == CIM_STRING, "unexpected type 0x%x\n", type );
     trace( "uuid %s\n", wine_dbgstr_w(V_BSTR(&value)) );
+    VariantClear( &value );
+
+    type = 0xdeadbeef;
+    VariantInit( &value );
+    hr = IWbemClassObject_Get( obj, vendorW, 0, &value, &type, NULL );
+    ok( hr == S_OK, "got %08x\n", hr );
+    ok( V_VT( &value ) == VT_BSTR, "unexpected variant type 0x%x\n", V_VT( &value ) );
+    ok( type == CIM_STRING, "unexpected type 0x%x\n", type );
+    trace( "vendor %s\n", wine_dbgstr_w(V_BSTR(&value)) );
+    VariantClear( &value );
+
+    type = 0xdeadbeef;
+    VariantInit( &value );
+    hr = IWbemClassObject_Get( obj, versionW, 0, &value, &type, NULL );
+    ok( hr == S_OK, "got %08x\n", hr );
+    ok( V_VT( &value ) == VT_BSTR, "unexpected variant type 0x%x\n", V_VT( &value ) );
+    ok( type == CIM_STRING, "unexpected type 0x%x\n", type );
+    trace( "version %s\n", wine_dbgstr_w(V_BSTR(&value)) );
     VariantClear( &value );
 
     IWbemClassObject_Release( obj );
@@ -1253,7 +1457,7 @@ static void test_ComputerSystemProduct( IWbemServices *services )
     SysFreeString( wql );
 }
 
-static void test_PhysicalMemory( IWbemServices *services )
+static void test_Win32_PhysicalMemory( IWbemServices *services )
 {
     static const WCHAR capacityW[] = {'C','a','p','a','c','i','t','y',0};
     static const WCHAR memorytypeW[] = {'M','e','m','o','r','y','T','y','p','e',0};
@@ -1278,30 +1482,34 @@ static void test_PhysicalMemory( IWbemServices *services )
     hr = IEnumWbemClassObject_Next( result, 10000, 1, &obj, &count );
     ok( hr == S_OK, "got %08x\n", hr );
 
-    type = 0xdeadbeef;
-    VariantInit( &val );
-    hr = IWbemClassObject_Get( obj, capacityW, 0, &val, &type, NULL );
-    ok( hr == S_OK, "failed to get capacity %08x\n", hr );
-    ok( V_VT( &val ) == VT_BSTR, "unexpected variant type 0x%x\n", V_VT( &val ) );
-    ok( type == CIM_UINT64, "unexpected type 0x%x\n", type );
-    trace( "capacity %s\n", wine_dbgstr_w(V_BSTR( &val )) );
-    VariantClear( &val );
+    if (count > 0)
+    {
+        type = 0xdeadbeef;
+        VariantInit( &val );
+        hr = IWbemClassObject_Get( obj, capacityW, 0, &val, &type, NULL );
+        ok( hr == S_OK, "failed to get capacity %08x\n", hr );
+        ok( V_VT( &val ) == VT_BSTR, "unexpected variant type 0x%x\n", V_VT( &val ) );
+        ok( type == CIM_UINT64, "unexpected type 0x%x\n", type );
+        trace( "capacity %s\n", wine_dbgstr_w(V_BSTR( &val )) );
+        VariantClear( &val );
 
-    type = 0xdeadbeef;
-    VariantInit( &val );
-    hr = IWbemClassObject_Get( obj, memorytypeW, 0, &val, &type, NULL );
-    ok( hr == S_OK, "failed to get memory type %08x\n", hr );
-    ok( V_VT( &val ) == VT_I4, "unexpected variant type 0x%x\n", V_VT( &val ) );
-    ok( type == CIM_UINT16, "unexpected type 0x%x\n", type );
-    trace( "memorytype %u\n", V_I4( &val ) );
-    VariantClear( &val );
+        type = 0xdeadbeef;
+        VariantInit( &val );
+        hr = IWbemClassObject_Get( obj, memorytypeW, 0, &val, &type, NULL );
+        ok( hr == S_OK, "failed to get memory type %08x\n", hr );
+        ok( V_VT( &val ) == VT_I4, "unexpected variant type 0x%x\n", V_VT( &val ) );
+        ok( type == CIM_UINT16, "unexpected type 0x%x\n", type );
+        trace( "memorytype %u\n", V_I4( &val ) );
+        VariantClear( &val );
 
-    IWbemClassObject_Release( obj );
+        IWbemClassObject_Release( obj );
+    }
+    IEnumWbemClassObject_Release( result );
     SysFreeString( query );
     SysFreeString( wql );
 }
 
-static void test_IP4RouteTable( IWbemServices *services )
+static void test_Win32_IP4RouteTable( IWbemServices *services )
 {
     static const WCHAR destinationW[] = {'D','e','s','t','i','n','a','t','i','o','n',0};
     static const WCHAR interfaceindexW[] = {'I','n','t','e','r','f','a','c','e','I','n','d','e','x',0};
@@ -1359,8 +1567,351 @@ static void test_IP4RouteTable( IWbemServices *services )
         IWbemClassObject_Release( obj );
     }
 
+    IEnumWbemClassObject_Release( result );
     SysFreeString( query );
     SysFreeString( wql );
+}
+
+static void test_Win32_Processor( IWbemServices *services )
+{
+    static const WCHAR architectureW[] =
+        {'A','r','c','h','i','t','e','c','t','u','r','e',0};
+    static const WCHAR captionW[] =
+        {'C','a','p','t','i','o','n',0};
+    static const WCHAR familyW[] =
+        {'F','a','m','i','l','y',0};
+    static const WCHAR levelW[] =
+        {'L','e','v','e','l',0};
+    static const WCHAR manufacturerW[] =
+        {'M','a','n','u','f','a','c','t','u','r','e','r',0};
+    static const WCHAR nameW[] =
+        {'N','a','m','e',0};
+    static const WCHAR numcoresW[] =
+        {'N','u','m','b','e','r','O','f','C','o','r','e','s',0};
+    static const WCHAR numlogicalprocessorsW[] =
+        {'N','u','m','b','e','r','O','f','L','o','g','i','c','a','l','P','r','o','c','e','s','s','o','r','s',0};
+    static const WCHAR processoridW[] =
+        {'P','r','o','c','e','s','s','o','r','I','d',0};
+    static const WCHAR revisionW[] =
+        {'R','e','v','i','s','i','o','n',0};
+    static const WCHAR versionW[] =
+        {'V','e','r','s','i','o','n',0};
+    static const WCHAR queryW[] =
+        {'S','E','L','E','C','T',' ','*',' ','F','R','O','M',' ','W','i','n','3','2','_',
+         'P','r','o','c','e','s','s','o','r',0};
+    BSTR wql = SysAllocString( wqlW ), query = SysAllocString( queryW );
+    IEnumWbemClassObject *result;
+    IWbemClassObject *obj;
+    VARIANT val;
+    CIMTYPE type;
+    HRESULT hr;
+    DWORD count;
+
+    hr = IWbemServices_ExecQuery( services, wql, query, 0, NULL, &result );
+    ok( hr == S_OK, "got %08x\n", hr );
+
+    for (;;)
+    {
+        hr = IEnumWbemClassObject_Next( result, 10000, 1, &obj, &count );
+        if (hr != S_OK) break;
+
+        type = 0xdeadbeef;
+        VariantInit( &val );
+        hr = IWbemClassObject_Get( obj, captionW, 0, &val, &type, NULL );
+        ok( hr == S_OK, "got %08x\n", hr );
+        ok( V_VT( &val ) == VT_BSTR, "unexpected variant type 0x%x\n", V_VT( &val ) );
+        ok( type == CIM_STRING, "unexpected type 0x%x\n", type );
+        trace( "caption %s\n", wine_dbgstr_w(V_BSTR( &val )) );
+        VariantClear( &val );
+
+        type = 0xdeadbeef;
+        VariantInit( &val );
+        hr = IWbemClassObject_Get( obj, architectureW, 0, &val, &type, NULL );
+        ok( hr == S_OK, "got %08x\n", hr );
+        ok( V_VT( &val ) == VT_I4, "unexpected variant type 0x%x\n", V_VT( &val ) );
+        ok( type == CIM_UINT16, "unexpected type 0x%x\n", type );
+        trace( "architecture %u\n", V_I4( &val ) );
+
+        type = 0xdeadbeef;
+        VariantInit( &val );
+        hr = IWbemClassObject_Get( obj, familyW, 0, &val, &type, NULL );
+        ok( hr == S_OK, "got %08x\n", hr );
+        ok( V_VT( &val ) == VT_I4, "unexpected variant type 0x%x\n", V_VT( &val ) );
+        ok( type == CIM_UINT16, "unexpected type 0x%x\n", type );
+        trace( "family %u\n", V_I4( &val ) );
+
+        type = 0xdeadbeef;
+        VariantInit( &val );
+        hr = IWbemClassObject_Get( obj, levelW, 0, &val, &type, NULL );
+        ok( hr == S_OK, "got %08x\n", hr );
+        ok( V_VT( &val ) == VT_I4, "unexpected variant type 0x%x\n", V_VT( &val ) );
+        ok( type == CIM_UINT16, "unexpected type 0x%x\n", type );
+        trace( "level %u\n", V_I4( &val ) );
+
+        type = 0xdeadbeef;
+        VariantInit( &val );
+        hr = IWbemClassObject_Get( obj, manufacturerW, 0, &val, &type, NULL );
+        ok( hr == S_OK, "got %08x\n", hr );
+        ok( V_VT( &val ) == VT_BSTR, "unexpected variant type 0x%x\n", V_VT( &val ) );
+        ok( type == CIM_STRING, "unexpected type 0x%x\n", type );
+        trace( "manufacturer %s\n", wine_dbgstr_w(V_BSTR( &val )) );
+        VariantClear( &val );
+
+        type = 0xdeadbeef;
+        VariantInit( &val );
+        hr = IWbemClassObject_Get( obj, nameW, 0, &val, &type, NULL );
+        ok( hr == S_OK, "got %08x\n", hr );
+        ok( V_VT( &val ) == VT_BSTR, "unexpected variant type 0x%x\n", V_VT( &val ) );
+        ok( type == CIM_STRING, "unexpected type 0x%x\n", type );
+        trace( "name %s\n", wine_dbgstr_w(V_BSTR( &val )) );
+        VariantClear( &val );
+
+        type = 0xdeadbeef;
+        VariantInit( &val );
+        hr = IWbemClassObject_Get( obj, processoridW, 0, &val, &type, NULL );
+        ok( hr == S_OK, "got %08x\n", hr );
+        ok( V_VT( &val ) == VT_BSTR, "unexpected variant type 0x%x\n", V_VT( &val ) );
+        ok( type == CIM_STRING, "unexpected type 0x%x\n", type );
+        trace( "processorid %s\n", wine_dbgstr_w(V_BSTR( &val )) );
+        VariantClear( &val );
+
+        type = 0xdeadbeef;
+        VariantInit( &val );
+        hr = IWbemClassObject_Get( obj, revisionW, 0, &val, &type, NULL );
+        ok( hr == S_OK, "got %08x\n", hr );
+        ok( V_VT( &val ) == VT_I4, "unexpected variant type 0x%x\n", V_VT( &val ) );
+        ok( type == CIM_UINT16, "unexpected type 0x%x\n", type );
+        trace( "revision %u\n", V_I4( &val ) );
+
+        type = 0xdeadbeef;
+        VariantInit( &val );
+        hr = IWbemClassObject_Get( obj, versionW, 0, &val, &type, NULL );
+        ok( hr == S_OK, "got %08x\n", hr );
+        ok( V_VT( &val ) == VT_BSTR, "unexpected variant type 0x%x\n", V_VT( &val ) );
+        ok( type == CIM_STRING, "unexpected type 0x%x\n", type );
+        trace( "version %s\n", wine_dbgstr_w(V_BSTR( &val )) );
+        VariantClear( &val );
+
+        type = 0xdeadbeef;
+        VariantInit( &val );
+        hr = IWbemClassObject_Get( obj, numlogicalprocessorsW, 0, &val, &type, NULL );
+        ok( hr == S_OK || broken(hr == WBEM_E_NOT_FOUND) /* win2k3 */, "got %08x\n", hr );
+        if (hr == S_OK)
+        {
+            ok( V_VT( &val ) == VT_I4, "unexpected variant type 0x%x\n", V_VT( &val ) );
+            ok( type == CIM_UINT32, "unexpected type 0x%x\n", type );
+            trace( "numlogicalprocessors %u\n", V_I4( &val ) );
+        }
+
+        type = 0xdeadbeef;
+        VariantInit( &val );
+        hr = IWbemClassObject_Get( obj, numcoresW, 0, &val, &type, NULL );
+        ok( hr == S_OK || broken(hr == WBEM_E_NOT_FOUND) /* win2k3 */, "got %08x\n", hr );
+        if (hr == S_OK)
+        {
+            ok( V_VT( &val ) == VT_I4, "unexpected variant type 0x%x\n", V_VT( &val ) );
+            ok( type == CIM_UINT32, "unexpected type 0x%x\n", type );
+            trace( "numcores %u\n", V_I4( &val ) );
+        }
+
+        IWbemClassObject_Release( obj );
+    }
+
+    IEnumWbemClassObject_Release( result );
+    SysFreeString( query );
+    SysFreeString( wql );
+}
+
+static void test_Win32_VideoController( IWbemServices *services )
+{
+    static const WCHAR configmanagererrorcodeW[] =
+        {'C','o','n','f','i','g','M','a','n','a','g','e','r','E','r','r','o','r','C','o','d','e',0};
+    static const WCHAR driverdateW[] =
+        {'D','r','i','v','e','r','D','a','t','e',0};
+    static const WCHAR installeddisplaydriversW[]=
+        {'I','n','s','t','a','l','l','e','d','D','i','s','p','l','a','y','D','r','i','v','e','r','s',0};
+    static const WCHAR statusW[] =
+        {'S','t','a','t','u','s',0};
+    static const WCHAR queryW[] =
+        {'S','E','L','E','C','T',' ','*',' ','F','R','O','M',' ','W','i','n','3','2','_',
+         'V','i','d','e','o','C','o','n','t','r','o','l','l','e','r',0};
+    BSTR wql = SysAllocString( wqlW ), query = SysAllocString( queryW );
+    IEnumWbemClassObject *result;
+    IWbemClassObject *obj;
+    VARIANT val;
+    CIMTYPE type;
+    HRESULT hr;
+    DWORD count;
+
+    hr = IWbemServices_ExecQuery( services, wql, query, 0, NULL, &result );
+    if (hr != S_OK)
+    {
+        win_skip( "Win32_VideoController not available\n" );
+        return;
+    }
+
+    for (;;)
+    {
+        hr = IEnumWbemClassObject_Next( result, 10000, 1, &obj, &count );
+        if (hr != S_OK) break;
+
+        type = 0xdeadbeef;
+        VariantInit( &val );
+        hr = IWbemClassObject_Get( obj, configmanagererrorcodeW, 0, &val, &type, NULL );
+        ok( hr == S_OK, "got %08x\n", hr );
+        ok( V_VT( &val ) == VT_I4, "unexpected variant type 0x%x\n", V_VT( &val ) );
+        ok( type == CIM_UINT32, "unexpected type 0x%x\n", type );
+        trace( "configmanagererrorcode %d\n", V_I4( &val ) );
+
+        type = 0xdeadbeef;
+        VariantInit( &val );
+        hr = IWbemClassObject_Get( obj, driverdateW, 0, &val, &type, NULL );
+        ok( hr == S_OK, "got %08x\n", hr );
+        ok( V_VT( &val ) == VT_BSTR, "unexpected variant type 0x%x\n", V_VT( &val ) );
+        ok( type == CIM_DATETIME, "unexpected type 0x%x\n", type );
+        trace( "driverdate %s\n", wine_dbgstr_w(V_BSTR( &val )) );
+        VariantClear( &val );
+
+        type = 0xdeadbeef;
+        VariantInit( &val );
+        hr = IWbemClassObject_Get( obj, installeddisplaydriversW, 0, &val, &type, NULL );
+        ok( hr == S_OK, "got %08x\n", hr );
+        ok( V_VT( &val ) == VT_BSTR || V_VT( &val ) == VT_NULL, "unexpected variant type 0x%x\n", V_VT( &val ) );
+        ok( type == CIM_STRING, "unexpected type 0x%x\n", type );
+        trace( "installeddisplaydrivers %s\n", wine_dbgstr_w(V_BSTR( &val )) );
+        VariantClear( &val );
+
+        type = 0xdeadbeef;
+        VariantInit( &val );
+        hr = IWbemClassObject_Get( obj, statusW, 0, &val, &type, NULL );
+        ok( hr == S_OK, "got %08x\n", hr );
+        ok( V_VT( &val ) == VT_BSTR, "unexpected variant type 0x%x\n", V_VT( &val ) );
+        ok( type == CIM_STRING, "unexpected type 0x%x\n", type );
+        trace( "status %s\n", wine_dbgstr_w(V_BSTR( &val )) );
+        VariantClear( &val );
+
+        IWbemClassObject_Release( obj );
+    }
+
+    IEnumWbemClassObject_Release( result );
+    SysFreeString( query );
+    SysFreeString( wql );
+}
+
+static void test_Win32_Printer( IWbemServices *services )
+{
+    static const WCHAR deviceidW[] =
+        {'D','e','v','i','c','e','I','d',0};
+    static const WCHAR locationW[] =
+        {'L','o','c','a','t','i','o','n',0};
+    static const WCHAR portnameW[] =
+        {'P','o','r','t','N','a','m','e',0};
+    static const WCHAR queryW[] =
+        {'S','E','L','E','C','T',' ','*',' ','F','R','O','M',' ','W','i','n','3','2','_',
+         'P','r','i','n','t','e','r',0};
+    BSTR wql = SysAllocString( wqlW ), query = SysAllocString( queryW );
+    IEnumWbemClassObject *result;
+    IWbemClassObject *obj;
+    VARIANT val;
+    CIMTYPE type;
+    HRESULT hr;
+    DWORD count;
+
+    hr = IWbemServices_ExecQuery( services, wql, query, 0, NULL, &result );
+    if (hr != S_OK)
+    {
+        win_skip( "Win32_Printer not available\n" );
+        return;
+    }
+
+    for (;;)
+    {
+        hr = IEnumWbemClassObject_Next( result, 10000, 1, &obj, &count );
+        if (hr != S_OK) break;
+
+        type = 0xdeadbeef;
+        memset( &val, 0, sizeof(val) );
+        hr = IWbemClassObject_Get( obj, deviceidW, 0, &val, &type, NULL );
+        ok( hr == S_OK, "got %08x\n", hr );
+        ok( V_VT( &val ) == VT_BSTR, "unexpected variant type 0x%x\n", V_VT( &val ) );
+        ok( type == CIM_STRING, "unexpected type 0x%x\n", type );
+        trace( "deviceid %s\n", wine_dbgstr_w(V_BSTR( &val )) );
+        VariantClear( &val );
+
+        type = 0xdeadbeef;
+        memset( &val, 0, sizeof(val) );
+        hr = IWbemClassObject_Get( obj, locationW, 0, &val, &type, NULL );
+        ok( hr == S_OK, "got %08x\n", hr );
+        ok( V_VT( &val ) == VT_BSTR || V_VT( &val ) == VT_NULL, "unexpected variant type 0x%x\n", V_VT( &val ) );
+        ok( type == CIM_STRING, "unexpected type 0x%x\n", type );
+        trace( "location %s\n", wine_dbgstr_w(V_BSTR( &val )) );
+        VariantClear( &val );
+
+        type = 0xdeadbeef;
+        memset( &val, 0, sizeof(val) );
+        hr = IWbemClassObject_Get( obj, portnameW, 0, &val, &type, NULL );
+        ok( hr == S_OK, "got %08x\n", hr );
+        ok( V_VT( &val ) == VT_BSTR, "unexpected variant type 0x%x\n", V_VT( &val ) );
+        ok( type == CIM_STRING, "unexpected type 0x%x\n", type );
+        trace( "portname %s\n", wine_dbgstr_w(V_BSTR( &val )) );
+        VariantClear( &val );
+
+        IWbemClassObject_Release( obj );
+    }
+
+    IEnumWbemClassObject_Release( result );
+    SysFreeString( query );
+    SysFreeString( wql );
+}
+
+static void test_Win32_PnPEntity( IWbemServices *services )
+{
+    HRESULT hr;
+    IEnumWbemClassObject *enm;
+    IWbemClassObject *obj;
+    VARIANT val;
+    CIMTYPE type;
+    ULONG count, i;
+    BSTR bstr;
+
+    static WCHAR win32_pnpentityW[] = {'W','i','n','3','2','_','P','n','P','E','n','t','i','t','y',0};
+    static const WCHAR deviceidW[] = {'D','e','v','i','c','e','I','d',0};
+
+    bstr = SysAllocString( win32_pnpentityW );
+
+    hr = IWbemServices_CreateInstanceEnum( services, bstr, 0, NULL, &enm );
+    ok( hr == S_OK, "got %08x\n", hr );
+
+    SysFreeString( bstr );
+    bstr = SysAllocString( deviceidW );
+
+    while (1)
+    {
+        hr = IEnumWbemClassObject_Next( enm, 1000, 1, &obj, &count );
+        ok( (count == 1 && (hr == WBEM_S_FALSE || hr == WBEM_S_NO_ERROR)) ||
+                (count == 0 && (hr == WBEM_S_FALSE || hr == WBEM_S_TIMEDOUT)),
+                "got %08x with %u objects returned\n", hr, count );
+
+        if (count == 0)
+            break;
+
+        for (i = 0; i < count; ++i)
+        {
+            hr = IWbemClassObject_Get( obj, bstr, 0, &val, &type, NULL );
+            ok( hr == S_OK, "got %08x\n", hr );
+
+            if (SUCCEEDED( hr ))
+            {
+                ok( V_VT( &val ) == VT_BSTR, "unexpected variant type 0x%x\n", V_VT( &val ) );
+                ok( type == CIM_STRING, "unexpected type 0x%x\n", type );
+                VariantClear( &val );
+            }
+        }
+    }
+
+    SysFreeString( bstr );
+
+    IEnumWbemClassObject_Release( enm );
 }
 
 START_TEST(query)
@@ -1391,7 +1942,8 @@ START_TEST(query)
     test_select( services );
     test_associators( services );
     test_Win32_Bios( services );
-    test_Win32_Process( services );
+    test_Win32_Process( services, FALSE );
+    test_Win32_Process( services, TRUE );
     test_Win32_Service( services );
     test_Win32_ComputerSystem( services );
     test_Win32_SystemEnclosure( services );
@@ -1400,10 +1952,14 @@ START_TEST(query)
     test_query_async( services );
     test_GetNames( services );
     test_SystemSecurity( services );
-    test_OperatingSystem( services );
-    test_ComputerSystemProduct( services );
-    test_PhysicalMemory( services );
-    test_IP4RouteTable( services );
+    test_Win32_OperatingSystem( services );
+    test_Win32_ComputerSystemProduct( services );
+    test_Win32_PhysicalMemory( services );
+    test_Win32_IP4RouteTable( services );
+    test_Win32_Processor( services );
+    test_Win32_VideoController( services );
+    test_Win32_Printer( services );
+    test_Win32_PnPEntity( services );
 
     SysFreeString( path );
     IWbemServices_Release( services );

@@ -182,6 +182,7 @@ static inline void init_thread_structure( struct thread *thread )
     thread->debug_ctx       = NULL;
     thread->debug_event     = NULL;
     thread->debug_break     = 0;
+    thread->system_regs     = 0;
     thread->queue           = NULL;
     thread->wait            = NULL;
     thread->error           = 0;
@@ -217,9 +218,27 @@ static inline int is_valid_address( client_ptr_t addr )
 }
 
 /* create a new thread */
-struct thread *create_thread( int fd, struct process *process )
+struct thread *create_thread( int fd, struct process *process, const struct security_descriptor *sd )
 {
     struct thread *thread;
+    int request_pipe[2];
+
+    if (fd == -1)
+    {
+        if (pipe( request_pipe ) == -1)
+        {
+            file_set_error();
+            return NULL;
+        }
+        if (send_client_fd( process, request_pipe[1], SERVER_PROTOCOL_VERSION ) == -1)
+        {
+            close( request_pipe[0] );
+            close( request_pipe[1] );
+            return NULL;
+        }
+        close( request_pipe[1] );
+        fd = request_pipe[0];
+    }
 
     if (process->is_terminating)
     {
@@ -243,6 +262,15 @@ struct thread *create_thread( int fd, struct process *process )
 
     list_add_head( &thread_list, &thread->entry );
 
+    if (sd && !set_sd_defaults_from_token( &thread->obj, sd,
+                                           OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION |
+                                           DACL_SECURITY_INFORMATION | SACL_SECURITY_INFORMATION,
+                                           process->token ))
+    {
+        close( fd );
+        release_object( thread );
+        return NULL;
+    }
     if (!(thread->id = alloc_ptid( thread )))
     {
         close( fd );
@@ -583,7 +611,7 @@ void make_wait_abandoned( struct wait_queue_entry *entry )
 }
 
 /* finish waiting */
-static void end_wait( struct thread *thread )
+static unsigned int end_wait( struct thread *thread, unsigned int status )
 {
     struct thread_wait *wait = thread->wait;
     struct wait_queue_entry *entry;
@@ -591,10 +619,26 @@ static void end_wait( struct thread *thread )
 
     assert( wait );
     thread->wait = wait->next;
+
+    if (status < wait->count)  /* wait satisfied, tell it to the objects */
+    {
+        if (wait->select == SELECT_WAIT_ALL)
+        {
+            for (i = 0, entry = wait->queues; i < wait->count; i++, entry++)
+                entry->obj->ops->satisfied( entry->obj, entry );
+        }
+        else
+        {
+            entry = wait->queues + status;
+            entry->obj->ops->satisfied( entry->obj, entry );
+        }
+        if (wait->abandoned) status += STATUS_ABANDONED_WAIT_0;
+    }
     for (i = 0, entry = wait->queues; i < wait->count; i++, entry++)
         entry->obj->ops->remove_queue( entry->obj, entry );
     if (wait->user) remove_timeout_user( wait->user );
     free( wait );
+    return status;
 }
 
 /* build the thread wait structure */
@@ -624,7 +668,7 @@ static int wait_on( const select_op_t *select_op, unsigned int count, struct obj
         if (!obj->ops->add_queue( obj, entry ))
         {
             wait->count = i;
-            end_wait( current );
+            end_wait( current, get_error() );
             return 0;
         }
     }
@@ -672,25 +716,14 @@ static int check_wait( struct thread *thread )
          * want to do something when signaled, even if others are not */
         for (i = 0, entry = wait->queues; i < wait->count; i++, entry++)
             not_ok |= !entry->obj->ops->signaled( entry->obj, entry );
-        if (not_ok) goto other_checks;
-        /* Wait satisfied: tell it to all objects */
-        for (i = 0, entry = wait->queues; i < wait->count; i++, entry++)
-            entry->obj->ops->satisfied( entry->obj, entry );
-        return wait->abandoned ? STATUS_ABANDONED_WAIT_0 : STATUS_WAIT_0;
+        if (!not_ok) return STATUS_WAIT_0;
     }
     else
     {
         for (i = 0, entry = wait->queues; i < wait->count; i++, entry++)
-        {
-            if (!entry->obj->ops->signaled( entry->obj, entry )) continue;
-            /* Wait satisfied: tell it to the object */
-            entry->obj->ops->satisfied( entry->obj, entry );
-            if (wait->abandoned) i += STATUS_ABANDONED_WAIT_0;
-            return i;
-        }
+            if (entry->obj->ops->signaled( entry->obj, entry )) return i;
     }
 
- other_checks:
     if ((wait->flags & SELECT_ALERTABLE) && !list_empty(&thread->user_apc)) return STATUS_USER_APC;
     if (wait->timeout <= current_time) return STATUS_TIMEOUT;
     return -1;
@@ -728,8 +761,8 @@ int wake_thread( struct thread *thread )
         if ((signaled = check_wait( thread )) == -1) break;
 
         cookie = thread->wait->cookie;
+        signaled = end_wait( thread, signaled );
         if (debug_level) fprintf( stderr, "%04x: *wakeup* signaled=%d\n", thread->id, signaled );
-        end_wait( thread );
         if (cookie && send_thread_wakeup( thread, cookie, signaled ) == -1) /* error */
         {
             if (!count) count = -1;
@@ -752,13 +785,9 @@ int wake_thread_queue_entry( struct wait_queue_entry *entry )
 
     assert( wait->select != SELECT_WAIT_ALL );
 
-    signaled = entry - wait->queues;
-    entry->obj->ops->satisfied( entry->obj, entry );
-    if (wait->abandoned) signaled += STATUS_ABANDONED_WAIT_0;
-
     cookie = wait->cookie;
+    signaled = end_wait( thread, entry - wait->queues );
     if (debug_level) fprintf( stderr, "%04x: *wakeup* signaled=%d\n", thread->id, signaled );
-    end_wait( thread );
 
     if (!cookie || send_thread_wakeup( thread, cookie, signaled ) != -1)
         wake_thread( thread );  /* check other waits too */
@@ -778,7 +807,7 @@ static void thread_timeout( void *ptr )
     if (thread->suspend + thread->process->suspend > 0) return;  /* suspended, ignore it */
 
     if (debug_level) fprintf( stderr, "%04x: *wakeup* signaled=TIMEOUT\n", thread->id );
-    end_wait( thread );
+    end_wait( thread, STATUS_TIMEOUT );
 
     assert( cookie );
     if (send_thread_wakeup( thread, cookie, STATUS_TIMEOUT ) == -1) return;
@@ -836,7 +865,7 @@ static timeout_t select_on( const select_op_t *select_op, data_size_t op_size, c
         {
             if (!signal_object( select_op->signal_and_wait.signal ))
             {
-                end_wait( current );
+                end_wait( current, get_error() );
                 return timeout;
             }
             /* check if we woke ourselves up */
@@ -863,8 +892,7 @@ static timeout_t select_on( const select_op_t *select_op, data_size_t op_size, c
     if ((ret = check_wait( current )) != -1)
     {
         /* condition is already satisfied */
-        end_wait( current );
-        set_error( ret );
+        set_error( end_wait( current, ret ));
         return timeout;
     }
 
@@ -874,7 +902,7 @@ static timeout_t select_on( const select_op_t *select_op, data_size_t op_size, c
         if (!(current->wait->user = add_timeout_user( current->wait->timeout,
                                                       thread_timeout, current->wait )))
         {
-            end_wait( current );
+            end_wait( current, get_error() );
             return timeout;
         }
     }
@@ -924,6 +952,9 @@ static inline int is_in_apc_wait( struct thread *thread )
 static int queue_apc( struct process *process, struct thread *thread, struct thread_apc *apc )
 {
     struct list *queue;
+
+    if (thread && thread->state == TERMINATED && process)
+        thread = NULL;
 
     if (!thread)  /* find a suitable thread inside the process */
     {
@@ -976,14 +1007,14 @@ static int queue_apc( struct process *process, struct thread *thread, struct thr
 }
 
 /* queue an async procedure call */
-int thread_queue_apc( struct thread *thread, struct object *owner, const apc_call_t *call_data )
+int thread_queue_apc( struct process *process, struct thread *thread, struct object *owner, const apc_call_t *call_data )
 {
     struct thread_apc *apc;
     int ret = 0;
 
     if ((apc = create_apc( owner, call_data )))
     {
-        ret = queue_apc( NULL, thread, apc );
+        ret = queue_apc( process, thread, apc );
         release_object( apc );
     }
     return ret;
@@ -1106,7 +1137,7 @@ void kill_thread( struct thread *thread, int violent_death )
                  thread->id, thread->exit_code );
     if (thread->wait)
     {
-        while (thread->wait) end_wait( thread );
+        while (thread->wait) end_wait( thread, STATUS_THREAD_IS_TERMINATING );
         send_thread_wakeup( thread, 0, thread->exit_code );
         /* if it is waiting on the socket, we don't need to send a SIGQUIT */
         violent_death = 0;
@@ -1143,8 +1174,8 @@ static unsigned int get_context_system_regs( enum cpu_type cpu )
     case CPU_x86:     return SERVER_CTX_DEBUG_REGISTERS;
     case CPU_x86_64:  return SERVER_CTX_DEBUG_REGISTERS;
     case CPU_POWERPC: return 0;
-    case CPU_ARM:     return 0;
-    case CPU_ARM64:   return 0;
+    case CPU_ARM:     return SERVER_CTX_DEBUG_REGISTERS;
+    case CPU_ARM64:   return SERVER_CTX_DEBUG_REGISTERS;
     }
     return 0;
 }
@@ -1230,30 +1261,64 @@ int is_cpu_supported( enum cpu_type cpu )
     return 0;
 }
 
+/* return the cpu mask for supported cpus */
+unsigned int get_supported_cpu_mask(void)
+{
+    return supported_cpus & get_prefix_cpu_mask();
+}
+
 /* create a new thread */
 DECL_HANDLER(new_thread)
 {
     struct thread *thread;
+    struct process *process;
+    struct unicode_str name;
+    const struct security_descriptor *sd;
+    const struct object_attributes *objattr = get_req_object_attributes( &sd, &name, NULL );
     int request_fd = thread_get_inflight_fd( current, req->request_fd );
 
-    if (request_fd == -1 || fcntl( request_fd, F_SETFL, O_NONBLOCK ) == -1)
+    if (!(process = get_process_from_handle( req->process, PROCESS_CREATE_THREAD )))
     {
         if (request_fd != -1) close( request_fd );
-        set_error( STATUS_INVALID_HANDLE );
         return;
     }
 
-    if ((thread = create_thread( request_fd, current->process )))
+    if (process != current->process)
     {
+        if (request_fd != -1)  /* can't create a request fd in a different process */
+        {
+            close( request_fd );
+            set_error( STATUS_INVALID_PARAMETER );
+            goto done;
+        }
+        if (process->running_threads)  /* only the initial thread can be created in another process */
+        {
+            set_error( STATUS_ACCESS_DENIED );
+            goto done;
+        }
+    }
+    else if (request_fd == -1 || fcntl( request_fd, F_SETFL, O_NONBLOCK ) == -1)
+    {
+        if (request_fd != -1) close( request_fd );
+        set_error( STATUS_INVALID_HANDLE );
+        goto done;
+    }
+
+    if ((thread = create_thread( request_fd, process, sd )))
+    {
+        thread->system_regs = current->system_regs;
         if (req->suspend) thread->suspend++;
         reply->tid = get_thread_id( thread );
-        if ((reply->handle = alloc_handle( current->process, thread, req->access, req->attributes )))
+        if ((reply->handle = alloc_handle_no_access_check( current->process, thread,
+                                                           req->access, objattr->attributes )))
         {
             /* thread object will be released when the thread gets killed */
-            return;
+            goto done;
         }
         kill_thread( thread, 1 );
     }
+done:
+    release_object( process );
 }
 
 /* initialize a new thread */
@@ -1317,7 +1382,7 @@ DECL_HANDLER(init_thread)
         }
         if (process->unix_pid != current->unix_pid)
             process->unix_pid = -1;  /* can happen with linuxthreads */
-        stop_thread_if_suspended( current );
+        init_thread_context( current );
         generate_debug_event( current, CREATE_THREAD_DEBUG_EVENT, &req->entry );
         set_thread_affinity( current, current->affinity );
     }
@@ -1328,6 +1393,7 @@ DECL_HANDLER(init_thread)
     reply->version = SERVER_PROTOCOL_VERSION;
     reply->server_start = server_start_time;
     reply->all_cpus     = supported_cpus & get_prefix_cpu_mask();
+    reply->suspend      = (current->suspend || process->suspend);
     return;
 
  error:
@@ -1484,8 +1550,7 @@ DECL_HANDLER(select)
         else if (apc->result.type == APC_ASYNC_IO)
         {
             if (apc->owner)
-                async_set_result( apc->owner, apc->result.async_io.status, apc->result.async_io.total,
-                                  apc->result.async_io.apc, apc->result.async_io.arg );
+                async_set_result( apc->owner, apc->result.async_io.status, apc->result.async_io.total );
         }
         wake_up( &apc->obj, 0 );
         close_handle( current->process, req->prev_apc );
@@ -1651,7 +1716,7 @@ DECL_HANDLER(get_thread_context)
         memset( context, 0, sizeof(context_t) );
         context->cpu = thread->process->cpu;
         if (thread->context) copy_context( context, thread->context, req->flags & ~flags );
-        if (flags) get_thread_context( thread, context, flags );
+        if (req->flags & flags) get_thread_context( thread, context, req->flags & flags );
     }
     release_object( thread );
 }
@@ -1710,7 +1775,10 @@ DECL_HANDLER(get_suspend_context)
 
     if (current->suspend_context)
     {
-        set_reply_data_ptr( current->suspend_context, sizeof(context_t) );
+        if (current->suspend_context->flags)
+            set_reply_data_ptr( current->suspend_context, sizeof(context_t) );
+        else
+            free( current->suspend_context );
         if (current->context == current->suspend_context)
         {
             current->context = NULL;
@@ -1740,6 +1808,7 @@ DECL_HANDLER(set_suspend_context)
     else if ((current->suspend_context = mem_alloc( sizeof(context_t) )))
     {
         memcpy( current->suspend_context, get_req_data(), sizeof(context_t) );
+        current->suspend_context->flags = 0;  /* to keep track of what is modified */
         current->context = current->suspend_context;
         if (current->debug_break) break_thread( current );
     }

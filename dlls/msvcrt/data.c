@@ -32,17 +32,10 @@ WINE_DEFAULT_DEBUG_CHANNEL(msvcrt);
 int MSVCRT___argc = 0;
 static int argc_expand;
 static int wargc_expand;
-unsigned int MSVCRT_basemajor = 0;/* FIXME: */
-unsigned int MSVCRT_baseminor = 0;/* FIXME: */
-unsigned int MSVCRT_baseversion = 0; /* FIXME: */
 unsigned int MSVCRT__commode = 0;
-unsigned int MSVCRT__fmode = 0;
-unsigned int MSVCRT_osmajor = 0;/* FIXME: */
-unsigned int MSVCRT_osminor = 0;/* FIXME: */
-unsigned int MSVCRT_osmode = 0;/* FIXME: */
+int MSVCRT__fmode = 0;
 unsigned int MSVCRT__osver = 0;
 unsigned int MSVCRT__osplatform = 0;
-unsigned int MSVCRT_osversion = 0; /* FIXME: */
 unsigned int MSVCRT__winmajor = 0;
 unsigned int MSVCRT__winminor = 0;
 unsigned int MSVCRT__winver = 0;
@@ -80,7 +73,8 @@ char ** msvcrt_SnapshotOfEnvironmentA(char **blk)
 
   for (ptr = environ_strings; *ptr; ptr += strlen(ptr) + 1)
   {
-    count++;
+    /* Don't count environment variables starting with '=' which are command shell specific */
+    if (*ptr != '=') count++;
     len += strlen(ptr) + 1;
   }
   if (blk)
@@ -95,7 +89,8 @@ char ** msvcrt_SnapshotOfEnvironmentA(char **blk)
 	  memcpy(&blk[count],environ_strings,len);
 	  for (ptr = (char*) &blk[count]; *ptr; ptr += strlen(ptr) + 1)
 	    {
-	      blk[i++] = ptr;
+	      /* Skip special environment strings set by the command shell */
+	      if (*ptr != '=') blk[i++] = ptr;
 	    }
 	}
       blk[i] = NULL;
@@ -112,7 +107,8 @@ MSVCRT_wchar_t ** msvcrt_SnapshotOfEnvironmentW(MSVCRT_wchar_t **wblk)
 
   for (wptr = wenviron_strings; *wptr; wptr += strlenW(wptr) + 1)
   {
-    count++;
+    /* Don't count environment variables starting with '=' which are command shell specific */
+    if (*wptr != '=') count++;
     len += strlenW(wptr) + 1;
   }
   if (wblk)
@@ -126,7 +122,8 @@ MSVCRT_wchar_t ** msvcrt_SnapshotOfEnvironmentW(MSVCRT_wchar_t **wblk)
 	  memcpy(&wblk[count],wenviron_strings,len * sizeof(MSVCRT_wchar_t));
 	  for (wptr = (MSVCRT_wchar_t*)&wblk[count]; *wptr; wptr += strlenW(wptr) + 1)
 	    {
-	      wblk[i++] = wptr;
+	      /* Skip special environment strings set by the command shell */
+	      if (*wptr != '=') wblk[i++] = wptr;
 	    }
 	}
       wblk[i] = NULL;
@@ -183,7 +180,7 @@ int CDECL _get_wpgmptr(WCHAR** p)
 /***********************************************************************
  *		__p__fmode (MSVCRT.@)
  */
-unsigned int* CDECL __p__fmode(void) { return &MSVCRT__fmode; }
+int* CDECL MSVCRT___p__fmode(void) { return &MSVCRT__fmode; }
 
 /***********************************************************************
  *              _set_fmode (MSVCRT.@)
@@ -233,12 +230,12 @@ unsigned int* CDECL __p__winver(void) { return &MSVCRT__winver; }
 /*********************************************************************
  *		__p__acmdln (MSVCRT.@)
  */
-char** CDECL __p__acmdln(void) { return &MSVCRT__acmdln; }
+char** CDECL MSVCRT___p__acmdln(void) { return &MSVCRT__acmdln; }
 
 /*********************************************************************
  *		__p__wcmdln (MSVCRT.@)
  */
-MSVCRT_wchar_t** CDECL __p__wcmdln(void) { return &MSVCRT__wcmdln; }
+MSVCRT_wchar_t** CDECL MSVCRT___p__wcmdln(void) { return &MSVCRT__wcmdln; }
 
 /*********************************************************************
  *		__p___argv (MSVCRT.@)
@@ -338,16 +335,8 @@ void msvcrt_init_args(void)
   MSVCRT__winminor   = osvi.dwMinorVersion;
   MSVCRT__osver      = osvi.dwBuildNumber;
   MSVCRT__osplatform = osvi.dwPlatformId;
-  MSVCRT_osversion   = MSVCRT__winver;
-  MSVCRT_osmajor     = MSVCRT__winmajor;
-  MSVCRT_osminor     = MSVCRT__winminor;
-  MSVCRT_baseversion = MSVCRT__osver;
-  MSVCRT_baseminor   = MSVCRT_baseversion & 0xFF;
-  MSVCRT_basemajor   = (MSVCRT_baseversion >> 8) & 0xFF;
-  TRACE( "winver %08x winmajor %08x winminor %08x osver%08x baseversion %08x basemajor %08x baseminor %08x\n",
-          MSVCRT__winver, MSVCRT__winmajor, MSVCRT__winminor, MSVCRT__osver, MSVCRT_baseversion,
-          MSVCRT_basemajor, MSVCRT_baseminor);
-  TRACE( "osversion %08x osmajor %08x osminor %08x\n", MSVCRT_osversion, MSVCRT_osmajor, MSVCRT_osminor);
+  TRACE( "winver %08x winmajor %08x winminor %08x osver %08x\n",
+          MSVCRT__winver, MSVCRT__winmajor, MSVCRT__winminor, MSVCRT__osver);
 
   MSVCRT__HUGE = HUGE_VAL;
   MSVCRT___setlc_active = 0;
@@ -455,7 +444,7 @@ static int build_expanded_argv(int *argc, char **argv)
 /*********************************************************************
  *		__getmainargs (MSVCRT.@)
  */
-void CDECL __getmainargs(int *argc, char** *argv, char** *envp,
+int CDECL __getmainargs(int *argc, char** *argv, char** *envp,
                          int expand_wildcards, int *new_mode)
 {
     TRACE("(%p,%p,%p,%d,%p).\n", argc, argv, envp, expand_wildcards, new_mode);
@@ -486,6 +475,7 @@ void CDECL __getmainargs(int *argc, char** *argv, char** *envp,
 
     if (new_mode)
         MSVCRT__set_new_mode( *new_mode );
+    return 0;
 }
 
 static int build_expanded_wargv(int *argc, MSVCRT_wchar_t **argv)
@@ -553,7 +543,7 @@ static int build_expanded_wargv(int *argc, MSVCRT_wchar_t **argv)
 /*********************************************************************
  *		__wgetmainargs (MSVCRT.@)
  */
-void CDECL __wgetmainargs(int *argc, MSVCRT_wchar_t** *wargv, MSVCRT_wchar_t** *wenvp,
+int CDECL __wgetmainargs(int *argc, MSVCRT_wchar_t** *wargv, MSVCRT_wchar_t** *wenvp,
                           int expand_wildcards, int *new_mode)
 {
     TRACE("(%p,%p,%p,%d,%p).\n", argc, wargv, wenvp, expand_wildcards, new_mode);
@@ -586,6 +576,7 @@ void CDECL __wgetmainargs(int *argc, MSVCRT_wchar_t** *wargv, MSVCRT_wchar_t** *
     *wenvp = MSVCRT___winitenv;
     if (new_mode)
         MSVCRT__set_new_mode( *new_mode );
+    return 0;
 }
 
 /*********************************************************************
@@ -640,6 +631,8 @@ void CDECL MSVCRT___set_app_type(int app_type)
   TRACE("(%d) %s application\n", app_type, app_type == 2 ? "Gui" : "Console");
   MSVCRT_app_type = app_type;
 }
+
+#if _MSVCR_VER>=140
 
 /*********************************************************************
  *		_get_initial_narrow_environment (UCRTBASE.@)
@@ -745,4 +738,36 @@ MSVCRT_wchar_t* CDECL _get_wide_winmain_command_line(void)
       s++;
 
   return wide_command_line = s;
+}
+
+#endif /* _MSVCR_VER>=140 */
+
+/*********************************************************************
+ *    _get_winmajor (MSVCRT.@)
+ */
+int CDECL MSVCRT__get_winmajor(int* value)
+{
+    if (!MSVCRT_CHECK_PMT(value != NULL)) return MSVCRT_EINVAL;
+    *value = MSVCRT__winmajor;
+    return 0;
+}
+
+/*********************************************************************
+ *    _get_winminor (MSVCRT.@)
+ */
+int CDECL MSVCRT__get_winminor(int* value)
+{
+    if (!MSVCRT_CHECK_PMT(value != NULL)) return MSVCRT_EINVAL;
+    *value = MSVCRT__winminor;
+    return 0;
+}
+
+/*********************************************************************
+ *    _get_osver (MSVCRT.@)
+ */
+int CDECL MSVCRT__get_osver(int* value)
+{
+    if (!MSVCRT_CHECK_PMT(value != NULL)) return MSVCRT_EINVAL;
+    *value = MSVCRT__osver;
+    return 0;
 }

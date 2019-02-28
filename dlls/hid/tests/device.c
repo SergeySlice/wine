@@ -66,7 +66,7 @@ static void run_for_each_device(device_test *test)
     data = HeapAlloc(GetProcessHeap(), 0, sizeof(*data) + detail_size);
     data->cbSize = sizeof(*data);
 
-    info_set = SetupDiGetClassDevsW(&hid_guid, NULL, NULL, DIGCF_DEVICEINTERFACE);
+    info_set = SetupDiGetClassDevsW(&hid_guid, NULL, NULL, DIGCF_DEVICEINTERFACE | DIGCF_PRESENT);
     while (SetupDiEnumDeviceInterfaces(info_set, NULL, &hid_guid, index, &interface_data))
     {
         index ++;
@@ -74,11 +74,13 @@ static void run_for_each_device(device_test *test)
         if (SetupDiGetDeviceInterfaceDetailW(info_set, &interface_data, data, sizeof(*data) + detail_size, NULL, NULL))
         {
             HANDLE file = CreateFileW(data->DevicePath, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, 0);
-            if (file == INVALID_HANDLE_VALUE)
+            if (file == INVALID_HANDLE_VALUE && GetLastError() == ERROR_ACCESS_DENIED)
             {
-                trace("Failed to access device %s, likely not plugged in or access is denied.\n", wine_dbgstr_w(data->DevicePath));
+                trace("Not enough permissions to read device %s.\n", wine_dbgstr_w(data->DevicePath));
                 continue;
             }
+            ok(file != INVALID_HANDLE_VALUE, "Failed to open %s, error %u.\n",
+                wine_dbgstr_w(data->DevicePath), GetLastError());
 
             test(file);
 
@@ -108,7 +110,7 @@ static HANDLE get_device(USHORT page, USHORT usages[], UINT usage_count, DWORD a
     data = HeapAlloc(GetProcessHeap(), 0 , sizeof(*data) + detail_size);
     data->cbSize = sizeof(*data);
 
-    info_set = SetupDiGetClassDevsW(&hid_guid, NULL, NULL, DIGCF_DEVICEINTERFACE);
+    info_set = SetupDiGetClassDevsW(&hid_guid, NULL, NULL, DIGCF_DEVICEINTERFACE | DIGCF_PRESENT);
     while (SetupDiEnumDeviceInterfaces(info_set, NULL, &hid_guid, index, &interface_data))
     {
         index ++;
@@ -118,11 +120,13 @@ static HANDLE get_device(USHORT page, USHORT usages[], UINT usage_count, DWORD a
             PHIDP_PREPARSED_DATA ppd;
             HIDP_CAPS Caps;
             HANDLE file = CreateFileW(data->DevicePath, access, FILE_SHARE_READ|FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, 0);
-            if (file == INVALID_HANDLE_VALUE)
+            if (file == INVALID_HANDLE_VALUE && GetLastError() == ERROR_ACCESS_DENIED)
             {
-                trace("Failed to access device %s, likely not plugged in or access is denied.\n", wine_dbgstr_w(data->DevicePath));
+                trace("Not enough permissions to read device %s.\n", wine_dbgstr_w(data->DevicePath));
                 continue;
             }
+            ok(file != INVALID_HANDLE_VALUE, "got error %u\n", GetLastError());
+
             rc = HidD_GetPreparsedData(file, &ppd);
             ok(rc, "Failed to get preparsed data(0x%x)\n", GetLastError());
             status = HidP_GetCaps(ppd, &Caps);
@@ -167,7 +171,7 @@ static void process_data(HIDP_CAPS Caps, PHIDP_PREPARSED_DATA ppd, CHAR *data, D
         {
             ULONG usage_length = 100;
             status = HidP_GetUsages(HidP_Input, i, 0, button_pages, &usage_length, ppd, data, data_length);
-            ok (status == HIDP_STATUS_SUCCESS || (status != HIDP_STATUS_SUCCESS && usage_length == 0),
+            ok (status == HIDP_STATUS_SUCCESS || usage_length == 0,
                 "HidP_GetUsages failed (%x) but usage length still %i\n", status, usage_length);
             if (usage_length)
             {
@@ -183,7 +187,7 @@ static void process_data(HIDP_CAPS Caps, PHIDP_PREPARSED_DATA ppd, CHAR *data, D
                 {
                     for (j=count; j < count+15 && j < usage_length; j++)
                     {
-                        CHAR btn[5];
+                        CHAR btn[7];
                         sprintf(btn, "%i ", button_pages[j]);
                         strcat(report, btn);
                     }
@@ -358,7 +362,7 @@ static void test_get_input_report(void)
         {
             ok(data[0] == 0, "Report ID (0) is not the first byte of the data\n");
             report[0] = 0;
-            for (i = 0; i < Caps.InputReportByteLength && i < Caps.InputReportByteLength; i++)
+            for (i = 0; i < Caps.InputReportByteLength; i++)
             {
                 char bytestr[5];
                 sprintf(bytestr, "%x ", (BYTE)data[i]);

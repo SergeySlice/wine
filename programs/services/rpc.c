@@ -59,7 +59,8 @@ typedef enum
 {
     SC_HTYPE_DONT_CARE = 0,
     SC_HTYPE_MANAGER,
-    SC_HTYPE_SERVICE
+    SC_HTYPE_SERVICE,
+    SC_HTYPE_NOTIFY
 } SC_HANDLE_TYPE;
 
 struct sc_handle
@@ -74,11 +75,39 @@ struct sc_manager_handle       /* service control manager handle */
     struct scmdatabase *db;
 };
 
+struct sc_notify_handle
+{
+    struct sc_handle hdr;
+    HANDLE event;
+    DWORD notify_mask;
+    LONG ref;
+    SC_RPC_NOTIFY_PARAMS_LIST *params_list;
+};
+
 struct sc_service_handle       /* service handle */
 {
     struct sc_handle hdr;
+    struct list entry;
+    BOOL status_notified;
     struct service_entry *service_entry;
+    struct sc_notify_handle *notify;
 };
+
+static void sc_notify_retain(struct sc_notify_handle *notify)
+{
+    InterlockedIncrement(&notify->ref);
+}
+
+static void sc_notify_release(struct sc_notify_handle *notify)
+{
+    ULONG r = InterlockedDecrement(&notify->ref);
+    if (r == 0)
+    {
+        CloseHandle(notify->event);
+        HeapFree(GetProcessHeap(), 0, notify->params_list);
+        HeapFree(GetProcessHeap(), 0, notify);
+    }
+}
 
 struct sc_lock
 {
@@ -227,6 +256,15 @@ static DWORD validate_service_handle(SC_RPC_HANDLE handle, DWORD needed_access, 
     return err;
 }
 
+static DWORD validate_notify_handle(SC_RPC_HANDLE handle, DWORD needed_access, struct sc_notify_handle **notify)
+{
+    struct sc_handle *hdr;
+    DWORD err = validate_context_handle(handle, SC_HTYPE_NOTIFY, needed_access, &hdr);
+    if (err == ERROR_SUCCESS)
+        *notify = (struct sc_notify_handle *)hdr;
+    return err;
+}
+
 DWORD __cdecl svcctl_OpenSCManagerW(
     MACHINE_HANDLEW MachineName, /* Note: this parameter is ignored */
     LPCWSTR DatabaseName,
@@ -274,6 +312,14 @@ static void SC_RPC_HANDLE_destroy(SC_RPC_HANDLE handle)
         case SC_HTYPE_SERVICE:
         {
             struct sc_service_handle *service = (struct sc_service_handle *)hdr;
+            service_lock(service->service_entry);
+            list_remove(&service->entry);
+            if (service->notify)
+            {
+                SetEvent(service->notify->event);
+                sc_notify_release(service->notify);
+            }
+            service_unlock(service->service_entry);
             release_service(service->service_entry);
             HeapFree(GetProcessHeap(), 0, service);
             break;
@@ -385,8 +431,14 @@ static DWORD create_handle_for_service(struct service_entry *entry, DWORD dwDesi
 
     service->hdr.type = SC_HTYPE_SERVICE;
     service->hdr.access = dwDesiredAccess;
+    service->notify = NULL;
+    service->status_notified = FALSE;
     RtlMapGenericMask(&service->hdr.access, &g_svc_generic);
+
+    service_lock(entry);
     service->service_entry = entry;
+    list_add_tail(&entry->handles, &service->entry);
+    service_unlock(entry);
 
     *phService = &service->hdr;
     return ERROR_SUCCESS;
@@ -776,13 +828,49 @@ DWORD __cdecl svcctl_ChangeServiceConfigW(
     return err;
 }
 
+static void fill_status_process(SERVICE_STATUS_PROCESS *status, struct service_entry *service)
+{
+    struct process_entry *process = service->process;
+    memcpy(status, &service->status, sizeof(service->status));
+    status->dwProcessId     = process ? process->process_id : 0;
+    status->dwServiceFlags  = 0;
+}
+
+static void fill_notify(struct sc_notify_handle *notify, struct service_entry *service)
+{
+    SC_RPC_NOTIFY_PARAMS_LIST *list;
+    SERVICE_NOTIFY_STATUS_CHANGE_PARAMS_2 *cparams;
+
+    list = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
+            sizeof(SC_RPC_NOTIFY_PARAMS_LIST) + sizeof(SERVICE_NOTIFY_STATUS_CHANGE_PARAMS_2));
+    if (!list)
+        return;
+
+    cparams = (SERVICE_NOTIFY_STATUS_CHANGE_PARAMS_2 *)(list + 1);
+
+    cparams->dwNotifyMask = notify->notify_mask;
+    fill_status_process(&cparams->ServiceStatus, service);
+    cparams->dwNotificationStatus = ERROR_SUCCESS;
+    cparams->dwNotificationTriggered = 1 << (cparams->ServiceStatus.dwCurrentState - SERVICE_STOPPED);
+    cparams->pszServiceNames = NULL;
+
+    list->cElements = 1;
+
+    list->NotifyParamsArray[0].dwInfoLevel = 2;
+    list->NotifyParamsArray[0].u.params = cparams;
+
+    InterlockedExchangePointer((void**)&notify->params_list, list);
+
+    SetEvent(notify->event);
+}
+
 DWORD __cdecl svcctl_SetServiceStatus(
     SC_RPC_HANDLE hServiceStatus,
     LPSERVICE_STATUS lpServiceStatus)
 {
-    struct sc_service_handle *service;
+    struct sc_service_handle *service, *service_handle;
     struct process_entry *process;
-    DWORD err;
+    DWORD err, mask;
 
     WINE_TRACE("(%p, %p)\n", hServiceStatus, lpServiceStatus);
 
@@ -807,6 +895,21 @@ DWORD __cdecl svcctl_SetServiceStatus(
         release_process(process);
     }
 
+    mask = 1 << (service->service_entry->status.dwCurrentState - SERVICE_STOPPED);
+    LIST_FOR_EACH_ENTRY(service_handle, &service->service_entry->handles, struct sc_service_handle, entry)
+    {
+        struct sc_notify_handle *notify = service_handle->notify;
+        if (notify && (notify->notify_mask & mask))
+        {
+            fill_notify(notify, service->service_entry);
+            sc_notify_release(notify);
+            service_handle->notify = NULL;
+            service_handle->status_notified = TRUE;
+        }
+        else
+            service_handle->status_notified = FALSE;
+    }
+
     service_unlock(service->service_entry);
 
     return ERROR_SUCCESS;
@@ -825,6 +928,9 @@ DWORD __cdecl svcctl_ChangeServiceConfig2W( SC_RPC_HANDLE hService, SC_RPC_CONFI
     case SERVICE_CONFIG_DESCRIPTION:
         {
             WCHAR *descr = NULL;
+
+            if (!config.u.descr->lpDescription)
+                break;
 
             if (config.u.descr->lpDescription[0])
             {
@@ -876,27 +982,32 @@ DWORD __cdecl svcctl_QueryServiceConfig2W( SC_RPC_HANDLE hService, DWORD level,
     switch (level)
     {
     case SERVICE_CONFIG_DESCRIPTION:
-        {
-            SERVICE_DESCRIPTIONW *descr = (SERVICE_DESCRIPTIONW *)buffer;
+    {
+        struct service_description *desc = (struct service_description *)buffer;
+        DWORD total_size = sizeof(*desc);
 
-            service_lock(service->service_entry);
-            *needed = sizeof(*descr);
+        service_lock(service->service_entry);
+        if (service->service_entry->description)
+            total_size += strlenW(service->service_entry->description) * sizeof(WCHAR);
+
+        *needed = total_size;
+        if (size >= total_size)
+        {
             if (service->service_entry->description)
-                *needed += (strlenW(service->service_entry->description) + 1) * sizeof(WCHAR);
-            if (size >= *needed)
             {
-                if (service->service_entry->description)
-                {
-                    /* store a buffer offset instead of a pointer */
-                    descr->lpDescription = (WCHAR *)((BYTE *)(descr + 1) - buffer);
-                    strcpyW( (WCHAR *)(descr + 1), service->service_entry->description );
-                }
-                else descr->lpDescription = NULL;
+                strcpyW( desc->description, service->service_entry->description );
+                desc->size = total_size - FIELD_OFFSET(struct service_description, description);
             }
-            else err = ERROR_INSUFFICIENT_BUFFER;
-            service_unlock(service->service_entry);
+            else
+            {
+                desc->description[0] = 0;
+                desc->size           = 0;
+            }
         }
-        break;
+        else err = ERROR_INSUFFICIENT_BUFFER;
+        service_unlock(service->service_entry);
+    }
+    break;
 
     case SERVICE_CONFIG_PRESHUTDOWN_INFO:
         service_lock(service->service_entry);
@@ -916,14 +1027,6 @@ DWORD __cdecl svcctl_QueryServiceConfig2W( SC_RPC_HANDLE hService, DWORD level,
         break;
     }
     return err;
-}
-
-static void fill_status_process(SERVICE_STATUS_PROCESS *status, struct service_entry *service)
-{
-    struct process_entry *process = service->process;
-    memcpy(status, &service->status, sizeof(service->status));
-    status->dwProcessId     = process ? process->process_id : 0;
-    status->dwServiceFlags  = 0;
 }
 
 DWORD __cdecl svcctl_QueryServiceStatusEx(
@@ -1118,7 +1221,7 @@ DWORD __cdecl svcctl_StartServiceW(
     if (service->service_entry->config.dwStartType == SERVICE_DISABLED)
         return ERROR_SERVICE_DISABLED;
 
-    if (!scmdatabase_lock_startup(service->service_entry->db))
+    if (!scmdatabase_lock_startup(service->service_entry->db, 3000))
         return ERROR_SERVICE_DATABASE_LOCKED;
 
     err = service_start(service->service_entry, dwNumServiceArgs, lpServiceArgVectors);
@@ -1280,7 +1383,7 @@ DWORD __cdecl svcctl_LockServiceDatabase(
     if ((err = validate_scm_handle(hSCManager, SC_MANAGER_LOCK, &manager)) != ERROR_SUCCESS)
         return err;
 
-    if (!scmdatabase_lock_startup(manager->db))
+    if (!scmdatabase_lock_startup(manager->db, 0))
         return ERROR_SERVICE_DATABASE_LOCKED;
 
     lock = HeapAlloc(GetProcessHeap(), 0, sizeof(struct sc_lock));
@@ -1339,11 +1442,10 @@ DWORD __cdecl svcctl_EnumServicesStatusW(
     LPDWORD returned,
     LPDWORD resume)
 {
-    DWORD err, sz, total_size, num_services;
-    DWORD_PTR offset;
+    DWORD err, sz, total_size, num_services, offset;
     struct sc_manager_handle *manager;
     struct service_entry *service;
-    ENUM_SERVICE_STATUSW *s;
+    struct enum_service_status *s;
 
     WINE_TRACE("(%p, 0x%x, 0x%x, %p, %u, %p, %p, %p)\n", hmngr, type, state, buffer, size, needed, returned, resume);
 
@@ -1363,7 +1465,7 @@ DWORD __cdecl svcctl_EnumServicesStatusW(
     {
         if ((service->status.dwServiceType & type) && map_state(service->status.dwCurrentState, state))
         {
-            total_size += sizeof(ENUM_SERVICE_STATUSW);
+            total_size += sizeof(*s);
             total_size += (strlenW(service->name) + 1) * sizeof(WCHAR);
             if (service->config.lpDisplayName)
             {
@@ -1379,26 +1481,26 @@ DWORD __cdecl svcctl_EnumServicesStatusW(
         scmdatabase_unlock(manager->db);
         return ERROR_MORE_DATA;
     }
-    s = (ENUM_SERVICE_STATUSW *)buffer;
-    offset = num_services * sizeof(ENUM_SERVICE_STATUSW);
+    s = (struct enum_service_status *)buffer;
+    offset = num_services * sizeof(struct enum_service_status);
     LIST_FOR_EACH_ENTRY(service, &manager->db->services, struct service_entry, entry)
     {
         if ((service->status.dwServiceType & type) && map_state(service->status.dwCurrentState, state))
         {
             sz = (strlenW(service->name) + 1) * sizeof(WCHAR);
             memcpy(buffer + offset, service->name, sz);
-            s->lpServiceName = (WCHAR *)offset; /* store a buffer offset instead of a pointer */
+            s->service_name = offset;
             offset += sz;
 
-            if (!service->config.lpDisplayName) s->lpDisplayName = NULL;
+            if (!service->config.lpDisplayName) s->display_name = 0;
             else
             {
                 sz = (strlenW(service->config.lpDisplayName) + 1) * sizeof(WCHAR);
                 memcpy(buffer + offset, service->config.lpDisplayName, sz);
-                s->lpDisplayName = (WCHAR *)offset;
+                s->display_name = offset;
                 offset += sz;
             }
-            s->ServiceStatus = service->status;
+            s->service_status = service->status;
             s++;
         }
     }
@@ -1459,7 +1561,7 @@ DWORD __cdecl svcctl_EnumServicesStatusExW(
     DWORD_PTR offset;
     struct sc_manager_handle *manager;
     struct service_entry *service;
-    ENUM_SERVICE_STATUS_PROCESSW *s;
+    struct enum_service_status_process *s;
 
     WINE_TRACE("(%p, 0x%x, 0x%x, %p, %u, %p, %p, %s)\n", hmngr, type, state, buffer, size,
                needed, returned, wine_dbgstr_w(group));
@@ -1487,7 +1589,7 @@ DWORD __cdecl svcctl_EnumServicesStatusExW(
         if ((service->status.dwServiceType & type) && map_state(service->status.dwCurrentState, state)
             && match_group(service->config.lpLoadOrderGroup, group))
         {
-            total_size += sizeof(ENUM_SERVICE_STATUS_PROCESSW);
+            total_size += sizeof(*s);
             total_size += (strlenW(service->name) + 1) * sizeof(WCHAR);
             if (service->config.lpDisplayName)
             {
@@ -1503,8 +1605,8 @@ DWORD __cdecl svcctl_EnumServicesStatusExW(
         scmdatabase_unlock(manager->db);
         return ERROR_MORE_DATA;
     }
-    s = (ENUM_SERVICE_STATUS_PROCESSW *)buffer;
-    offset = num_services * sizeof(ENUM_SERVICE_STATUS_PROCESSW);
+    s = (struct enum_service_status_process *)buffer;
+    offset = num_services * sizeof(*s);
     LIST_FOR_EACH_ENTRY(service, &manager->db->services, struct service_entry, entry)
     {
         if ((service->status.dwServiceType & type) && map_state(service->status.dwCurrentState, state)
@@ -1512,18 +1614,18 @@ DWORD __cdecl svcctl_EnumServicesStatusExW(
         {
             sz = (strlenW(service->name) + 1) * sizeof(WCHAR);
             memcpy(buffer + offset, service->name, sz);
-            s->lpServiceName = (WCHAR *)offset; /* store a buffer offset instead of a pointer */
+            s->service_name = offset;
             offset += sz;
 
-            if (!service->config.lpDisplayName) s->lpDisplayName = NULL;
+            if (!service->config.lpDisplayName) s->display_name = 0;
             else
             {
                 sz = (strlenW(service->config.lpDisplayName) + 1) * sizeof(WCHAR);
                 memcpy(buffer + offset, service->config.lpDisplayName, sz);
-                s->lpDisplayName = (WCHAR *)offset;
+                s->display_name = offset;
                 offset += sz;
             }
-            fill_status_process(&s->ServiceStatusProcess, service);
+            fill_status_process(&s->service_status_process, service);
             s++;
         }
     }
@@ -1591,31 +1693,139 @@ DWORD __cdecl svcctl_unknown46(void)
 }
 
 DWORD __cdecl svcctl_NotifyServiceStatusChange(
-    SC_RPC_HANDLE service,
+    SC_RPC_HANDLE handle,
     SC_RPC_NOTIFY_PARAMS params,
     GUID *clientprocessguid,
     GUID *scmprocessguid,
     BOOL *createremotequeue,
-    SC_NOTIFY_RPC_HANDLE *notify)
+    SC_NOTIFY_RPC_HANDLE *hNotify)
 {
-    WINE_FIXME("\n");
-    return ERROR_CALL_NOT_IMPLEMENTED;
+    DWORD err, mask;
+    struct sc_manager_handle *manager = NULL;
+    struct sc_service_handle *service = NULL;
+    struct sc_notify_handle *notify;
+    struct sc_handle *hdr = handle;
+
+    WINE_TRACE("(%p, NotifyMask: 0x%x, %p, %p, %p, %p)\n", handle,
+            params.u.params->dwNotifyMask, clientprocessguid, scmprocessguid,
+            createremotequeue, hNotify);
+
+    switch (hdr->type)
+    {
+    case SC_HTYPE_SERVICE:
+        err = validate_service_handle(handle, SERVICE_QUERY_STATUS, &service);
+        break;
+    case SC_HTYPE_MANAGER:
+        err = validate_scm_handle(handle, SC_MANAGER_ENUMERATE_SERVICE, &manager);
+        break;
+    default:
+        err = ERROR_INVALID_HANDLE;
+        break;
+    }
+
+    if (err != ERROR_SUCCESS)
+        return err;
+
+    if (manager)
+    {
+        WARN("Need support for service creation/deletion notifications\n");
+        return ERROR_CALL_NOT_IMPLEMENTED;
+    }
+
+    notify = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*notify));
+    if (!notify)
+        return ERROR_NOT_ENOUGH_SERVER_MEMORY;
+
+    notify->hdr.type = SC_HTYPE_NOTIFY;
+    notify->hdr.access = 0;
+
+    notify->event = CreateEventW(NULL, TRUE, FALSE, NULL);
+
+    notify->notify_mask = params.u.params->dwNotifyMask;
+
+    service_lock(service->service_entry);
+
+    if (service->notify)
+    {
+        service_unlock(service->service_entry);
+        sc_notify_release(notify);
+        return ERROR_ALREADY_REGISTERED;
+    }
+
+    mask = 1 << (service->service_entry->status.dwCurrentState - SERVICE_STOPPED);
+    if (!service->status_notified && (notify->notify_mask & mask))
+    {
+        fill_notify(notify, service->service_entry);
+        service->status_notified = TRUE;
+    }
+    else
+    {
+        sc_notify_retain(notify);
+        service->notify = notify;
+    }
+
+    sc_notify_retain(notify);
+    *hNotify = &notify->hdr;
+
+    service_unlock(service->service_entry);
+
+    return ERROR_SUCCESS;
 }
 
 DWORD __cdecl svcctl_GetNotifyResults(
-    SC_NOTIFY_RPC_HANDLE notify,
-    SC_RPC_NOTIFY_PARAMS_LIST **params)
+    SC_NOTIFY_RPC_HANDLE hNotify,
+    SC_RPC_NOTIFY_PARAMS_LIST **pList)
 {
-    WINE_FIXME("\n");
-    return ERROR_CALL_NOT_IMPLEMENTED;
+    DWORD err;
+    struct sc_notify_handle *notify;
+
+    WINE_TRACE("(%p, %p)\n", hNotify, pList);
+
+    if (!pList)
+        return ERROR_INVALID_PARAMETER;
+
+    *pList = NULL;
+
+    if ((err = validate_notify_handle(hNotify, 0, &notify)) != 0)
+        return err;
+
+    sc_notify_retain(notify);
+    /* block until there is a result */
+    err = WaitForSingleObject(notify->event, INFINITE);
+
+    if (err != WAIT_OBJECT_0)
+    {
+        sc_notify_release(notify);
+        return err;
+    }
+
+    *pList = InterlockedExchangePointer((void**)&notify->params_list, NULL);
+    if (!*pList)
+    {
+        sc_notify_release(notify);
+        return ERROR_REQUEST_ABORTED;
+    }
+
+    sc_notify_release(notify);
+
+    return ERROR_SUCCESS;
 }
 
 DWORD __cdecl svcctl_CloseNotifyHandle(
-    SC_NOTIFY_RPC_HANDLE *notify,
+    SC_NOTIFY_RPC_HANDLE *hNotify,
     BOOL *apc_fired)
 {
-    WINE_FIXME("\n");
-    return ERROR_CALL_NOT_IMPLEMENTED;
+    struct sc_notify_handle *notify;
+    DWORD err;
+
+    WINE_TRACE("(%p, %p)\n", hNotify, apc_fired);
+
+    if ((err = validate_notify_handle(*hNotify, 0, &notify)) != 0)
+        return err;
+
+    sc_notify_release(notify);
+
+    return ERROR_SUCCESS;
 }
 
 DWORD __cdecl svcctl_ControlServiceExA(
@@ -1958,6 +2168,7 @@ void RPC_Stop(void)
 {
     RpcMgmtStopServerListening(NULL);
     RpcServerUnregisterIf(svcctl_v2_0_s_ifspec, NULL, TRUE);
+    RpcMgmtWaitServerListen();
 
     CloseThreadpoolCleanupGroupMembers(cleanup_group, TRUE, NULL);
     CloseThreadpoolCleanupGroup(cleanup_group);

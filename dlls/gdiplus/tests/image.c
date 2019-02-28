@@ -2,7 +2,7 @@
  * Unit test suite for images
  *
  * Copyright (C) 2007 Google (Evan Stade)
- * Copyright (C) 2012 Dmitry Timoshkov
+ * Copyright (C) 2012, 2016 Dmitry Timoshkov
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -34,6 +34,8 @@ static GpStatus (WINAPI *pGdipBitmapGetHistogramSize)(HistogramFormat,UINT*);
 static GpStatus (WINAPI *pGdipBitmapGetHistogram)(GpBitmap*,HistogramFormat,UINT,UINT*,UINT*,UINT*,UINT*);
 static GpStatus (WINAPI *pGdipImageSetAbort)(GpImage*,GdiplusAbort*);
 
+static GpStatus (WINGDIPAPI *pGdipInitializePalette)(ColorPalette*,PaletteType,INT,BOOL,GpBitmap*);
+
 #define expect(expected, got) ok((got) == (expected), "Expected %d, got %d\n", (UINT)(expected), (UINT)(got))
 #define expectf(expected, got) ok(fabs((expected) - (got)) < 0.0001, "Expected %f, got %f\n", (expected), (got))
 
@@ -55,10 +57,10 @@ static void expect_guid(REFGUID expected, REFGUID got, int line, BOOL todo)
     char buffer[39];
     char buffer2[39];
 
-    StringFromGUID2(got, bufferW, sizeof(bufferW)/sizeof(bufferW[0]));
-    WideCharToMultiByte(CP_ACP, 0, bufferW, sizeof(bufferW)/sizeof(bufferW[0]), buffer, sizeof(buffer), NULL, NULL);
-    StringFromGUID2(expected, bufferW, sizeof(bufferW)/sizeof(bufferW[0]));
-    WideCharToMultiByte(CP_ACP, 0, bufferW, sizeof(bufferW)/sizeof(bufferW[0]), buffer2, sizeof(buffer2), NULL, NULL);
+    StringFromGUID2(got, bufferW, ARRAY_SIZE(bufferW));
+    WideCharToMultiByte(CP_ACP, 0, bufferW, ARRAY_SIZE(bufferW), buffer, sizeof(buffer), NULL, NULL);
+    StringFromGUID2(expected, bufferW, ARRAY_SIZE(bufferW));
+    WideCharToMultiByte(CP_ACP, 0, bufferW, ARRAY_SIZE(bufferW), buffer2, sizeof(buffer2), NULL, NULL);
     todo_wine_if (todo)
         ok_(__FILE__, line)(IsEqualGUID(expected, got), "Expected %s, got %s\n", buffer2, buffer);
 }
@@ -367,7 +369,8 @@ static void test_GdipImageGetFrameDimensionsCount(void)
 
     /* SelectActiveFrame has no effect on image data of memory bitmaps */
     color = 0xdeadbeef;
-    GdipBitmapGetPixel(bm, 0, 0, &color);
+    stat = GdipBitmapGetPixel(bm, 0, 0, &color);
+    expect(Ok, stat);
     expect(0xffffffff, color);
 
     GdipDisposeImage((GpImage*)bm);
@@ -1666,6 +1669,7 @@ static void test_createhbitmap(void)
     HDC hdc;
     COLORREF pixel;
     BYTE bits[640];
+    BitmapData lockeddata;
 
     memset(bits, 0x68, 640);
 
@@ -1769,6 +1773,7 @@ static void test_createhbitmap(void)
     }
 
     /* create HBITMAP with bkgnd colour */
+    /* gdiplus.dll 5.1 is broken and only applies the blue value */
     stat = GdipCreateHBITMAPFromBitmap(bitmap, &hbitmap, 0xff00ff);
     expect(Ok, stat);
 
@@ -1788,20 +1793,20 @@ static void test_createhbitmap(void)
         if (bm.bmBits)
         {
             DWORD val = *(DWORD*)bm.bmBits;
-            ok(val == 0x68c12ac1, "got %x, expected 0x682a2a2a\n", val);
+            ok(val == 0x68c12ac1 || broken(val == 0x682a2ac1), "got %x, expected 0x68c12ac1\n", val);
             val = *((DWORD*)bm.bmBits + (bm.bmHeight-1) * bm.bmWidthBytes/4 + 1);
-            ok(val == 0xff00ff, "got %x, expected 0x682a2a2a\n", val);
+            ok(val == 0xff00ff || broken(val == 0xff), "got %x, expected 0xff00ff\n", val);
         }
 
         hdc = CreateCompatibleDC(NULL);
 
         oldhbitmap = SelectObject(hdc, hbitmap);
         pixel = GetPixel(hdc, 5, 5);
-        expect(0xc12ac1, pixel);
+        ok(pixel == 0xc12ac1 || broken(pixel == 0xc12a2a), "got %x, expected 0xc12ac1\n", pixel);
         pixel = GetPixel(hdc, 1, 0);
-        expect(0xff00ff, pixel);
+        ok(pixel == 0xff00ff || broken(pixel == 0xff0000), "got %x, expected 0xff00ff\n", pixel);
         pixel = GetPixel(hdc, 2, 0);
-        expect(0xb12ac1, pixel);
+        ok(pixel == 0xb12ac1 || broken(pixel == 0xb12a2a), "got %x, expected 0xb12ac1\n", pixel);
 
         SelectObject(hdc, oldhbitmap);
         DeleteDC(hdc);
@@ -1828,20 +1833,20 @@ static void test_createhbitmap(void)
         if (bm.bmBits)
         {
             DWORD val = *(DWORD*)bm.bmBits;
-            ok(val == 0x68c12ac1, "got %x, expected 0x682a2a2a\n", val);
+            ok(val == 0x68c12ac1 || broken(val == 0x682a2ac1), "got %x, expected 0x68c12ac1\n", val);
             val = *((DWORD*)bm.bmBits + (bm.bmHeight-1) * bm.bmWidthBytes/4 + 1);
-            ok(val == 0xff00ff, "got %x, expected 0x682a2a2a\n", val);
+            ok(val == 0xff00ff || broken(val == 0xff), "got %x, expected 0xff00ff\n", val);
         }
 
         hdc = CreateCompatibleDC(NULL);
 
         oldhbitmap = SelectObject(hdc, hbitmap);
         pixel = GetPixel(hdc, 5, 5);
-        expect(0xc12ac1, pixel);
+        ok(pixel == 0xc12ac1 || broken(pixel == 0xc12a2a), "got %x, expected 0xc12ac1\n", pixel);
         pixel = GetPixel(hdc, 1, 0);
-        expect(0xff00ff, pixel);
+        ok(pixel == 0xff00ff || broken(pixel == 0xff0000), "got %x, expected 0xff00ff\n", pixel);
         pixel = GetPixel(hdc, 2, 0);
-        expect(0xb12ac1, pixel);
+        ok(pixel == 0xb12ac1 || broken(pixel == 0xb12a2a), "got %x, expected 0xb12ac1\n", pixel);
 
         SelectObject(hdc, oldhbitmap);
         DeleteDC(hdc);
@@ -1850,6 +1855,30 @@ static void test_createhbitmap(void)
 
     stat = GdipDisposeImage((GpImage*)bitmap);
     expect(Ok, stat);
+
+    /* create HBITMAP from locked data */
+    memset(bits, 0x68, 640);
+    stat = GdipCreateBitmapFromScan0(10, 20, 32, PixelFormat24bppRGB, bits, &bitmap);
+    expect(Ok, stat);
+
+    memset(&lockeddata, 0, sizeof(lockeddata));
+    stat = GdipBitmapLockBits(bitmap, NULL, ImageLockModeRead | ImageLockModeWrite,
+            PixelFormat32bppRGB, &lockeddata);
+    expect(Ok, stat);
+    ((DWORD*)lockeddata.Scan0)[0] = 0xff242424;
+    stat = GdipCreateHBITMAPFromBitmap(bitmap, &hbitmap, 0);
+    expect(Ok, stat);
+    stat = GdipBitmapUnlockBits(bitmap, &lockeddata);
+    expect(Ok, stat);
+    stat = GdipDisposeImage((GpImage*)bitmap);
+    expect(Ok, stat);
+
+    hdc = CreateCompatibleDC(NULL);
+    oldhbitmap = SelectObject(hdc, hbitmap);
+    pixel = GetPixel(hdc, 0, 0);
+    expect(0x686868, pixel);
+    SelectObject(hdc, oldhbitmap);
+    DeleteDC(hdc);
 }
 
 static void test_getthumbnail(void)
@@ -2348,16 +2377,145 @@ static void test_colormatrix(void)
     expect(Ok, stat);
     ok(color_match(0xeeff40cc, color, 3), "expected 0xeeff40cc, got 0x%08x\n", color);
 
+    /* Toggle NoOp */
+    stat = GdipSetImageAttributesNoOp(imageattr, ColorAdjustTypeDefault, FALSE);
+    expect(Ok, stat);
+
+    stat = GdipDrawImageRectRectI(graphics, (GpImage *)bitmap1, 0, 0, 1, 1, 0, 0, 1, 1,
+        UnitPixel, imageattr, NULL, NULL);
+    expect(Ok, stat);
+
+    stat = GdipBitmapGetPixel(bitmap2, 0, 0, &color);
+    expect(Ok, stat);
+    ok(color_match(0xfefe40cc, color, 3), "expected 0xfefe40cc, got 0x%08x\n", color);
+
+    stat = GdipSetImageAttributesNoOp(imageattr, ColorAdjustTypeDefault, TRUE);
+    expect(Ok, stat);
+
+    stat = GdipDrawImageRectRectI(graphics, (GpImage *)bitmap1, 0, 0, 1, 1, 0, 0, 1, 1,
+        UnitPixel, imageattr, NULL, NULL);
+    expect(Ok, stat);
+
+    stat = GdipBitmapGetPixel(bitmap2, 0, 0, &color);
+    expect(Ok, stat);
+    ok(color_match(0xff40ccee, color, 3), "expected 0xff40ccee, got 0x%08x\n", color);
+
     stat = GdipResetImageAttributes(imageattr, ColorAdjustTypeDefault);
     expect(Ok, stat);
 
-    stat = GdipDrawImageRectRectI(graphics, (GpImage*)bitmap1, 0,0,1,1, 0,0,1,1,
+    stat = GdipSetImageAttributesNoOp(imageattr, ColorAdjustTypeDefault, FALSE);
+    expect(Ok, stat);
+
+    stat = GdipDrawImageRectRectI(graphics, (GpImage *)bitmap1, 0, 0, 1, 1, 0, 0, 1, 1,
+        UnitPixel, imageattr, NULL, NULL);
+    expect(Ok, stat);
+
+    stat = GdipBitmapGetPixel(bitmap2, 0, 0, &color);
+    expect(Ok, stat);
+    ok(color_match(0xff40ccee, color, 3), "expected 0xff40ccee, got 0x%08x\n", color);
+
+    stat = GdipDrawImageRectRectI(graphics, (GpImage *)bitmap1, 0, 0, 1, 1, 0, 0, 1, 1,
         UnitPixel, imageattr, NULL, NULL);
     expect(Ok, stat);
 
     stat = GdipBitmapGetPixel(bitmap2, 0, 0, &color);
     expect(Ok, stat);
     ok(color_match(0xff40ccee, color, 1), "Expected ff40ccee, got %.8x\n", color);
+
+    /* Disable adjustment, toggle NoOp */
+    stat = GdipSetImageAttributesColorMatrix(imageattr, ColorAdjustTypeDefault,
+        FALSE, &colormatrix, NULL, ColorMatrixFlagsDefault);
+    expect(Ok, stat);
+
+    stat = GdipSetImageAttributesNoOp(imageattr, ColorAdjustTypeDefault, FALSE);
+    expect(Ok, stat);
+
+    stat = GdipDrawImageRectRectI(graphics, (GpImage *)bitmap1, 0, 0, 1, 1, 0, 0, 1, 1,
+        UnitPixel, imageattr, NULL, NULL);
+    expect(Ok, stat);
+
+    stat = GdipBitmapGetPixel(bitmap2, 0, 0, &color);
+    expect(Ok, stat);
+    ok(color_match(0xff40ccee, color, 3), "expected 0xff40ccee, got 0x%08x\n", color);
+
+    stat = GdipSetImageAttributesNoOp(imageattr, ColorAdjustTypeDefault, TRUE);
+    expect(Ok, stat);
+
+    stat = GdipDrawImageRectRectI(graphics, (GpImage *)bitmap1, 0, 0, 1, 1, 0, 0, 1, 1,
+        UnitPixel, imageattr, NULL, NULL);
+    expect(Ok, stat);
+
+    stat = GdipBitmapGetPixel(bitmap2, 0, 0, &color);
+    expect(Ok, stat);
+    ok(color_match(0xff40ccee, color, 3), "expected 0xff40ccee, got 0x%08x\n", color);
+
+    /* Reset with NoOp on, enable adjustment. */
+    stat = GdipResetImageAttributes(imageattr, ColorAdjustTypeDefault);
+    expect(Ok, stat);
+
+    stat = GdipSetImageAttributesColorMatrix(imageattr, ColorAdjustTypeDefault,
+        TRUE, &colormatrix, NULL, ColorMatrixFlagsDefault);
+    expect(Ok, stat);
+
+    stat = GdipDrawImageRectRectI(graphics, (GpImage *)bitmap1, 0, 0, 1, 1, 0, 0, 1, 1,
+        UnitPixel, imageattr, NULL, NULL);
+    expect(Ok, stat);
+
+    stat = GdipBitmapGetPixel(bitmap2, 0, 0, &color);
+    expect(Ok, stat);
+    ok(color_match(0xfff24ace, color, 3), "expected 0xfff24ace, got 0x%08x\n", color);
+
+    /* Now inhibit specific category. */
+    stat = GdipResetImageAttributes(imageattr, ColorAdjustTypeDefault);
+    expect(Ok, stat);
+
+    stat = GdipSetImageAttributesColorMatrix(imageattr, ColorAdjustTypeBitmap,
+        TRUE, &colormatrix, NULL, ColorMatrixFlagsDefault);
+    expect(Ok, stat);
+
+    stat = GdipDrawImageRectRectI(graphics, (GpImage *)bitmap1, 0, 0, 1, 1, 0, 0, 1, 1,
+        UnitPixel, imageattr, NULL, NULL);
+    expect(Ok, stat);
+
+    stat = GdipBitmapGetPixel(bitmap2, 0, 0, &color);
+    expect(Ok, stat);
+    ok(color_match(0xfffe41cc, color, 3), "expected 0xfffe41cc, got 0x%08x\n", color);
+
+    stat = GdipSetImageAttributesNoOp(imageattr, ColorAdjustTypeBitmap, TRUE);
+    expect(Ok, stat);
+
+    stat = GdipDrawImageRectRectI(graphics, (GpImage *)bitmap1, 0, 0, 1, 1, 0, 0, 1, 1,
+        UnitPixel, imageattr, NULL, NULL);
+    expect(Ok, stat);
+
+    stat = GdipBitmapGetPixel(bitmap2, 0, 0, &color);
+    expect(Ok, stat);
+    ok(color_match(0xff40ccee, color, 3), "expected 0xff40ccee, got 0x%08x\n", color);
+
+    stat = GdipSetImageAttributesNoOp(imageattr, ColorAdjustTypeBitmap, FALSE);
+    expect(Ok, stat);
+
+    stat = GdipSetImageAttributesNoOp(imageattr, ColorAdjustTypeDefault, TRUE);
+    expect(Ok, stat);
+
+    stat = GdipDrawImageRectRectI(graphics, (GpImage *)bitmap1, 0, 0, 1, 1, 0, 0, 1, 1,
+        UnitPixel, imageattr, NULL, NULL);
+    expect(Ok, stat);
+
+    stat = GdipBitmapGetPixel(bitmap2, 0, 0, &color);
+    expect(Ok, stat);
+    ok(color_match(0xfff24ace, color, 3), "expected 0xfff24ace, got 0x%08x\n", color);
+
+    stat = GdipResetImageAttributes(imageattr, ColorAdjustTypeBitmap);
+    expect(Ok, stat);
+
+    stat = GdipDrawImageRectRectI(graphics, (GpImage *)bitmap1, 0, 0, 1, 1, 0, 0, 1, 1,
+        UnitPixel, imageattr, NULL, NULL);
+    expect(Ok, stat);
+
+    stat = GdipBitmapGetPixel(bitmap2, 0, 0, &color);
+    expect(Ok, stat);
+    ok(color_match(0xff40ccee, color, 3), "expected 0xff40ccee, got 0x%08x\n", color);
 
     GdipDeleteGraphics(graphics);
     GdipDisposeImage((GpImage*)bitmap1);
@@ -2561,7 +2719,7 @@ static void test_multiframegif(void)
     expect(Ok, stat);
 
     color = 0xdeadbeef;
-    GdipBitmapGetPixel(bmp, 0, 0, &color);
+    stat = GdipBitmapGetPixel(bmp, 0, 0, &color);
     expect(Ok, stat);
     expect(0xff000000, color);
 
@@ -2569,7 +2727,7 @@ static void test_multiframegif(void)
     expect(Ok, stat);
 
     color = 0xdeadbeef;
-    GdipBitmapGetPixel(bmp, 0, 0, &color);
+    stat = GdipBitmapGetPixel(bmp, 0, 0, &color);
     expect(Ok, stat);
     expect(0xffffffff, color);
 
@@ -3061,7 +3219,7 @@ static LONG obj_refcount(void *obj)
     return IUnknown_Release((IUnknown *)obj);
 }
 
-static GpImage *load_image(const BYTE *image_data, UINT image_size)
+static GpImage *load_image(const BYTE *image_data, UINT image_size, BOOL valid_data, BOOL todo_load)
 {
     IStream *stream;
     HGLOBAL hmem;
@@ -3085,8 +3243,12 @@ static GpImage *load_image(const BYTE *image_data, UINT image_size)
     ok(refcount == 1, "expected stream refcount 1, got %d\n", refcount);
 
     status = GdipLoadImageFromStream(stream, &image);
-    ok(status == Ok || broken(status == InvalidParameter), /* XP */
-       "GdipLoadImageFromStream error %d\n", status);
+    todo_wine_if(todo_load)
+    if (valid_data)
+        ok(status == Ok || broken(status == InvalidParameter), /* XP */
+           "GdipLoadImageFromStream error %d\n", status);
+    else
+        ok(status != Ok, "GdipLoadImageFromStream should fail\n");
     if (status != Ok)
     {
         IStream_Release(stream);
@@ -3155,9 +3317,9 @@ static void test_image_properties(void)
         char buf[256];
     } item;
 
-    for (i = 0; i < sizeof(td)/sizeof(td[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(td); i++)
     {
-        image = load_image(td[i].image_data, td[i].image_size);
+        image = load_image(td[i].image_data, td[i].image_size, TRUE, FALSE);
         if (!image)
         {
             trace("%u: failed to load image data\n", i);
@@ -3450,7 +3612,7 @@ static void test_tiff_properties(void)
     PROPID *prop_id;
     PropertyItem *prop_item;
 
-    image = load_image((const BYTE *)&TIFF_data, sizeof(TIFF_data));
+    image = load_image((const BYTE *)&TIFF_data, sizeof(TIFF_data), TRUE, FALSE);
     if (!image)
     {
         win_skip("Failed to load TIFF image data. Might not be supported. Skipping.\n");
@@ -3473,9 +3635,9 @@ static void test_tiff_properties(void)
     prop_count = 0xdeadbeef;
     status = GdipGetPropertyCount(image, &prop_count);
     expect(Ok, status);
-    ok(prop_count == sizeof(td)/sizeof(td[0]) ||
-       broken(prop_count == sizeof(td)/sizeof(td[0]) - 1) /* Win7 SP0 */,
-       "expected property count %u, got %u\n", (UINT)(sizeof(td)/sizeof(td[0])), prop_count);
+    ok(prop_count == ARRAY_SIZE(td) ||
+       broken(prop_count == ARRAY_SIZE(td) - 1) /* Win7 SP0 */,
+       "expected property count %u, got %u\n", (UINT) ARRAY_SIZE(td), prop_count);
 
     prop_id = HeapAlloc(GetProcessHeap(), 0, prop_count * sizeof(*prop_id));
 
@@ -3562,7 +3724,7 @@ static void test_GdipGetAllPropertyItems(void)
     PropertyItem *prop_item;
     const char *item_data;
 
-    image = load_image(tiffimage, sizeof(tiffimage));
+    image = load_image(tiffimage, sizeof(tiffimage), TRUE, FALSE);
     ok(image != 0, "Failed to load TIFF image data\n");
     if (!image) return;
 
@@ -3583,8 +3745,8 @@ static void test_GdipGetAllPropertyItems(void)
     prop_count = 0xdeadbeef;
     status = GdipGetPropertyCount(image, &prop_count);
     expect(Ok, status);
-    ok(prop_count == sizeof(td)/sizeof(td[0]),
-       "expected property count %u, got %u\n", (UINT)(sizeof(td)/sizeof(td[0])), prop_count);
+    ok(prop_count == ARRAY_SIZE(td),
+       "expected property count %u, got %u\n", (UINT) ARRAY_SIZE(td), prop_count);
 
     prop_id = HeapAlloc(GetProcessHeap(), 0, prop_count * sizeof(*prop_id));
 
@@ -3710,7 +3872,7 @@ static void test_tiff_palette(void)
     ARGB *entries = palette.pal.Entries;
 
     /* 1bpp TIFF without palette */
-    image = load_image((const BYTE *)&TIFF_data, sizeof(TIFF_data));
+    image = load_image((const BYTE *)&TIFF_data, sizeof(TIFF_data), TRUE, FALSE);
     if (!image)
     {
         win_skip("Failed to load TIFF image data. Might not be supported. Skipping.\n");
@@ -3858,7 +4020,7 @@ static void test_bitmapbits(void)
     } palette;
     ARGB *entries = palette.pal.Entries;
 
-    for (i = 0; i < sizeof(td)/sizeof(td[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(td); i++)
     {
         BYTE pixels[sizeof(pixels_24)];
         memcpy(pixels, pixels_24, sizeof(pixels_24));
@@ -4127,7 +4289,7 @@ static void test_image_format(void)
     BitmapData data;
     UINT i, ret;
 
-    for (i = 0; i < sizeof(fmt)/sizeof(fmt[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(fmt); i++)
     {
         status = GdipCreateBitmapFromScan0(1, 1, 0, fmt[i], NULL, &bitmap);
         ok(status == Ok || broken(status == InvalidParameter) /* before win7 */,
@@ -4279,7 +4441,7 @@ static void test_DrawImage_scale(void)
     status = GdipSetInterpolationMode(graphics, InterpolationModeNearestNeighbor);
     expect(Ok, status);
 
-    for (i = 0; i < sizeof(td)/sizeof(td[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(td); i++)
     {
         status = GdipSetPixelOffsetMode(graphics, td[i].pixel_offset_mode);
         expect(Ok, status);
@@ -4361,7 +4523,7 @@ static void test_gif_properties(void)
     PropertyItem *prop_item;
     const char *item_data;
 
-    image = load_image(animatedgif, sizeof(animatedgif));
+    image = load_image(animatedgif, sizeof(animatedgif), TRUE, FALSE);
     if (!image) /* XP fails to load this GIF image */
     {
         trace("Failed to load GIF image data\n");
@@ -4385,10 +4547,10 @@ static void test_gif_properties(void)
 
     status = GdipGetPropertyCount(image, &prop_count);
     expect(Ok, status);
-    ok(prop_count == sizeof(td)/sizeof(td[0]) || broken(prop_count == 1) /* before win7 */,
-       "expected property count %u, got %u\n", (UINT)(sizeof(td)/sizeof(td[0])), prop_count);
+    ok(prop_count == ARRAY_SIZE(td) || broken(prop_count == 1) /* before win7 */,
+       "expected property count %u, got %u\n", (UINT) ARRAY_SIZE(td), prop_count);
 
-    if (prop_count != sizeof(td)/sizeof(td[0]))
+    if (prop_count != ARRAY_SIZE(td))
     {
         GdipDisposeImage(image);
         return;
@@ -4662,7 +4824,7 @@ static void test_supported_encoders(void)
     status = GdipCreateBitmapFromScan0(1, 1, 0, PixelFormat24bppRGB, NULL, &bm);
     ok(status == Ok, "GdipCreateBitmapFromScan0 error %d\n", status);
 
-    for (i = 0; i < sizeof(td)/sizeof(td[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(td); i++)
     {
         ret = get_encoder_clsid(td[i].mime, &format, &clsid);
         ok(ret, "%s encoder is not in the list\n", wine_dbgstr_w(td[i].mime));
@@ -4712,7 +4874,7 @@ static void test_createeffect(void)
     stat = pGdipCreateEffect(noneffect, &effect);
     todo_wine expect(Win32Error, stat);
 
-    for(i=0; i < sizeof(effectlist) / sizeof(effectlist[0]); i++)
+    for(i=0; i < ARRAY_SIZE(effectlist); i++)
     {
         stat = pGdipCreateEffect(*effectlist[i], &effect);
         todo_wine expect(Ok, stat);
@@ -4825,7 +4987,7 @@ static void test_histogram(void)
     expect(Ok, stat);
     expect(256, num);
 
-    for (i = 0; i < sizeof(test_formats)/sizeof(test_formats[0]); i++)
+    for (i = 0; i < ARRAY_SIZE(test_formats); i++)
     {
         num = 0;
         stat = pGdipBitmapGetHistogramSize(test_formats[i], &num);
@@ -4941,11 +5103,399 @@ static void test_imageabort(void)
     GdipDisposeImage((GpImage*)bm);
 }
 
+/* RGB 24 bpp 1x1 pixel PNG image */
+static const char png_1x1_data[] = {
+  0x89,'P','N','G',0x0d,0x0a,0x1a,0x0a,
+  0x00,0x00,0x00,0x0d,'I','H','D','R',0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x01,0x08,0x02,0x00,0x00,0x00,0x90,0x77,0x53,0xde,
+  0x00,0x00,0x03,0x00,'P','L','T','E',
+  0x01,0x01,0x01,0x02,0x02,0x02,0x03,0x03,0x03,0x04,0x04,0x04,0x05,0x05,0x05,0x06,0x06,0x06,0x07,0x07,0x07,0x08,0x08,0x08,
+  0x09,0x09,0x09,0x0a,0x0a,0x0a,0x0b,0x0b,0x0b,0x0c,0x0c,0x0c,0x0d,0x0d,0x0d,0x0e,0x0e,0x0e,0x0f,0x0f,0x0f,0x10,0x10,0x10,
+  0x11,0x11,0x11,0x12,0x12,0x12,0x13,0x13,0x13,0x14,0x14,0x14,0x15,0x15,0x15,0x16,0x16,0x16,0x17,0x17,0x17,0x18,0x18,0x18,
+  0x19,0x19,0x19,0x1a,0x1a,0x1a,0x1b,0x1b,0x1b,0x1c,0x1c,0x1c,0x1d,0x1d,0x1d,0x1e,0x1e,0x1e,0x1f,0x1f,0x1f,0x20,0x20,0x20,
+  0x21,0x21,0x21,0x22,0x22,0x22,0x23,0x23,0x23,0x24,0x24,0x24,0x25,0x25,0x25,0x26,0x26,0x26,0x27,0x27,0x27,0x28,0x28,0x28,
+  0x29,0x29,0x29,0x2a,0x2a,0x2a,0x2b,0x2b,0x2b,0x2c,0x2c,0x2c,0x2d,0x2d,0x2d,0x2e,0x2e,0x2e,0x2f,0x2f,0x2f,0x30,0x30,0x30,
+  0x31,0x31,0x31,0x32,0x32,0x32,0x33,0x33,0x33,0x34,0x34,0x34,0x35,0x35,0x35,0x36,0x36,0x36,0x37,0x37,0x37,0x38,0x38,0x38,
+  0x39,0x39,0x39,0x3a,0x3a,0x3a,0x3b,0x3b,0x3b,0x3c,0x3c,0x3c,0x3d,0x3d,0x3d,0x3e,0x3e,0x3e,0x3f,0x3f,0x3f,0x40,0x40,0x40,
+  0x41,0x41,0x41,0x42,0x42,0x42,0x43,0x43,0x43,0x44,0x44,0x44,0x45,0x45,0x45,0x46,0x46,0x46,0x47,0x47,0x47,0x48,0x48,0x48,
+  0x49,0x49,0x49,0x4a,0x4a,0x4a,0x4b,0x4b,0x4b,0x4c,0x4c,0x4c,0x4d,0x4d,0x4d,0x4e,0x4e,0x4e,0x4f,0x4f,0x4f,0x50,0x50,0x50,
+  0x51,0x51,0x51,0x52,0x52,0x52,0x53,0x53,0x53,0x54,0x54,0x54,0x55,0x55,0x55,0x56,0x56,0x56,0x57,0x57,0x57,0x58,0x58,0x58,
+  0x59,0x59,0x59,0x5a,0x5a,0x5a,0x5b,0x5b,0x5b,0x5c,0x5c,0x5c,0x5d,0x5d,0x5d,0x5e,0x5e,0x5e,0x5f,0x5f,0x5f,0x60,0x60,0x60,
+  0x61,0x61,0x61,0x62,0x62,0x62,0x63,0x63,0x63,0x64,0x64,0x64,0x65,0x65,0x65,0x66,0x66,0x66,0x67,0x67,0x67,0x68,0x68,0x68,
+  0x69,0x69,0x69,0x6a,0x6a,0x6a,0x6b,0x6b,0x6b,0x6c,0x6c,0x6c,0x6d,0x6d,0x6d,0x6e,0x6e,0x6e,0x6f,0x6f,0x6f,0x70,0x70,0x70,
+  0x71,0x71,0x71,0x72,0x72,0x72,0x73,0x73,0x73,0x74,0x74,0x74,0x75,0x75,0x75,0x76,0x76,0x76,0x77,0x77,0x77,0x78,0x78,0x78,
+  0x79,0x79,0x79,0x7a,0x7a,0x7a,0x7b,0x7b,0x7b,0x7c,0x7c,0x7c,0x7d,0x7d,0x7d,0x7e,0x7e,0x7e,0x7f,0x7f,0x7f,0x80,0x80,0x80,
+  0x01,0x01,0x01,0x02,0x02,0x02,0x03,0x03,0x03,0x04,0x04,0x04,0x05,0x05,0x05,0x06,0x06,0x06,0x07,0x07,0x07,0x08,0x08,0x08,
+  0x09,0x09,0x09,0x0a,0x0a,0x0a,0x0b,0x0b,0x0b,0x0c,0x0c,0x0c,0x0d,0x0d,0x0d,0x0e,0x0e,0x0e,0x0f,0x0f,0x0f,0x10,0x10,0x10,
+  0x11,0x11,0x11,0x12,0x12,0x12,0x13,0x13,0x13,0x14,0x14,0x14,0x15,0x15,0x15,0x16,0x16,0x16,0x17,0x17,0x17,0x18,0x18,0x18,
+  0x19,0x19,0x19,0x1a,0x1a,0x1a,0x1b,0x1b,0x1b,0x1c,0x1c,0x1c,0x1d,0x1d,0x1d,0x1e,0x1e,0x1e,0x1f,0x1f,0x1f,0x20,0x20,0x20,
+  0x21,0x21,0x21,0x22,0x22,0x22,0x23,0x23,0x23,0x24,0x24,0x24,0x25,0x25,0x25,0x26,0x26,0x26,0x27,0x27,0x27,0x28,0x28,0x28,
+  0x29,0x29,0x29,0x2a,0x2a,0x2a,0x2b,0x2b,0x2b,0x2c,0x2c,0x2c,0x2d,0x2d,0x2d,0x2e,0x2e,0x2e,0x2f,0x2f,0x2f,0x30,0x30,0x30,
+  0x31,0x31,0x31,0x32,0x32,0x32,0x33,0x33,0x33,0x34,0x34,0x34,0x35,0x35,0x35,0x36,0x36,0x36,0x37,0x37,0x37,0x38,0x38,0x38,
+  0x39,0x39,0x39,0x3a,0x3a,0x3a,0x3b,0x3b,0x3b,0x3c,0x3c,0x3c,0x3d,0x3d,0x3d,0x3e,0x3e,0x3e,0x3f,0x3f,0x3f,0x40,0x40,0x40,
+  0x41,0x41,0x41,0x42,0x42,0x42,0x43,0x43,0x43,0x44,0x44,0x44,0x45,0x45,0x45,0x46,0x46,0x46,0x47,0x47,0x47,0x48,0x48,0x48,
+  0x49,0x49,0x49,0x4a,0x4a,0x4a,0x4b,0x4b,0x4b,0x4c,0x4c,0x4c,0x4d,0x4d,0x4d,0x4e,0x4e,0x4e,0x4f,0x4f,0x4f,0x50,0x50,0x50,
+  0x51,0x51,0x51,0x52,0x52,0x52,0x53,0x53,0x53,0x54,0x54,0x54,0x55,0x55,0x55,0x56,0x56,0x56,0x57,0x57,0x57,0x58,0x58,0x58,
+  0x59,0x59,0x59,0x5a,0x5a,0x5a,0x5b,0x5b,0x5b,0x5c,0x5c,0x5c,0x5d,0x5d,0x5d,0x5e,0x5e,0x5e,0x5f,0x5f,0x5f,0x60,0x60,0x60,
+  0x61,0x61,0x61,0x62,0x62,0x62,0x63,0x63,0x63,0x64,0x64,0x64,0x65,0x65,0x65,0x66,0x66,0x66,0x67,0x67,0x67,0x68,0x68,0x68,
+  0x69,0x69,0x69,0x6a,0x6a,0x6a,0x6b,0x6b,0x6b,0x6c,0x6c,0x6c,0x6d,0x6d,0x6d,0x6e,0x6e,0x6e,0x6f,0x6f,0x6f,0x70,0x70,0x70,
+  0x71,0x71,0x71,0x72,0x72,0x72,0x73,0x73,0x73,0x74,0x74,0x74,0x75,0x75,0x75,0x76,0x76,0x76,0x77,0x77,0x77,0x78,0x78,0x78,
+  0x79,0x79,0x79,0x7a,0x7a,0x7a,0x7b,0x7b,0x7b,0x7c,0x7c,0x7c,0x7d,0x7d,0x7d,0x7e,0x7e,0x7e,0x7f,0x7f,0x7f,0x80,0x80,0x80,
+  0x76,0xb6,0x24,0x31,
+  0x00,0x00,0x00,0x02,'t','R','N','S',0xff,0x00,0xe5,0xb7,0x30,0x4a,
+  0x00,0x00,0x00,0x0c,'I','D','A','T',0x08,0xd7,0x63,0xf8,0xff,0xff,0x3f,0x00,0x05,0xfe,0x02,0xfe,0xdc,0xcc,0x59,0xe7,
+  0x00,0x00,0x00,0x00,'I','E','N','D',0xae,0x42,0x60,0x82
+};
+
+#define PNG_COLOR_TYPE_GRAY 0
+#define PNG_COLOR_TYPE_RGB 2
+#define PNG_COLOR_TYPE_PALETTE 3
+#define PNG_COLOR_TYPE_GRAY_ALPHA 4
+#define PNG_COLOR_TYPE_RGB_ALPHA 6
+
+static void test_png_color_formats(void)
+{
+    static const struct
+    {
+        char bit_depth, color_type;
+        struct {
+            PixelFormat format;
+            ImageFlags flags;
+            BOOL todo;
+            BOOL todo_load;
+        } t[3];
+    } td[] =
+    {
+        /*  0 */
+        { 1, PNG_COLOR_TYPE_RGB },
+        { 2, PNG_COLOR_TYPE_RGB },
+        { 4, PNG_COLOR_TYPE_RGB },
+        { 8, PNG_COLOR_TYPE_RGB,
+          {{ PixelFormat32bppARGB, ImageFlagsColorSpaceRGB },
+           { PixelFormat24bppRGB, ImageFlagsColorSpaceRGB },
+           { PixelFormat24bppRGB, ImageFlagsColorSpaceRGB }}},
+        /* libpng refuses to load our test image complaining about extra compressed data,
+         * but libpng is still able to load the image with other combination of type/depth
+         * making RGB 16 bpp case special for some reason. Therefore todo = TRUE.
+         */
+        { 16, PNG_COLOR_TYPE_RGB,
+          {{ PixelFormat32bppARGB, ImageFlagsColorSpaceRGB, TRUE, TRUE },
+           { PixelFormat32bppARGB, ImageFlagsColorSpaceRGB, TRUE, TRUE },
+           { PixelFormat32bppARGB, ImageFlagsColorSpaceRGB, TRUE, TRUE }}},
+
+        /*  5 */
+        { 1, PNG_COLOR_TYPE_GRAY,
+          {{ PixelFormat32bppARGB, ImageFlagsColorSpaceRGB },
+           { PixelFormat1bppIndexed, ImageFlagsColorSpaceRGB },
+           { PixelFormat1bppIndexed, ImageFlagsColorSpaceRGB }}},
+        { 2, PNG_COLOR_TYPE_GRAY,
+          {{ PixelFormat32bppARGB, ImageFlagsColorSpaceRGB },
+           { PixelFormat32bppARGB, ImageFlagsColorSpaceGRAY },
+           { PixelFormat32bppARGB, ImageFlagsColorSpaceGRAY }}},
+        { 4, PNG_COLOR_TYPE_GRAY,
+          {{ PixelFormat32bppARGB, ImageFlagsColorSpaceRGB },
+           { PixelFormat32bppARGB, ImageFlagsColorSpaceGRAY },
+           { PixelFormat32bppARGB, ImageFlagsColorSpaceGRAY }}},
+        { 8, PNG_COLOR_TYPE_GRAY,
+          {{ PixelFormat32bppARGB, ImageFlagsColorSpaceRGB },
+           { PixelFormat32bppARGB, ImageFlagsColorSpaceGRAY },
+           { PixelFormat32bppARGB, ImageFlagsColorSpaceGRAY }}},
+        { 16, PNG_COLOR_TYPE_GRAY,
+          {{ PixelFormat32bppARGB, ImageFlagsColorSpaceRGB },
+           { PixelFormat32bppARGB, ImageFlagsColorSpaceGRAY },
+           { PixelFormat32bppARGB, ImageFlagsColorSpaceGRAY }}},
+
+        /* 10 */
+        { 1, PNG_COLOR_TYPE_PALETTE,
+          {{ PixelFormat32bppARGB, ImageFlagsColorSpaceRGB },
+           { PixelFormat1bppIndexed, ImageFlagsColorSpaceRGB },
+           { 0, 0 }}},
+        { 2, PNG_COLOR_TYPE_PALETTE,
+          {{ PixelFormat32bppARGB, ImageFlagsColorSpaceRGB },
+           { PixelFormat32bppARGB, ImageFlagsColorSpaceRGB },
+           { 0, 0 }}},
+        { 4, PNG_COLOR_TYPE_PALETTE,
+          {{ PixelFormat32bppARGB, ImageFlagsColorSpaceRGB },
+           { PixelFormat4bppIndexed, ImageFlagsColorSpaceRGB },
+           { 0, 0 }}},
+        { 8, PNG_COLOR_TYPE_PALETTE,
+          {{ PixelFormat32bppARGB, ImageFlagsColorSpaceRGB },
+           { PixelFormat8bppIndexed, ImageFlagsColorSpaceRGB },
+           { 0, 0 }}},
+        { 16, PNG_COLOR_TYPE_PALETTE },
+    };
+    BYTE buf[sizeof(png_1x1_data)];
+    GpStatus status;
+    GpImage *image;
+    ImageType type;
+    PixelFormat format;
+    ImageFlags flags;
+    BOOL valid;
+    int i, j, PLTE_off = 0, tRNS_off = 0;
+    const ImageFlags color_space_mask = ImageFlagsColorSpaceRGB | ImageFlagsColorSpaceCMYK | ImageFlagsColorSpaceGRAY | ImageFlagsColorSpaceYCBCR | ImageFlagsColorSpaceYCCK;
+
+    memcpy(buf, png_1x1_data, sizeof(png_1x1_data));
+    buf[24] = 2;
+    buf[25] = PNG_COLOR_TYPE_PALETTE;
+    image = load_image(buf, sizeof(buf), TRUE, FALSE);
+    status = GdipGetImageFlags(image, &flags);
+    expect(status, Ok);
+    ok((flags & color_space_mask) == ImageFlagsColorSpaceRGB || broken(flags == 0x12006) /* before win7 */,
+       "flags = %#x\n", flags);
+    if ((flags & color_space_mask) != ImageFlagsColorSpaceRGB) {
+        GdipDisposeImage(image);
+        win_skip("broken PNG color space support\n");
+        return;
+    }
+    GdipDisposeImage(image);
+
+    for (i = 0; i < sizeof(png_1x1_data) - 4; i++)
+    {
+        if (!memcmp(buf + i, "tRNS", 4))
+            tRNS_off = i;
+        else if (!memcmp(buf + i, "PLTE", 4))
+            PLTE_off = i;
+    }
+
+    ok(PLTE_off && tRNS_off, "PLTE offset %d, tRNS offset %d\n", PLTE_off, tRNS_off);
+    if (!PLTE_off || !tRNS_off) return;
+
+    /* In order to test the image data with and without PLTE and tRNS
+     * chunks, we mask the chunk name with private one (tEST).
+     */
+
+    for (i = 0; i < ARRAY_SIZE(td); i++)
+    {
+        for (j = 0; j < 3; j++)
+        {
+            memcpy(buf, png_1x1_data, sizeof(png_1x1_data));
+            buf[24] = td[i].bit_depth;
+            buf[25] = td[i].color_type;
+            if (j >=1) memcpy(buf + tRNS_off, "tEST", 4);
+            if (j >=2) memcpy(buf + PLTE_off, "tEST", 4);
+
+            valid = (td[i].t[j].format != 0) || (td[i].t[j].flags != 0);
+            image = load_image(buf, sizeof(buf), valid, td[i].t[j].todo_load);
+            todo_wine_if(td[i].t[j].todo_load)
+            if (valid)
+                ok(image != NULL, "%d %d: failed to load image data\n", i, j);
+            else
+            {
+                ok(image == NULL, "%d %d: succeed to load image data\n", i, j);
+                if (image) GdipDisposeImage(image);
+                image = NULL;
+            }
+            if (!image) continue;
+
+            status = GdipGetImageType(image, &type);
+            ok(status == Ok, "%d %d: GdipGetImageType error %d\n", i, j, status);
+            ok(type == ImageTypeBitmap, "%d %d: wrong image type %d\n", i, j, type);
+
+            status = GdipGetImagePixelFormat(image, &format);
+            expect(Ok, status);
+            todo_wine_if(td[i].t[j].todo)
+            ok(format == td[i].t[j].format,
+               "%d %d: expected %#x, got %#x\n", i, j, td[i].t[j].format, format);
+
+            status = GdipGetImageFlags(image, &flags);
+            expect(Ok, status);
+            ok((flags & color_space_mask) == td[i].t[j].flags,
+               "%d %d: expected %#x, got %#x\n", i, j, td[i].t[j].flags, flags);
+            GdipDisposeImage(image);
+        }
+    }
+}
+#undef PNG_COLOR_TYPE_GRAY
+#undef PNG_COLOR_TYPE_RGB
+#undef PNG_COLOR_TYPE_PALETTE
+#undef PNG_COLOR_TYPE_GRAY_ALPHA
+#undef PNG_COLOR_TYPE_RGB_ALPHA
+
+static void test_GdipLoadImageFromStream(void)
+{
+    IStream *stream;
+    GpStatus status;
+    GpImage *image;
+    HGLOBAL hglob;
+    BYTE *data;
+    HRESULT hr;
+
+    status = GdipLoadImageFromStream(NULL, NULL);
+    ok(status == InvalidParameter, "Unexpected return value %d.\n", status);
+
+    image = (void *)0xdeadbeef;
+    status = GdipLoadImageFromStream(NULL, &image);
+    ok(status == InvalidParameter, "Unexpected return value %d.\n", status);
+    ok(image == (void *)0xdeadbeef, "Unexpected image pointer.\n");
+
+    hglob = GlobalAlloc(0, sizeof(pngimage));
+    data = GlobalLock (hglob);
+    memcpy(data, pngimage, sizeof(pngimage));
+    GlobalUnlock(hglob);
+
+    hr = CreateStreamOnHGlobal(hglob, TRUE, &stream);
+    ok(hr == S_OK, "Failed to create a stream.\n");
+
+    status = GdipLoadImageFromStream(stream, NULL);
+    ok(status == InvalidParameter, "Unexpected return value %d.\n", status);
+
+    IStream_Release(stream);
+}
+
+static BYTE *init_bitmap(UINT *width, UINT *height, UINT *stride)
+{
+    BYTE *src;
+    UINT i, j, scale;
+
+    *width = 256;
+    *height = 256;
+    *stride = (*width * 3 + 3) & ~3;
+    trace("width %d, height %d, stride %d\n", *width, *height, *stride);
+
+    src = HeapAlloc(GetProcessHeap(), 0, *stride * *height);
+
+    scale = 256 / *width;
+    if (!scale) scale = 1;
+
+    for (i = 0; i < *height; i++)
+    {
+        for (j = 0; j < *width; j++)
+        {
+            src[i * *stride + j*3 + 0] = scale * i;
+            src[i * *stride + j*3 + 1] = scale * (255 - (i+j)/2);
+            src[i * *stride + j*3 + 2] = scale * j;
+        }
+    }
+
+    return src;
+}
+
+static void test_GdipInitializePalette(void)
+{
+    GpStatus status;
+    BYTE *data;
+    GpBitmap *bitmap;
+    ColorPalette *palette;
+    UINT width, height, stride;
+
+    pGdipInitializePalette = (void *)GetProcAddress(GetModuleHandleA("gdiplus.dll"), "GdipInitializePalette");
+    if (!pGdipInitializePalette)
+    {
+        win_skip("GdipInitializePalette is not supported on this platform\n");
+        return;
+    }
+
+    data = init_bitmap(&width, &height, &stride);
+
+    status = GdipCreateBitmapFromScan0(width, height, stride, PixelFormat24bppRGB, data, &bitmap);
+    expect(Ok, status);
+
+    palette = GdipAlloc(sizeof(*palette) + sizeof(ARGB) * 255);
+
+    palette->Flags = 0;
+    palette->Count = 15;
+    status = pGdipInitializePalette(palette, PaletteTypeOptimal, 16, FALSE, bitmap);
+    expect(GenericError, status);
+
+    palette->Flags = 0;
+    palette->Count = 256;
+    status = pGdipInitializePalette(palette, PaletteTypeOptimal, 16, FALSE, NULL);
+    expect(InvalidParameter, status);
+
+    memset(palette->Entries, 0x11, sizeof(ARGB) * 256);
+    palette->Flags = 0;
+    palette->Count = 256;
+    status = pGdipInitializePalette(palette, PaletteTypeCustom, 16, FALSE, NULL);
+    expect(Ok, status);
+    expect(0, palette->Flags);
+    expect(256, palette->Count);
+    expect(0x11111111, palette->Entries[0]);
+    expect(0x11111111, palette->Entries[128]);
+    expect(0x11111111, palette->Entries[255]);
+
+    memset(palette->Entries, 0x11, sizeof(ARGB) * 256);
+    palette->Flags = 0;
+    palette->Count = 256;
+    status = pGdipInitializePalette(palette, PaletteTypeFixedBW, 0, FALSE, bitmap);
+    expect(Ok, status);
+todo_wine
+    expect(0x200, palette->Flags);
+    expect(2, palette->Count);
+    expect(0xff000000, palette->Entries[0]);
+    expect(0xffffffff, palette->Entries[1]);
+
+    memset(palette->Entries, 0x11, sizeof(ARGB) * 256);
+    palette->Flags = 0;
+    palette->Count = 256;
+    status = pGdipInitializePalette(palette, PaletteTypeFixedHalftone8, 1, FALSE, NULL);
+    expect(Ok, status);
+todo_wine
+    expect(0x300, palette->Flags);
+    expect(16, palette->Count);
+    expect(0xff000000, palette->Entries[0]);
+    expect(0xffc0c0c0, palette->Entries[8]);
+    expect(0xff008080, palette->Entries[15]);
+
+    memset(palette->Entries, 0x11, sizeof(ARGB) * 256);
+    palette->Flags = 0;
+    palette->Count = 256;
+    status = pGdipInitializePalette(palette, PaletteTypeFixedHalftone8, 1, FALSE, bitmap);
+    expect(Ok, status);
+todo_wine
+    expect(0x300, palette->Flags);
+    expect(16, palette->Count);
+    expect(0xff000000, palette->Entries[0]);
+    expect(0xffc0c0c0, palette->Entries[8]);
+    expect(0xff008080, palette->Entries[15]);
+
+    memset(palette->Entries, 0x11, sizeof(ARGB) * 256);
+    palette->Flags = 0;
+    palette->Count = 256;
+    status = pGdipInitializePalette(palette, PaletteTypeFixedHalftone252, 1, FALSE, bitmap);
+    expect(Ok, status);
+todo_wine
+    expect(0x800, palette->Flags);
+    expect(252, palette->Count);
+    expect(0xff000000, palette->Entries[0]);
+    expect(0xff990066, palette->Entries[128]);
+    expect(0xffffffff, palette->Entries[251]);
+
+    palette->Flags = 0;
+    palette->Count = 256;
+    status = pGdipInitializePalette(palette, PaletteTypeOptimal, 1, FALSE, bitmap);
+    expect(InvalidParameter, status);
+
+    palette->Flags = 0;
+    palette->Count = 256;
+    status = pGdipInitializePalette(palette, PaletteTypeOptimal, 2, FALSE, bitmap);
+    expect(Ok, status);
+    expect(0, palette->Flags);
+    expect(2, palette->Count);
+
+    palette->Flags = 0;
+    palette->Count = 256;
+    status = pGdipInitializePalette(palette, PaletteTypeOptimal, 16, FALSE, bitmap);
+    expect(Ok, status);
+    expect(0, palette->Flags);
+    expect(16, palette->Count);
+
+    /* passing invalid enumeration palette type crashes under most Windows versions */
+
+    GdipFree(palette);
+    GdipDisposeImage((GpImage *)bitmap);
+}
+
 START_TEST(image)
 {
     HMODULE mod = GetModuleHandleA("gdiplus.dll");
     struct GdiplusStartupInput gdiplusStartupInput;
     ULONG_PTR gdiplusToken;
+    HMODULE hmsvcrt;
+    int (CDECL * _controlfp_s)(unsigned int *cur, unsigned int newval, unsigned int mask);
+
+    /* Enable all FP exceptions except _EM_INEXACT, which gdi32 can trigger */
+    hmsvcrt = LoadLibraryA("msvcrt");
+    _controlfp_s = (void*)GetProcAddress(hmsvcrt, "_controlfp_s");
+    if (_controlfp_s) _controlfp_s(0, 0, 0x0008001e);
 
     gdiplusStartupInput.GdiplusVersion              = 1;
     gdiplusStartupInput.DebugEventCallback          = NULL;
@@ -4958,6 +5508,8 @@ START_TEST(image)
     pGdipBitmapGetHistogram = (void*)GetProcAddress(mod, "GdipBitmapGetHistogram");
     pGdipImageSetAbort = (void*)GetProcAddress(mod, "GdipImageSetAbort");
 
+    test_GdipInitializePalette();
+    test_png_color_formats();
     test_supported_encoders();
     test_CloneBitmapArea();
     test_ARGB_conversion();
@@ -5006,6 +5558,7 @@ START_TEST(image)
     test_getadjustedpalette();
     test_histogram();
     test_imageabort();
+    test_GdipLoadImageFromStream();
 
     GdiplusShutdown(gdiplusToken);
 }

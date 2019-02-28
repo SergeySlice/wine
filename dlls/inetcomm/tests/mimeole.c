@@ -129,7 +129,7 @@ static WCHAR *a2w(const char *str)
 static int strcmp_wa(const WCHAR *strw, const char *stra)
 {
     WCHAR buf[512];
-    MultiByteToWideChar(CP_ACP, 0, stra, -1, buf, sizeof(buf)/sizeof(WCHAR));
+    MultiByteToWideChar(CP_ACP, 0, stra, -1, buf, ARRAY_SIZE(buf));
     return lstrcmpW(strw, buf);
 }
 
@@ -197,9 +197,17 @@ static void test_CreateBody(void)
     MIMEPARAMINFO *param_info;
     IMimeAllocator *alloc;
     BODYOFFSETS offsets;
+    CLSID clsid;
 
     hr = CoCreateInstance(&CLSID_IMimeBody, NULL, CLSCTX_INPROC_SERVER, &IID_IMimeBody, (void**)&body);
     ok(hr == S_OK, "ret %08x\n", hr);
+
+    hr = IMimeBody_GetClassID(body, NULL);
+    ok(hr == E_INVALIDARG, "ret %08x\n", hr);
+
+    hr = IMimeBody_GetClassID(body, &clsid);
+    ok(hr == S_OK, "ret %08x\n", hr);
+    ok(IsEqualGUID(&clsid, &IID_IMimeBody), "got %s\n", wine_dbgstr_guid(&clsid));
 
     hr = IMimeBody_GetHandle(body, &handle);
     ok(hr == MIME_E_NO_DATA, "ret %08x\n", hr);
@@ -323,7 +331,12 @@ static ULONG WINAPI Stream_AddRef(IStream *iface)
 static ULONG WINAPI Stream_Release(IStream *iface)
 {
     TestStream *This = impl_from_IStream(iface);
-    return InterlockedDecrement(&This->ref);
+    ULONG ref = InterlockedDecrement(&This->ref);
+
+    if (!ref)
+        HeapFree(GetProcessHeap(), 0, This);
+
+    return ref;
 }
 
 static HRESULT WINAPI Stream_Read(IStream *iface, void *pv, ULONG cb, ULONG *pcbRead)
@@ -440,14 +453,14 @@ static const IStreamVtbl StreamVtbl = {
     Stream_Clone
 };
 
-static TestStream *create_test_stream(void)
+static IStream *create_test_stream(void)
 {
     TestStream *stream;
     stream = HeapAlloc(GetProcessHeap(), 0, sizeof(*stream));
     stream->IStream_iface.lpVtbl = &StreamVtbl;
     stream->ref = 1;
     stream->pos = 0;
-    return stream;
+    return &stream->IStream_iface;
 }
 
 #define test_stream_read(a,b,c,d) _test_stream_read(__LINE__,a,b,c,d)
@@ -469,8 +482,7 @@ static void _test_stream_read(unsigned line, IStream *stream, HRESULT exhres, co
 
 static void test_SetData(void)
 {
-    IStream *stream, *stream2;
-    TestStream *test_stream;
+    IStream *stream, *stream2, *test_stream;
     IMimeBody *body;
     HRESULT hr;
 
@@ -487,7 +499,7 @@ static void test_SetData(void)
     IStream_Release(stream);
 
     test_stream = create_test_stream();
-    hr = IMimeBody_SetData(body, IET_BINARY, "text", "plain", &IID_IStream, &test_stream->IStream_iface);
+    hr = IMimeBody_SetData(body, IET_BINARY, "text", "plain", &IID_IStream, test_stream);
 
     ok(hr == S_OK, "ret %08x\n", hr);
     hr = IMimeBody_IsContentType(body, "text", "plain");
@@ -502,7 +514,7 @@ static void test_SetData(void)
     CHECK_CALLED(Stream_Stat);
     CHECK_CALLED(Stream_Seek_END);
     ok(hr == S_OK, "GetData failed %08x\n", hr);
-    ok(stream != &test_stream->IStream_iface, "unexpected stream\n");
+    ok(stream != test_stream, "unexpected stream\n");
 
     SET_EXPECT(Stream_Seek);
     SET_EXPECT(Stream_Read);
@@ -533,7 +545,7 @@ static void test_SetData(void)
 
     IStream_Release(stream);
     IStream_Release(stream2);
-    IStream_Release(&test_stream->IStream_iface);
+    IStream_Release(test_stream);
 
     stream = create_stream_from_string(" \t\r\n|}~YWJj ZGV|}~mZw== \t"); /* "abcdefg" in base64 obscured by invalid chars */
     hr = IMimeBody_SetData(body, IET_BASE64, "text", "plain", &IID_IStream, stream);
@@ -1368,6 +1380,8 @@ static HRESULT WINAPI ProtocolSink_ReportData(IInternetProtocolSink *iface, DWOR
     buf[read] = 0;
     ok(!strcmp(buf, current_binding_test->data), "unexpected data: %s\n", buf);
 
+    hres = IInternetProtocol_Read(current_binding_protocol, buf, sizeof(buf), &read);
+    ok(hres == S_FALSE, "Read failed: %08x\n", hres);
     return S_OK;
 }
 
@@ -1402,6 +1416,7 @@ static void test_mhtml_protocol_binding(const mhtml_binding_test_t *test)
     HRESULT hres;
     HANDLE file;
     DWORD size;
+    BOOL ret;
 
     p = file_name + GetCurrentDirectoryA(sizeof(file_name), file_name);
     *p++ = '\\';
@@ -1415,7 +1430,7 @@ static void test_mhtml_protocol_binding(const mhtml_binding_test_t *test)
     CloseHandle(file);
 
     sprintf(urla, test->url, file_name);
-    MultiByteToWideChar(CP_ACP, 0, urla, -1, test_url, sizeof(test_url)/sizeof(WCHAR));
+    MultiByteToWideChar(CP_ACP, 0, urla, -1, test_url, ARRAY_SIZE(test_url));
 
     hres = CoCreateInstance(&CLSID_IMimeHtmlProtocol, NULL, CLSCTX_INPROC_SERVER, &IID_IInternetProtocol, (void**)&protocol);
     ok(hres == S_OK, "Could not create protocol handler: %08x\n", hres);
@@ -1440,7 +1455,8 @@ static void test_mhtml_protocol_binding(const mhtml_binding_test_t *test)
     CHECK_CALLED(ReportResult);
 
     IInternetProtocol_Release(protocol);
-    ok(DeleteFileA("winetest.mht"), "DeleteFile failed: %u\n", GetLastError());
+    ret = DeleteFileA("winetest.mht");
+    ok(ret, "DeleteFile failed: %u\n", GetLastError());
 }
 
 static const struct {
@@ -1498,13 +1514,13 @@ static void test_mhtml_protocol_info(void)
                             &IID_IInternetProtocolInfo, (void**)&protocol_info);
     ok(hres == S_OK, "Could not create protocol info: %08x\n", hres);
 
-    for(i = 0; i < sizeof(combine_tests)/sizeof(*combine_tests); i++) {
+    for(i = 0; i < ARRAY_SIZE(combine_tests); i++) {
         base_url = a2w(combine_tests[i].base_url);
         relative_url = a2w(combine_tests[i].relative_url);
 
         combined_len = 0xdeadbeef;
         hres = IInternetProtocolInfo_CombineUrl(protocol_info, base_url, relative_url, ICU_BROWSER_MODE,
-                                                combined_url, sizeof(combined_url)/sizeof(WCHAR), &combined_len, 0);
+                                                combined_url, ARRAY_SIZE(combined_url), &combined_len, 0);
         todo_wine_if(combine_tests[i].todo)
         ok(hres == S_OK, "[%u] CombineUrl failed: %08x\n", i, hres);
         if(SUCCEEDED(hres)) {
@@ -1525,7 +1541,7 @@ static void test_mhtml_protocol_info(void)
     }
 
     hres = IInternetProtocolInfo_CombineUrl(protocol_info, http_url, http_url, ICU_BROWSER_MODE,
-                                            combined_url, sizeof(combined_url)/sizeof(WCHAR), &combined_len, 0);
+                                            combined_url, ARRAY_SIZE(combined_url), &combined_len, 0);
     ok(hres == E_FAIL, "CombineUrl failed: %08x\n", hres);
 
     IInternetProtocolInfo_Release(protocol_info);
@@ -1577,7 +1593,7 @@ static void test_mhtml_protocol(void)
     hres = IClassFactory_CreateInstance(class_factory, &outer, &IID_IUnknown, (void**)&unk);
     ok(hres == S_OK, "CreateInstance returned: %08x\n", hres);
     hres = IUnknown_QueryInterface(unk, &IID_IInternetProtocol, (void**)&unk2);
-    ok(hres == S_OK, "Coult not get IInternetProtocol iface: %08x\n", hres);
+    ok(hres == S_OK, "Could not get IInternetProtocol iface: %08x\n", hres);
     IUnknown_Release(unk2);
     IUnknown_Release(unk);
 
@@ -1589,7 +1605,7 @@ static void test_mhtml_protocol(void)
     if(!broken_mhtml_resolver)
         test_mhtml_protocol_info();
 
-    for(i = 0; i < sizeof(binding_tests)/sizeof(*binding_tests); i++)
+    for(i = 0; i < ARRAY_SIZE(binding_tests); i++)
         test_mhtml_protocol_binding(binding_tests + i);
 }
 
@@ -1612,7 +1628,7 @@ static void test_MimeOleObjectFromMoniker(void)
         {"../test.mht", "mhtml:../test.mht"}
     };
 
-    for(i = 0; i < sizeof(tests)/sizeof(*tests); i++) {
+    for(i = 0; i < ARRAY_SIZE(tests); i++) {
         url = a2w(tests[i].url);
         hres = CreateURLMoniker(NULL, url, &mon);
         ok(hres == S_OK, "CreateURLMoniker failed: %08x\n", hres);

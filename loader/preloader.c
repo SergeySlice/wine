@@ -60,6 +60,8 @@
  *  http://www.linuxbase.org/spec/booksets/LSB-Embedded/LSB-Embedded/book387.html
  */
 
+#ifdef __linux__
+
 #include "config.h"
 #include "wine/port.h"
 
@@ -127,6 +129,7 @@ static struct wine_preload_info preload_info[] =
 #undef DUMP_SEGMENTS
 #undef DUMP_AUX_INFO
 #undef DUMP_SYMS
+#undef DUMP_MAPS
 
 /* older systems may not define these */
 #ifndef PT_TLS
@@ -290,58 +293,44 @@ static inline int wld_mprotect( const void *addr, size_t len, int prot )
     return SYSCALL_RET(ret);
 }
 
-static void *wld_mmap( void *start, size_t len, int prot, int flags, int fd, off_t offset )
-{
-    int ret;
-
-    struct
-    {
-        void        *addr;
-        unsigned int length;
-        unsigned int prot;
-        unsigned int flags;
-        unsigned int fd;
-        unsigned int offset;
-    } args;
-
-    args.addr   = start;
-    args.length = len;
-    args.prot   = prot;
-    args.flags  = flags;
-    args.fd     = fd;
-    args.offset = offset;
-    __asm__ __volatile__( "pushl %%ebx; movl %2,%%ebx; int $0x80; popl %%ebx"
-                          : "=a" (ret) : "0" (90 /* SYS_mmap */), "q" (&args) : "memory" );
-    return (void *)SYSCALL_RET(ret);
-}
-
-static inline uid_t wld_getuid(void)
-{
-    uid_t ret;
-    __asm__( "int $0x80" : "=a" (ret) : "0" (24 /* SYS_getuid */) );
-    return ret;
-}
-
-static inline uid_t wld_geteuid(void)
-{
-    uid_t ret;
-    __asm__( "int $0x80" : "=a" (ret) : "0" (49 /* SYS_geteuid */) );
-    return ret;
-}
-
-static inline gid_t wld_getgid(void)
-{
-    gid_t ret;
-    __asm__( "int $0x80" : "=a" (ret) : "0" (47 /* SYS_getgid */) );
-    return ret;
-}
-
-static inline gid_t wld_getegid(void)
-{
-    gid_t ret;
-    __asm__( "int $0x80" : "=a" (ret) : "0" (50 /* SYS_getegid */) );
-    return ret;
-}
+void *wld_mmap( void *start, size_t len, int prot, int flags, int fd, unsigned int offset );
+__ASM_GLOBAL_FUNC(wld_mmap,
+                  "\tpushl %ebp\n"
+                  __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
+                  "\tpushl %ebx\n"
+                  __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
+                  "\tpushl %esi\n"
+                  __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
+                  "\tpushl %edi\n"
+                  __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
+                  "\tmovl $192,%eax\n"      /* SYS_mmap2 */
+                  "\tmovl 20(%esp),%ebx\n"  /* start */
+                  "\tmovl 24(%esp),%ecx\n"  /* len */
+                  "\tmovl 28(%esp),%edx\n"  /* prot */
+                  "\tmovl 32(%esp),%esi\n"  /* flags */
+                  "\tmovl 36(%esp),%edi\n"  /* fd */
+                  "\tmovl 40(%esp),%ebp\n"  /* offset */
+                  "\tshrl $12,%ebp\n"
+                  "\tint $0x80\n"
+                  "\tcmpl $-4096,%eax\n"
+                  "\tjbe 2f\n"
+                  "\tcmpl $-38,%eax\n"      /* ENOSYS */
+                  "\tjne 1f\n"
+                  "\tmovl $90,%eax\n"       /* SYS_mmap */
+                  "\tleal 20(%esp),%ebx\n"
+                  "\tint $0x80\n"
+                  "\tcmpl $-4096,%eax\n"
+                  "\tjbe 2f\n"
+                  "1:\tmovl $-1,%eax\n"
+                  "2:\tpopl %edi\n"
+                  __ASM_CFI(".cfi_adjust_cfa_offset -4\n\t")
+                  "\tpopl %esi\n"
+                  __ASM_CFI(".cfi_adjust_cfa_offset -4\n\t")
+                  "\tpopl %ebx\n"
+                  __ASM_CFI(".cfi_adjust_cfa_offset -4\n\t")
+                  "\tpopl %ebp\n"
+                  __ASM_CFI(".cfi_adjust_cfa_offset -4\n\t")
+                  "\tret\n" )
 
 static inline int wld_prctl( int code, long arg )
 {
@@ -439,6 +428,112 @@ SYSCALL_NOERR( wld_geteuid, 107 /* SYS_geteuid */ );
 
 gid_t wld_getegid(void);
 SYSCALL_NOERR( wld_getegid, 108 /* SYS_getegid */ );
+
+#elif defined(__aarch64__)
+
+void *thread_data[256];
+
+/*
+ * The _start function is the entry and exit point of this program
+ *
+ *  It calls wld_start, passing a pointer to the args it receives
+ *  then jumps to the address wld_start returns.
+ */
+void _start(void);
+extern char _end[];
+__ASM_GLOBAL_FUNC(_start,
+                  "mov x0, SP\n\t"
+                  "sub SP, SP, #144\n\t" /* allocate some space for extra aux values */
+                  "str x0, [SP]\n\t"     /* orig stack pointer */
+                  "ldr x0, =thread_data\n\t"
+                  "msr tpidr_el0, x0\n\t"
+                  "mov x0, SP\n\t"       /* ptr to orig stack pointer */
+                  "bl wld_start\n\t"
+                  "ldr x1, [SP]\n\t"     /* new stack pointer */
+                  "mov SP, x1\n\t"
+                  "mov x30, x0\n\t"
+                  "mov x0, #0\n\t"
+                  "mov x1, #0\n\t"
+                  "mov x2, #0\n\t"
+                  "mov x3, #0\n\t"
+                  "mov x4, #0\n\t"
+                  "mov x5, #0\n\t"
+                  "mov x6, #0\n\t"
+                  "mov x7, #0\n\t"
+                  "mov x8, #0\n\t"
+                  "mov x9, #0\n\t"
+                  "mov x10, #0\n\t"
+                  "mov x11, #0\n\t"
+                  "mov x12, #0\n\t"
+                  "mov x13, #0\n\t"
+                  "mov x14, #0\n\t"
+                  "mov x15, #0\n\t"
+                  "mov x16, #0\n\t"
+                  "mov x17, #0\n\t"
+                  "mov x18, #0\n\t"
+                  "ret")
+
+#define SYSCALL_FUNC( name, nr ) \
+    __ASM_GLOBAL_FUNC( name, \
+                       "stp x8, x9, [SP, #-16]!\n\t" \
+                       "mov x8, #" #nr "\n\t" \
+                       "svc #0\n\t" \
+                       "ldp x8, x9, [SP], #16\n\t" \
+                       "cmn x0, #1, lsl#12\n\t" \
+                       "cinv x0, x0, hi\n\t" \
+                       "b.hi 1f\n\t" \
+                       "ret\n\t" \
+                       "1: mov x0, #-1\n\t" \
+                       "ret" )
+
+#define SYSCALL_NOERR( name, nr ) \
+    __ASM_GLOBAL_FUNC( name, \
+                       "stp x8, x9, [SP, #-16]!\n\t" \
+                       "mov x8, #" #nr "\n\t" \
+                       "svc #0\n\t" \
+                       "ldp x8, x9, [SP], #16\n\t" \
+                       "ret" )
+
+void wld_exit( int code ) __attribute__((noreturn));
+SYSCALL_NOERR( wld_exit, 93 /* SYS_exit */ );
+
+ssize_t wld_read( int fd, void *buffer, size_t len );
+SYSCALL_FUNC( wld_read, 63 /* SYS_read */ );
+
+ssize_t wld_write( int fd, const void *buffer, size_t len );
+SYSCALL_FUNC( wld_write, 64 /* SYS_write */ );
+
+int wld_openat( int dirfd, const char *name, int flags );
+SYSCALL_FUNC( wld_openat, 56 /* SYS_openat */ );
+
+int wld_open( const char *name, int flags )
+{
+    return wld_openat(-100 /* AT_FDCWD */, name, flags);
+}
+
+int wld_close( int fd );
+SYSCALL_FUNC( wld_close, 57 /* SYS_close */ );
+
+void *wld_mmap( void *start, size_t len, int prot, int flags, int fd, off_t offset );
+SYSCALL_FUNC( wld_mmap, 222 /* SYS_mmap */ );
+
+int wld_mprotect( const void *addr, size_t len, int prot );
+SYSCALL_FUNC( wld_mprotect, 226 /* SYS_mprotect */ );
+
+int wld_prctl( int code, long arg );
+SYSCALL_FUNC( wld_prctl, 167 /* SYS_prctl */ );
+
+uid_t wld_getuid(void);
+SYSCALL_NOERR( wld_getuid, 174 /* SYS_getuid */ );
+
+gid_t wld_getgid(void);
+SYSCALL_NOERR( wld_getgid, 176 /* SYS_getgid */ );
+
+uid_t wld_geteuid(void);
+SYSCALL_NOERR( wld_geteuid, 175 /* SYS_geteuid */ );
+
+gid_t wld_getegid(void);
+SYSCALL_NOERR( wld_getegid, 177 /* SYS_getegid */ );
 
 #else
 #error preloader not implemented for this CPU
@@ -710,6 +805,9 @@ static void map_so_lib( const char *name, struct wld_link_map *l)
 #elif defined(__x86_64__)
     if( header->e_machine != EM_X86_64 )
         fatal_error("%s: not an x86-64 ELF binary... don't know how to load it\n", name );
+#elif defined(__aarch64__)
+    if( header->e_machine != EM_AARCH64 )
+        fatal_error("%s: not an aarch64 ELF binary... don't know how to load it\n", name );
 #endif
 
     if (header->e_phnum > sizeof(loadcmds)/sizeof(loadcmds[0]))
@@ -937,7 +1035,7 @@ static unsigned int gnu_hash( const char *name )
 /*
  * Find a symbol in the symbol table of the executable loaded
  */
-static void *find_symbol( const ElfW(Phdr) *phdr, int num, const char *var, int type )
+static void *find_symbol( const struct wld_link_map *map, const char *var, int type )
 {
     const ElfW(Dyn) *dyn = NULL;
     const ElfW(Phdr) *ph;
@@ -949,21 +1047,14 @@ static void *find_symbol( const ElfW(Phdr) *phdr, int num, const char *var, int 
 
     /* check the values */
 #ifdef DUMP_SYMS
-    wld_printf("%p %x\n", phdr, num );
+    wld_printf("%p %x\n", map->l_phdr, map->l_phnum );
 #endif
-    if( ( phdr == NULL ) || ( num == 0 ) )
-    {
-        wld_printf("could not find PT_DYNAMIC header entry\n");
-        return NULL;
-    }
-
     /* parse the (already loaded) ELF executable's header */
-    for (ph = phdr; ph < &phdr[num]; ++ph)
+    for (ph = map->l_phdr; ph < &map->l_phdr[map->l_phnum]; ++ph)
     {
         if( PT_DYNAMIC == ph->p_type )
         {
-            dyn = (void *) ph->p_vaddr;
-            num = ph->p_memsz / sizeof (*dyn);
+            dyn = (void *)(ph->p_vaddr + map->l_addr);
             break;
         }
     }
@@ -972,13 +1063,13 @@ static void *find_symbol( const ElfW(Phdr) *phdr, int num, const char *var, int 
     while( dyn->d_tag )
     {
         if( dyn->d_tag == DT_STRTAB )
-            strings = (const char*) dyn->d_un.d_ptr;
+            strings = (const char*)(dyn->d_un.d_ptr + map->l_addr);
         if( dyn->d_tag == DT_SYMTAB )
-            symtab = (const ElfW(Sym) *)dyn->d_un.d_ptr;
+            symtab = (const ElfW(Sym) *)(dyn->d_un.d_ptr + map->l_addr);
         if( dyn->d_tag == DT_HASH )
-            hashtab = (const Elf32_Word *)dyn->d_un.d_ptr;
+            hashtab = (const Elf32_Word *)(dyn->d_un.d_ptr + map->l_addr);
         if( dyn->d_tag == DT_GNU_HASH )
-            gnu_hashtab = (const Elf32_Word *)dyn->d_un.d_ptr;
+            gnu_hashtab = (const Elf32_Word *)(dyn->d_un.d_ptr + map->l_addr);
 #ifdef DUMP_SYMS
         wld_printf("%lx %p\n", (unsigned long)dyn->d_tag, (void *)dyn->d_un.d_ptr );
 #endif
@@ -1028,7 +1119,7 @@ found:
 #ifdef DUMP_SYMS
     wld_printf("Found %s -> %p\n", strings + symtab[idx].st_name, (void *)symtab[idx].st_value );
 #endif
-    return (void *)symtab[idx].st_value;
+    return (void *)(symtab[idx].st_value + map->l_addr);
 }
 
 /*
@@ -1165,7 +1256,7 @@ void* wld_start( void **stack )
     long i, *pargc;
     char **argv, **p;
     char *interp, *reserve = NULL;
-    struct wld_auxv new_av[12], delete_av[3], *av;
+    struct wld_auxv new_av[8], delete_av[3], *av;
     struct wld_link_map main_binary_map, ld_so_map;
     struct wine_preload_info **wine_main_preload_info;
 
@@ -1211,7 +1302,11 @@ void* wld_start( void **stack )
                            MAP_FIXED | MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0 ) == (void *)-1)
         {
             /* don't warn for low 64k */
-            if (preload_info[i].addr >= (void *)0x10000)
+            if (preload_info[i].addr >= (void *)0x10000
+#ifdef __aarch64__
+                && preload_info[i].addr < (void *)0x7fffffffff /* ARM64 address space might end here*/
+#endif
+            )
                 wld_printf( "preloader: Warning: failed to reserve range %p-%p\n",
                             preload_info[i].addr, (char *)preload_info[i].addr + preload_info[i].size );
             remove_preload_range( i );
@@ -1232,8 +1327,7 @@ void* wld_start( void **stack )
     map_so_lib( interp, &ld_so_map );
 
     /* store pointer to the preload info into the appropriate main binary variable */
-    wine_main_preload_info = find_symbol( main_binary_map.l_phdr, main_binary_map.l_phnum,
-                                          "wine_main_preload_info", STT_OBJECT );
+    wine_main_preload_info = find_symbol( &main_binary_map, "wine_main_preload_info", STT_OBJECT );
     if (wine_main_preload_info) *wine_main_preload_info = preload_info;
     else wld_printf( "wine_main_preload_info not found\n" );
 
@@ -1245,11 +1339,7 @@ void* wld_start( void **stack )
     SET_NEW_AV( 4, AT_BASE, ld_so_map.l_addr );
     SET_NEW_AV( 5, AT_FLAGS, get_auxiliary( av, AT_FLAGS, 0 ) );
     SET_NEW_AV( 6, AT_ENTRY, main_binary_map.l_entry );
-    SET_NEW_AV( 7, AT_UID, get_auxiliary( av, AT_UID, wld_getuid() ) );
-    SET_NEW_AV( 8, AT_EUID, get_auxiliary( av, AT_EUID, wld_geteuid() ) );
-    SET_NEW_AV( 9, AT_GID, get_auxiliary( av, AT_GID, wld_getgid() ) );
-    SET_NEW_AV(10, AT_EGID, get_auxiliary( av, AT_EGID, wld_getegid() ) );
-    SET_NEW_AV(11, AT_NULL, 0 );
+    SET_NEW_AV( 7, AT_NULL, 0 );
 #undef SET_NEW_AV
 
     i = 0;
@@ -1272,6 +1362,19 @@ void* wld_start( void **stack )
     wld_printf("new stack = %p\n", *stack);
     wld_printf("jumping to %p\n", (void *)ld_so_map.l_entry);
 #endif
+#ifdef DUMP_MAPS
+    {
+        char buffer[1024];
+        int len, fd = wld_open( "/proc/self/maps", O_RDONLY );
+        if (fd != -1)
+        {
+            while ((len = wld_read( fd, buffer, sizeof(buffer) )) > 0) wld_write( 2, buffer, len );
+            wld_close( fd );
+        }
+    }
+#endif
 
     return (void *)ld_so_map.l_entry;
 }
+
+#endif /* __linux__ */
