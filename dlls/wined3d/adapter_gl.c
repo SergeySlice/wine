@@ -3437,8 +3437,8 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter *adapter,
     }
     gl_version = wined3d_parse_gl_version(gl_version_str);
     //SI force GL to be 4.5
-    FIXME("GL version obtained=%x, forced to 4.5\n", gl_version);
-    gl_version = MAKEDWORD_VERSION(4, 5);
+//    FIXME("GL version obtained=%x, forced to 4.5\n", gl_version);
+//    gl_version = MAKEDWORD_VERSION(4, 5);
 
     load_gl_funcs(gl_info);
 

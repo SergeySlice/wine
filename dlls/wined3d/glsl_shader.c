@@ -11601,8 +11601,8 @@ static void shader_glsl_get_caps(const struct wined3d_gl_info *gl_info, struct s
 {
     unsigned int shader_model = shader_glsl_get_shader_model(gl_info);
 
-    FIXME("Shader model %u. forced->5\n", shader_model);
-    shader_model = 5;
+    FIXME("Shader model %u. no forced\n", shader_model);
+//    shader_model = 5;
 
     caps->vs_version = min(wined3d_settings.max_sm_vs, shader_model);
     caps->hs_version = min(wined3d_settings.max_sm_hs, shader_model);
