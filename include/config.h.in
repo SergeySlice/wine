@@ -349,15 +349,13 @@
 #undef HAVE_JN
 
 /* Define to 1 if you have the <jpeglib.h> header file. */
-//#undef HAVE_JPEGLIB_H
-#define HAVE_JPEGLIB_H 1
+#undef HAVE_JPEGLIB_H
 
 /* Define to 1 if you have the `kqueue' function. */
 #undef HAVE_KQUEUE
 
 /* Define to 1 if you have the <krb5/krb5.h> header file. */
 #undef HAVE_KRB5_KRB5_H
-#define HAVE_KRB5_KRB5_H 1
 
 /* Define to 1 if you have the <kstat.h> header file. */
 #undef HAVE_KSTAT_H
@@ -370,7 +368,6 @@
 
 /* Define to 1 if you have the <lcms2.h> header file. */
 #undef HAVE_LCMS2_H
-#define HAVE_LCMS2_H 1
 
 /* Define if you have the OpenLDAP development environment */
 #undef HAVE_LDAP
@@ -440,19 +437,15 @@
 
 /* Define if you have the libxml2 library */
 #undef HAVE_LIBXML2
-#define HAVE_LIBXML2 1
 
 /* Define to 1 if you have the <libxml/parser.h> header file. */
 #undef HAVE_LIBXML_PARSER_H
-#define HAVE_LIBXML_PARSER_H 1
 
 /* Define to 1 if you have the <libxml/SAX2.h> header file. */
 #undef HAVE_LIBXML_SAX2_H
-#define HAVE_LIBXML_SAX2_H 1
 
 /* Define to 1 if you have the <libxml/xmlsave.h> header file. */
 #undef HAVE_LIBXML_XMLSAVE_H
-#define HAVE_LIBXML_XMLSAVE_H 1
 
 /* Define if you have the X Shape extension */
 #undef HAVE_LIBXSHAPE
@@ -1524,7 +1517,6 @@
 
 /* Define to the soname of the libMoltenVK library. */
 #undef SONAME_LIBMOLTENVK
-#define SONAME_LIBMOLTENVK "libMoltenVK.dylib"
 
 /* Define to the soname of the libncurses library. */
 #undef SONAME_LIBNCURSES

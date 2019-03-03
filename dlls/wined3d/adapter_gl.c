@@ -711,7 +711,7 @@ static BOOL match_fglrx(const struct wined3d_gl_info *gl_info, struct wined3d_ca
         const char *gl_renderer, enum wined3d_gl_vendor gl_vendor,
         enum wined3d_pci_vendor card_vendor, enum wined3d_pci_device device)
 {
-  return TRUE; //gl_vendor == GL_VENDOR_FGLRX;
+  return gl_vendor == GL_VENDOR_FGLRX;
 }
 
 static BOOL match_r200(const struct wined3d_gl_info *gl_info, struct wined3d_caps_gl_ctx *ctx,
@@ -3409,7 +3409,7 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter *adapter,
     FIXME("started wine64\n");
 #endif
 
-    FIXME("adapter %p.\n", adapter);
+    TRACE("adapter %p.\n", adapter);
 
     gl_renderer_str = (const char *)gl_info->gl_ops.gl.p_glGetString(GL_RENDERER);
     FIXME("GL_RENDERER: %s.\n", debugstr_a(gl_renderer_str));
@@ -3437,6 +3437,7 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter *adapter,
     }
     gl_version = wined3d_parse_gl_version(gl_version_str);
     //SI force GL to be 4.5
+    FIXME("GL version obtained=%x, forced to 4.5\n", gl_version);
     gl_version = MAKEDWORD_VERSION(4, 5);
 
     load_gl_funcs(gl_info);

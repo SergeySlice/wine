@@ -11601,7 +11601,7 @@ static void shader_glsl_get_caps(const struct wined3d_gl_info *gl_info, struct s
 {
     unsigned int shader_model = shader_glsl_get_shader_model(gl_info);
 
-    TRACE("Shader model %u. ->5\n", shader_model);
+    FIXME("Shader model %u. forced->5\n", shader_model);
     shader_model = 5;
 
     caps->vs_version = min(wined3d_settings.max_sm_vs, shader_model);
@@ -11613,6 +11613,9 @@ static void shader_glsl_get_caps(const struct wined3d_gl_info *gl_info, struct s
 
     caps->vs_version = gl_info->supported[ARB_VERTEX_SHADER] ? caps->vs_version : 0;
     caps->ps_version = gl_info->supported[ARB_FRAGMENT_SHADER] ? caps->ps_version : 0;
+
+    FIXME("got PS=%d, VS=%d, HS=%d, GS=%d\n", caps->ps_version, caps->vs_version,
+    caps->hs_version, caps->gs_version);
 
     caps->vs_uniform_count = min(WINED3D_MAX_VS_CONSTS_F_SWVP,
             wined3d_settings.consts_ubo && gl_info->supported[ARB_UNIFORM_BUFFER_OBJECT]

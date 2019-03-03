@@ -525,6 +525,7 @@ void d3dcaps_from_wined3dcaps(D3DCAPS9 *caps, const struct wined3d_caps *wined3d
         DWORD major = caps->VertexShaderVersion;
         caps->VertexShaderVersion = D3DVS_VERSION(major, vs_minor_version[major]);
     }
+    FIXME("Got PS_version=%x, VX_version=%x\n", caps->PixelShaderVersion, caps->VertexShaderVersion);
 }
 
 static HRESULT WINAPI d3d9_device_QueryInterface(IDirect3DDevice9Ex *iface, REFIID riid, void **out)
