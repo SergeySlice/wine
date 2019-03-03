@@ -5346,7 +5346,10 @@ static BOOL wined3d_select_feature_level(const struct wined3d_adapter *adapter,
 
     FIXME_(winediag)("None of the requested D3D feature levels is supported on this GPU "
             "with the current shader backend.\n");
-    return FALSE;
+//    return FALSE;
+    *selected_level = d3d_info->feature_level;
+    return TRUE;
+
 }
 
 HRESULT device_init(struct wined3d_device *device, struct wined3d *wined3d,

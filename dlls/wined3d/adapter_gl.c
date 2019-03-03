@@ -3492,12 +3492,12 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter *adapter,
 
             if (j < ARRAY_SIZE(gl_extension_map))
             {
-                FIXME("GL CORE: %s support.\n", gl_extension_map[j].extension_string);
+                TRACE("GL CORE: %s support.\n", gl_extension_map[j].extension_string);
                 gl_info->supported[core_extensions[i].extension] = TRUE;
             }
             else
             {
-                FIXME("GL extension %u not in the GL extensions map.\n", core_extensions[i].extension);
+                TRACE("GL extension %u not in the GL extensions map.\n", core_extensions[i].extension);
             }
         }
     }
